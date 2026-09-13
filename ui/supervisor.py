@@ -14,6 +14,8 @@ logger = get_logger(__name__)
 
 HEALTHCHECK_INTERVAL = 3.0
 SHUTDOWN_WAIT_SECONDS = 3.0
+AGENT_STARTUP_RETRIES = 10
+AGENT_STARTUP_DELAY = 0.5
 
 
 def find_pids_on_port(port: int) -> list[int]:
@@ -54,6 +56,7 @@ class AgentSupervisor:
         """Clean orphans, launch the agent, and begin health monitoring."""
         await asyncio.to_thread(kill_processes_on_port, self.agent_port)
         await self._launch_agent()
+        await self._wait_for_agent_ready()
         self._healthcheck_task = asyncio.create_task(self._healthcheck_loop())
 
     async def stop(self) -> None:
@@ -112,6 +115,32 @@ class AgentSupervisor:
                 return resp.status_code == 200
         except httpx.HTTPError:
             return False
+
+    async def _has_websocket_route(self) -> bool:
+        """Return True when the agent exposes the chat WebSocket route."""
+        url = f"http://127.0.0.1:{self.agent_port}/debug/routes"
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(url, timeout=2.0)
+                if resp.status_code != 200:
+                    return False
+                routes = resp.json().get("routes", [])
+                return any(
+                    route.get("path") == "/ws/chat/{chat_id}"
+                    for route in routes
+                )
+        except httpx.HTTPError:
+            return False
+
+    async def _wait_for_agent_ready(self) -> None:
+        """Wait until health and WebSocket routes are available."""
+        for attempt in range(AGENT_STARTUP_RETRIES):
+            if await self._ping_health() and await self._has_websocket_route():
+                logger.info("agent_ready", port=self.agent_port, attempt=attempt + 1)
+                return
+            await asyncio.sleep(AGENT_STARTUP_DELAY)
+        logger.warning("agent_startup_incomplete", port=self.agent_port)
+        await self._restart_agent()
 
     async def _restart_agent(self) -> None:
         """Kill stale process state and launch a fresh agent."""

@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -23,7 +23,7 @@ from agent.schemas import (
 )
 from agent.llm_client import LMStudioClient
 from agent.state import cleanup_chat_caches
-from agent.ws import register_websocket_routes
+from agent.ws import ws_chat
 from shared.database import async_session_factory, engine, get_session, init_db
 from shared.logger import get_logger
 from shared.models import Chat, Message, Settings
@@ -155,7 +155,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-register_websocket_routes(app)
+@app.get("/debug/routes")
+async def debug_routes() -> dict[str, list[dict[str, Any]]]:
+    """List all registered routes for debugging."""
+    routes: list[dict[str, Any]] = []
+    for route in app.routes:
+        route_info: dict[str, Any] = {
+            "path": getattr(route, "path", str(route)),
+            "methods": list(getattr(route, "methods", []) or []),
+            "name": getattr(route, "name", None),
+        }
+        if hasattr(route, "path_format"):
+            route_info["path_format"] = route.path_format
+        routes.append(route_info)
+    return {"routes": routes}
 
 
 @app.get("/health", response_model=HealthResponse)
@@ -323,3 +336,13 @@ async def load_lm_studio_model(body: ModelLoadRequest) -> ModelLoadResult:
 async def unload_lm_studio_model(model_id: str) -> ModelLoadResult:
     """Unload a model from LM Studio."""
     return await lm_studio_client.unload_model(model_id)
+
+
+@app.websocket("/ws/chat/{chat_id}")
+async def websocket_chat_endpoint(websocket: WebSocket, chat_id: int) -> None:
+    """WebSocket chat endpoint."""
+    logger.info("ws_route_called", chat_id=chat_id)
+    await ws_chat(websocket, chat_id)
+
+
+logger.info("websocket_routes_registered")

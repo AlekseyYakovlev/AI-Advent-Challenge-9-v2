@@ -238,51 +238,52 @@ async def broadcast_model_event(model_id: str, event_type: str) -> None:
             active_connections.discard(connection)
 
 
+async def ws_chat(websocket: WebSocket, chat_id: int) -> None:
+    """Handle streaming chat over WebSocket with security guards."""
+    if not _validate_origin(websocket):
+        await websocket.close(code=1008, reason="Origin not allowed")
+        return
+
+    await websocket.accept()
+    active_connections.add(websocket)
+    try:
+        while True:
+            try:
+                raw = await asyncio.wait_for(
+                    websocket.receive_json(),
+                    timeout=IDLE_TIMEOUT_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                await websocket.close(code=1000, reason="Idle timeout")
+                break
+
+            if not _check_rate_limit(chat_id):
+                await websocket.send_json(
+                    {
+                        "type": "error",
+                        "detail": "Rate limit exceeded",
+                    },
+                )
+                continue
+
+            try:
+                payload = MessagePayload.model_validate(raw)
+            except ValidationError as exc:
+                await websocket.send_json(
+                    {
+                        "type": "error",
+                        "detail": exc.errors(),
+                    },
+                )
+                continue
+
+            await _handle_chat_message(websocket, chat_id, payload)
+    except WebSocketDisconnect:
+        logger.info("ws_disconnected", chat_id=chat_id)
+    finally:
+        active_connections.discard(websocket)
+
+
 def register_websocket_routes(app: Any) -> None:
     """Attach the chat WebSocket route to the FastAPI app."""
-
-    @app.websocket("/ws/chat/{chat_id}")
-    async def ws_chat(websocket: WebSocket, chat_id: int) -> None:
-        """Handle streaming chat over WebSocket with security guards."""
-        if not _validate_origin(websocket):
-            await websocket.close(code=1008, reason="Origin not allowed")
-            return
-
-        await websocket.accept()
-        active_connections.add(websocket)
-        try:
-            while True:
-                try:
-                    raw = await asyncio.wait_for(
-                        websocket.receive_json(),
-                        timeout=IDLE_TIMEOUT_SECONDS,
-                    )
-                except asyncio.TimeoutError:
-                    await websocket.close(code=1000, reason="Idle timeout")
-                    break
-
-                if not _check_rate_limit(chat_id):
-                    await websocket.send_json(
-                        {
-                            "type": "error",
-                            "detail": "Rate limit exceeded",
-                        },
-                    )
-                    continue
-
-                try:
-                    payload = MessagePayload.model_validate(raw)
-                except ValidationError as exc:
-                    await websocket.send_json(
-                        {
-                            "type": "error",
-                            "detail": exc.errors(),
-                        },
-                    )
-                    continue
-
-                await _handle_chat_message(websocket, chat_id, payload)
-        except WebSocketDisconnect:
-            logger.info("ws_disconnected", chat_id=chat_id)
-        finally:
-            active_connections.discard(websocket)
+    app.websocket("/ws/chat/{chat_id}")(ws_chat)
