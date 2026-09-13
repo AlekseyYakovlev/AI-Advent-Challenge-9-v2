@@ -37,9 +37,22 @@ active_connections: set[WebSocket] = set()
 
 
 def _validate_origin(websocket: WebSocket) -> bool:
-    """Return True when the request Origin header is allowed."""
+    """Return True when the request Origin header is allowed or missing (single-user mode)."""
     origin = websocket.headers.get("origin")
-    return origin in CORS_ORIGINS
+
+    # Allow connections without Origin header (single-user mode)
+    if origin is None:
+        return True
+
+    # Allow standard UI origins
+    if origin in CORS_ORIGINS:
+        return True
+
+    # Allow null origin (file://, local files)
+    if origin == "null":
+        return True
+
+    return False
 
 
 def _check_rate_limit(chat_id: int) -> bool:
