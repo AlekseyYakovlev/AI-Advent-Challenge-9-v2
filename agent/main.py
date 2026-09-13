@@ -22,7 +22,7 @@ from agent.schemas import (
     SettingsUpdate,
 )
 from agent.llm_client import LMStudioClient
-from agent.state import CORS_ORIGINS, cleanup_chat_caches
+from agent.state import cleanup_chat_caches
 from agent.ws import register_websocket_routes
 from shared.database import async_session_factory, engine, get_session, init_db
 from shared.logger import get_logger
@@ -149,7 +149,7 @@ app = FastAPI(title="AI Agent", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=CORS_ORIGINS,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
