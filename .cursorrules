@@ -1,0 +1,44 @@
+# Project: AI-Agent Decoupled System
+# OS: Windows | Python 3.13 | Single-user
+
+## HARD CONSTRAINTS (NEVER violate)
+- NO Docker, npm, Node.js, Redis, RabbitMQ, Celery
+- NO multiprocessing or os.fork
+- NO authentication (single-user mode)
+- IPC: FastAPI REST + WebSockets ONLY (in-memory state)
+- Frontend: Vanilla JS + CDN only (Tailwind, Marked.js, DOMPurify)
+
+## Architecture
+- Agent process: port 8001 (REST API + WebSocket + LLM)
+- UI process: port 8000 (static files + Agent Supervisor)
+- Shared code: shared/ module
+- DB: SQLite with aiosqlite, WAL mode, busy_timeout=5000
+
+## Code Style
+- Always use type hints
+- Always async/await for I/O
+- Use structlog for logging, NEVER print()
+- Use datetime.now(timezone.utc), NEVER datetime.utcnow()
+- Max 50 lines per function
+- Import order: stdlib → third-party → local
+
+## Database
+- ORM: SQLModel with async sessions
+- Use sa_column=Column(ForeignKey(..., ondelete="CASCADE"))
+- NEVER use Field(ondelete=...) in SQLModel
+- Use .is_(None) instead of == None
+- Always await session.commit() after writes
+- Always await session.rollback() in exception handlers
+
+## Testing
+- Framework: pytest + pytest-asyncio
+- Mock HTTP with respx
+- Run `pytest tests/ -v` after every change
+- Test DB: test_app.db (separate from main app.db)
+
+## Anti-patterns
+- ❌ Bare `except:` clauses
+- ❌ Global variables for chat state
+- ❌ Inserting HTML without DOMPurify.sanitize()
+- ❌ Storing secrets in code (use .env)
+- ❌ websocket.receive_json() without asyncio.wait_for timeout
