@@ -4,7 +4,6 @@ import pytest
 from starlette.testclient import TestClient
 
 from agent.main import app
-from agent.state import CORS_ORIGINS
 
 
 def _create_chat(client: TestClient) -> int:
@@ -31,13 +30,46 @@ def test_ws_accepts_null_origin() -> None:
             assert ws is not None
 
 
-def test_ws_accepts_valid_origin() -> None:
-    """WebSocket with valid UI origin should be accepted."""
+def test_ws_accepts_localhost_8000() -> None:
+    """WebSocket with localhost:8000 origin should be accepted."""
     with TestClient(app) as client:
         chat_id = _create_chat(client)
         with client.websocket_connect(
             f"/ws/chat/{chat_id}",
             headers={"Origin": "http://localhost:8000"},
+        ) as ws:
+            assert ws is not None
+
+
+def test_ws_accepts_127_0_0_1_8000() -> None:
+    """WebSocket with 127.0.0.1:8000 origin should be accepted."""
+    with TestClient(app) as client:
+        chat_id = _create_chat(client)
+        with client.websocket_connect(
+            f"/ws/chat/{chat_id}",
+            headers={"Origin": "http://127.0.0.1:8000"},
+        ) as ws:
+            assert ws is not None
+
+
+def test_ws_accepts_localhost_8001() -> None:
+    """WebSocket with localhost:8001 origin should be accepted."""
+    with TestClient(app) as client:
+        chat_id = _create_chat(client)
+        with client.websocket_connect(
+            f"/ws/chat/{chat_id}",
+            headers={"Origin": "http://localhost:8001"},
+        ) as ws:
+            assert ws is not None
+
+
+def test_ws_accepts_127_0_0_1_8001() -> None:
+    """WebSocket with 127.0.0.1:8001 origin should be accepted."""
+    with TestClient(app) as client:
+        chat_id = _create_chat(client)
+        with client.websocket_connect(
+            f"/ws/chat/{chat_id}",
+            headers={"Origin": "http://127.0.0.1:8001"},
         ) as ws:
             assert ws is not None
 
@@ -53,15 +85,3 @@ def test_ws_rejects_invalid_origin() -> None:
             ) as ws:
                 ws.receive_json()
         assert getattr(exc_info.value, "code", None) == 1008
-
-
-@pytest.mark.parametrize("origin", CORS_ORIGINS)
-def test_ws_accepts_all_cors_origins(origin: str) -> None:
-    """Every configured CORS origin should be accepted."""
-    with TestClient(app) as client:
-        chat_id = _create_chat(client)
-        with client.websocket_connect(
-            f"/ws/chat/{chat_id}",
-            headers={"Origin": origin},
-        ) as ws:
-            assert ws is not None

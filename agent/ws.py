@@ -39,19 +39,31 @@ active_connections: set[WebSocket] = set()
 def _validate_origin(websocket: WebSocket) -> bool:
     """Return True when the request Origin header is allowed or missing (single-user mode)."""
     origin = websocket.headers.get("origin")
+    logger.info("ws_origin_check", origin=origin or "None")
 
-    # Allow connections without Origin header (single-user mode)
     if origin is None:
+        logger.info("ws_origin_allowed", reason="no_origin")
         return True
 
-    # Allow standard UI origins
     if origin in CORS_ORIGINS:
+        logger.info("ws_origin_allowed", reason="cors_origins", origin=origin)
         return True
 
-    # Allow null origin (file://, local files)
     if origin == "null":
+        logger.info("ws_origin_allowed", reason="null_origin")
         return True
 
+    allowed_patterns = [
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+        "http://localhost:8001",
+        "http://127.0.0.1:8001",
+    ]
+    if origin in allowed_patterns:
+        logger.info("ws_origin_allowed", reason="allowed_pattern", origin=origin)
+        return True
+
+    logger.warning("ws_origin_rejected", origin=origin)
     return False
 
 
