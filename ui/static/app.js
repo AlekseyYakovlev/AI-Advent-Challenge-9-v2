@@ -131,6 +131,12 @@ function renderMessages() {
         content.className = 'message-content prose prose-invert prose-sm max-w-none';
         content.innerHTML = isUser ? DOMPurify.sanitize(msg.content) : renderMarkdown(msg.content);
         bubble.appendChild(content);
+        if (msg.token_count && msg.token_count > 0) {
+            const tokenInfo = document.createElement('div');
+            tokenInfo.className = `text-xs mt-1 ${isUser ? 'text-indigo-200' : 'text-slate-400'}`;
+            tokenInfo.textContent = `${msg.token_count} tokens`;
+            bubble.appendChild(tokenInfo);
+        }
         const controls = document.createElement('div');
         controls.innerHTML = branchControlsHtml(msg);
         bubble.appendChild(controls);
@@ -141,6 +147,25 @@ function renderMessages() {
         appendLoadingBubble();
     }
     container.scrollTop = container.scrollHeight;
+    updateTokenStats();
+}
+
+function updateTokenStats() {
+    const totalTokens = state.messages.reduce((sum, msg) => sum + (msg.token_count || 0), 0);
+    const userTokens = state.messages
+        .filter((m) => m.role === 'user')
+        .reduce((sum, msg) => sum + (msg.token_count || 0), 0);
+    const assistantTokens = state.messages
+        .filter((m) => m.role === 'assistant')
+        .reduce((sum, msg) => sum + (msg.token_count || 0), 0);
+    const statsEl = $('token-stats');
+    if (statsEl) {
+        statsEl.innerHTML = `
+            <span class="text-xs text-slate-400">
+                Total: ${totalTokens} tokens
+                (User: ${userTokens}, Assistant: ${assistantTokens})
+            </span>`;
+    }
 }
 
 function appendLoadingBubble() {
@@ -334,6 +359,9 @@ function handleWsMessage(data) {
             removeLoadingBubble();
             if (state.currentChatId) {
                 loadChatTree(state.currentChatId);
+            }
+            if (data.total_tokens) {
+                showToast(`Response generated: ${data.total_tokens} tokens`, 'info');
             }
             break;
         case 'error':

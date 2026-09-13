@@ -53,7 +53,10 @@
         <!-- Main -->
         <main class="flex-1 flex flex-col min-w-0">
             <header class="flex items-center gap-3 px-4 py-3 border-b border-slate-800 bg-slate-900/50">
-                <h1 id="chat-title" class="text-lg font-semibold truncate flex-1">AI Agent</h1>
+                <div class="flex-1 min-w-0">
+                    <h1 id="chat-title" class="text-lg font-semibold truncate">AI Agent</h1>
+                    <div id="token-stats" class="text-xs text-slate-400"></div>
+                </div>
                 <select id="model-select"
                     class="rounded-lg bg-slate-800 border border-slate-700 px-3 py-1.5 text-sm max-w-xs truncate">
                     <option value="">Загрузка моделей…</option>

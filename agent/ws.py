@@ -217,6 +217,9 @@ async def _handle_chat_message(
                 {
                     "type": "done",
                     "message_id": assistant_msg.id,
+                    "user_tokens": user_msg.token_count,
+                    "assistant_tokens": assistant_msg.token_count,
+                    "total_tokens": user_msg.token_count + assistant_msg.token_count,
                 },
             )
 

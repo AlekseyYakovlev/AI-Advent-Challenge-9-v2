@@ -45,7 +45,7 @@ class MessageResponse(BaseModel):
     parent_id: Optional[int] = None
     role: str = Field(max_length=ROLE_MAX_LENGTH)
     content: str = Field(max_length=CONTENT_MAX_LENGTH)
-    token_count: int
+    token_count: int = 0
     created_at: datetime
 
 
