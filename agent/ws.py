@@ -245,6 +245,7 @@ async def _handle_chat_message(
                         "type": "error",
                         "detail": str(exc),
                         "code": "CONTEXT_OVERFLOW",
+                        "suggested_strategy": "sliding",
                     },
                 )
                 await session.delete(user_msg)

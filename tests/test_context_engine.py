@@ -10,7 +10,7 @@ from sqlmodel import select
 
 from agent.context_engine import (
     FACTS_DEBOUNCE_SECONDS,
-    SUMMARY_PROMPT,
+    RECENT_MESSAGE_COUNT,
     ContextOverflowError,
     _debounce_tasks,
     _pending_messages,
@@ -139,26 +139,9 @@ async def test_extract_and_update_facts_debounce_and_merge() -> None:
         assert facts["language"] == "Python"
 
 
-@respx.mock
 @pytest.mark.asyncio
-async def test_sticky_facts_triggers_and_accumulates() -> None:
-    """STICKY_FACTS should trigger above 75% and use the English prompt."""
-    captured_prompts: list[str] = []
-
-    def mock_completion(request: httpx.Request) -> httpx.Response:
-        body = json.loads(request.content)
-        captured_prompts.append(body["messages"][0]["content"])
-        return httpx.Response(
-            200,
-            json={
-                "choices": [
-                    {"message": {"content": "Short English summary."}},
-                ],
-            },
-        )
-
-    respx.post(f"{BASE_URL}/v1/chat/completions").mock(side_effect=mock_completion)
-
+async def test_sticky_facts_keeps_first_and_recent_without_duplication() -> None:
+    """STICKY_FACTS should keep first message plus recent messages with no overlap."""
     long_text = "word " * 4000
     messages = [
         {"role": "user", "content": long_text},
@@ -175,14 +158,13 @@ async def test_sticky_facts_triggers_and_accumulates() -> None:
     ])
 
     async with async_session_factory() as session:
-        chat = Chat(title="Summary chat")
+        chat = Chat(title="Sticky chat")
         session.add(chat)
         session.add(
             Settings(
                 chat_id=chat.id,
                 context_length=1000,
                 strategy=ContextStrategy.STICKY_FACTS.value,
-                summary_text="Old summary.",
             ),
         )
         await session.commit()
@@ -190,15 +172,10 @@ async def test_sticky_facts_triggers_and_accumulates() -> None:
 
         trimmed = await build_llm_context(session, chat.id, messages, MODEL)
 
-        assert len(trimmed) == 11
-        assert SUMMARY_PROMPT in captured_prompts[0]
-        result = await session.exec(
-            select(Settings).where(Settings.chat_id == chat.id),
-        )
-        row = result.first()
-        assert row is not None
-        assert "Old summary." in row.summary_text
-        assert "Short English summary." in row.summary_text
+        assert trimmed[0]["content"] == long_text
+        assert trimmed[-1]["content"] == "recent answer"
+        assert len(trimmed) == RECENT_MESSAGE_COUNT + 1
+        assert len(trimmed) == len({msg["content"] for msg in trimmed})
 
 
 @pytest.mark.asyncio

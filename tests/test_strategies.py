@@ -7,8 +7,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlmodel import select
 
 from agent.context_engine import (
-    INITIAL_CONTEXT_COUNT,
-    RECENT_CONTEXT_COUNT,
+    RECENT_MESSAGE_COUNT,
     ContextOverflowError,
     build_llm_context,
 )
@@ -20,6 +19,7 @@ from shared.models import Chat, ContextStrategy, Message, Settings
 
 BASE_URL = settings.LM_STUDIO_BASE_URL
 MODEL = "test-model"
+TRUNCATE_INITIAL_COUNT = 2
 
 
 async def _append_messages(
@@ -103,13 +103,13 @@ async def test_truncate_middle_preserves_database() -> None:
 @respx.mock
 @pytest.mark.asyncio
 async def test_truncate_middle_sends_beginning_and_end() -> None:
-    """TRUNCATE_MIDDLE should send first and last messages to LLM."""
+    """TRUNCATE_MIDDLE should send first two and last messages to LLM."""
     respx.post(f"{BASE_URL}/v1/chat/completions").mock(
         return_value=httpx.Response(
             200,
             json={
                 "choices": [
-                    {"message": {"content": "Middle part was about testing."}},
+                    {"message": {"content": "Should not be called."}},
                 ],
             },
         ),
@@ -130,6 +130,7 @@ async def test_truncate_middle_sends_beginning_and_end() -> None:
         )
 
         first_msg = "FIRST_MESSAGE_IMPORTANT_CONTEXT " + "x" * 200
+        second_msg = "SECOND_MESSAGE_IMPORTANT " + "a" * 200
         middle_msg = "MIDDLE_MESSAGE_CUT " + "y" * 200
         last_msg = "LAST_MESSAGE_RECENT " + "z" * 200
         padding = " word" * 80
@@ -139,7 +140,8 @@ async def test_truncate_middle_sends_beginning_and_end() -> None:
             assert chat is not None
             contents: list[str] = []
             contents.extend(
-                (first_msg if i == 0 else f"first_{i}{padding}") for i in range(5)
+                (first_msg if i == 0 else second_msg if i == 1 else f"first_{i}{padding}")
+                for i in range(5)
             )
             contents.extend(
                 (middle_msg if i == 0 else f"middle_{i}{padding}") for i in range(10)
@@ -157,25 +159,16 @@ async def test_truncate_middle_sends_beginning_and_end() -> None:
             )
 
         assert llm_context[0]["content"] == first_msg
+        assert llm_context[1]["content"] == second_msg
         assert llm_context[-1]["content"] == last_msg
-        assert any(
-            msg["role"] == "system" and "[Middle summary]" in msg["content"]
-            for msg in llm_context
-        )
         assert middle_msg not in {msg["content"] for msg in llm_context}
+        assert len(respx.calls) == 0
 
 
 @respx.mock
 @pytest.mark.asyncio
 async def test_truncate_middle_keeps_initial_and_recent_counts() -> None:
-    """TRUNCATE_MIDDLE keeps first 5 and last 10 messages for LLM."""
-    respx.post(f"{BASE_URL}/v1/chat/completions").mock(
-        return_value=httpx.Response(
-            200,
-            json={"choices": [{"message": {"content": "Summary."}}]},
-        ),
-    )
-
+    """TRUNCATE_MIDDLE keeps first 2 and last 10 messages for LLM."""
     async with async_session_factory() as session:
         chat = Chat(title="Truncate counts")
         session.add(chat)
@@ -200,12 +193,13 @@ async def test_truncate_middle_keeps_initial_and_recent_counts() -> None:
     user_contents = [
         msg["content"] for msg in llm_context if msg["role"] == "user"
     ]
-    assert user_contents[:INITIAL_CONTEXT_COUNT] == [
-        f"msg_{i}{padding}" for i in range(INITIAL_CONTEXT_COUNT)
+    assert user_contents[:TRUNCATE_INITIAL_COUNT] == [
+        f"msg_{i}{padding}" for i in range(TRUNCATE_INITIAL_COUNT)
     ]
-    assert user_contents[-RECENT_CONTEXT_COUNT:] == [
+    assert user_contents[-RECENT_MESSAGE_COUNT:] == [
         f"msg_{i}{padding}" for i in range(15, 25)
     ]
+    assert len(llm_context) == TRUNCATE_INITIAL_COUNT + RECENT_MESSAGE_COUNT
 
 
 @pytest.mark.asyncio
@@ -247,7 +241,7 @@ async def test_branching_strategy_fallback() -> None:
 
         llm_context = await build_llm_context(session, chat_id, all_messages, MODEL)
 
-    assert len(llm_context) == RECENT_CONTEXT_COUNT
+    assert len(llm_context) == RECENT_MESSAGE_COUNT
 
 
 @pytest.mark.asyncio
@@ -273,7 +267,7 @@ async def test_sliding_window_strategy() -> None:
 
         llm_context = await build_llm_context(session, chat.id, all_messages, MODEL)
 
-    assert len(llm_context) == RECENT_CONTEXT_COUNT
+    assert len(llm_context) == RECENT_MESSAGE_COUNT
     assert llm_context[-1]["content"].startswith("msg_19")
 
 
@@ -303,17 +297,9 @@ async def test_no_compression_sends_all_messages() -> None:
     assert len(llm_context) == len(all_messages)
 
 
-@respx.mock
 @pytest.mark.asyncio
 async def test_sticky_facts_strategy() -> None:
-    """STICKY_FACTS should summarize old messages and keep recent ones."""
-    respx.post(f"{BASE_URL}/v1/chat/completions").mock(
-        return_value=httpx.Response(
-            200,
-            json={"choices": [{"message": {"content": "Sticky summary."}}]},
-        ),
-    )
-
+    """STICKY_FACTS should keep the first message and recent messages."""
     async with async_session_factory() as session:
         chat = Chat(title="Sticky")
         session.add(chat)
@@ -334,18 +320,37 @@ async def test_sticky_facts_strategy() -> None:
 
         llm_context = await build_llm_context(session, chat.id, all_messages, MODEL)
 
-        result = await session.exec(
-            select(Settings).where(Settings.chat_id == chat.id),
-        )
-        row = result.first()
-        assert row is not None
+    assert llm_context[0]["content"].startswith("msg_0")
+    assert llm_context[-1]["content"].startswith("msg_19")
+    assert len(llm_context) == RECENT_MESSAGE_COUNT + 1
+    assert len(llm_context) == len({msg["content"] for msg in llm_context})
 
-    assert any(
-        msg["role"] == "system" and "Previous conversation summary" in msg["content"]
-        for msg in llm_context
-    )
-    assert len([msg for msg in llm_context if msg["role"] == "user"]) == RECENT_CONTEXT_COUNT
-    assert "Sticky summary." in row.summary_text
+
+@pytest.mark.asyncio
+async def test_sticky_facts_no_duplication_small_chat() -> None:
+    """STICKY_FACTS with <=10 messages should not duplicate the first message."""
+    async with async_session_factory() as session:
+        chat = Chat(title="Sticky small")
+        session.add(chat)
+        await session.commit()
+        await session.refresh(chat)
+        session.add(
+            Settings(
+                chat_id=chat.id,
+                strategy=ContextStrategy.STICKY_FACTS.value,
+                context_length=512,
+            ),
+        )
+        await session.commit()
+
+        contents = [f"msg_{i}" + " word" * 50 for i in range(5)]
+        await _append_messages(session, chat, contents)
+        all_messages = await _load_message_dicts(session, chat)
+
+        llm_context = await build_llm_context(session, chat.id, all_messages, MODEL)
+
+    assert len(llm_context) == 5
+    assert len(llm_context) == len({msg["content"] for msg in llm_context})
 
 
 @pytest.mark.asyncio
@@ -402,16 +407,8 @@ async def test_sliding_window_preserves_database(client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-@respx.mock
 async def test_sticky_facts_preserves_database(client: AsyncClient) -> None:
     """STICKY_FACTS: all messages preserved in DB."""
-    respx.post(f"{BASE_URL}/v1/chat/completions").mock(
-        return_value=httpx.Response(
-            200,
-            json={"choices": [{"message": {"content": "Summary."}}]},
-        ),
-    )
-
     chat_resp = await client.post("/api/v1/chats", json={"title": "Test"})
     chat_id = chat_resp.json()["id"]
 
