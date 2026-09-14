@@ -14,6 +14,7 @@ class ContextStrategy(str, Enum):
     SLIDING = "sliding"
     STICKY = "sticky"
     BRANCHING = "branching"
+    NO_COMPRESSION = "no_compression"
 
 
 class Chat(SQLModel, table=True):
@@ -76,6 +77,7 @@ class Settings(SQLModel, table=True):
     )
     system_prompt: str = Field(default="You are a helpful assistant.")
     temperature: float = Field(default=0.7)
+    context_length: int = Field(default=4096)
     max_tokens: int = Field(default=4096)
     strategy: ContextStrategy = Field(default=ContextStrategy.SLIDING)
     facts_json: str = Field(default="{}")

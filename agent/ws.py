@@ -182,6 +182,7 @@ async def _handle_chat_message(
             ]
             effective = await get_effective_settings(session, chat_id)
             temperature = effective.temperature
+            context_length = effective.context_length
             max_tokens = effective.max_tokens
 
             assistant_text = ""
@@ -193,6 +194,7 @@ async def _handle_chat_message(
                     payload.model,
                     temperature,
                     max_tokens,
+                    context_length,
                 ):
                     assistant_text += token
                     await websocket.send_json(

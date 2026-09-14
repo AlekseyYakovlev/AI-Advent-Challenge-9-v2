@@ -59,6 +59,7 @@ async def test_update_global_settings(client: AsyncClient) -> None:
         "/api/v1/settings",
         json={
             "chat_id": None,
+            "context_length": 8192,
             "max_tokens": 8192,
             "strategy": "sticky",
         },
@@ -66,8 +67,32 @@ async def test_update_global_settings(client: AsyncClient) -> None:
     assert resp.status_code == 200
     data = resp.json()
     assert data["chat_id"] is None
+    assert data["context_length"] == 8192
     assert data["max_tokens"] == 8192
     assert data["strategy"] == "sticky"
+
+
+@pytest.mark.asyncio
+async def test_context_length_persists(client: AsyncClient) -> None:
+    """context_length should save and reload correctly."""
+    await client.put(
+        "/api/v1/settings",
+        json={"chat_id": None, "context_length": 2048},
+    )
+    resp = await client.get("/api/v1/settings")
+    assert resp.status_code == 200
+    assert resp.json()["context_length"] == 2048
+
+
+@pytest.mark.asyncio
+async def test_no_compression_strategy(client: AsyncClient) -> None:
+    """no_compression strategy should be accepted and returned."""
+    resp = await client.put(
+        "/api/v1/settings",
+        json={"chat_id": None, "strategy": "no_compression"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["strategy"] == "no_compression"
 
 
 @pytest.mark.asyncio

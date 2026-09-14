@@ -98,13 +98,20 @@
                     <label for="settings-per-chat" class="text-sm">Настройки для текущего чата</label>
                 </div>
                 <div>
-                    <label for="settings-strategy" class="block text-sm text-slate-400 mb-1">Стратегия контекста</label>
+                    <label for="settings-strategy" class="block text-sm text-slate-400 mb-1">Стратегия сжатия контекста</label>
                     <select id="settings-strategy"
                         class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
-                        <option value="sliding">Sliding Window</option>
-                        <option value="sticky">Sticky Facts</option>
-                        <option value="branching">Branching</option>
+                        <option value="sliding">Sliding Window (Скользящее окно)</option>
+                        <option value="sticky">Sticky Facts (Ключевые факты)</option>
+                        <option value="branching">Branching (Ветвление)</option>
+                        <option value="no_compression">Без сжатия (No Compression)</option>
                     </select>
+                </div>
+                <div>
+                    <label for="settings-context-length" class="block text-sm text-slate-400 mb-1">Context Length (tokens)</label>
+                    <input type="number" id="settings-context-length" min="512" max="131072" step="512" value="4096"
+                        class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
+                    <p class="text-xs text-slate-500 mt-1">Maximum context window size</p>
                 </div>
                 <div>
                     <label for="settings-temperature" class="block text-sm text-slate-400 mb-1">
@@ -114,9 +121,10 @@
                         class="w-full accent-indigo-500">
                 </div>
                 <div>
-                    <label for="settings-max-tokens" class="block text-sm text-slate-400 mb-1">Max tokens</label>
-                    <input type="number" id="settings-max-tokens" min="1" max="128000" value="4096"
+                    <label for="settings-max-tokens" class="block text-sm text-slate-400 mb-1">Max Tokens (response)</label>
+                    <input type="number" id="settings-max-tokens" min="256" max="128000" step="256" value="4096"
                         class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
+                    <p class="text-xs text-slate-500 mt-1">Maximum response length</p>
                 </div>
                 <div>
                     <label for="settings-system-prompt" class="block text-sm text-slate-400 mb-1">System prompt</label>

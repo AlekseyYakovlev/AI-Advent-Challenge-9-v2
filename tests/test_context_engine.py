@@ -20,7 +20,7 @@ from agent.context_engine import (
 )
 from shared.config import settings
 from shared.database import async_session_factory
-from shared.models import Chat, Settings
+from shared.models import Chat, ContextStrategy, Settings
 
 BASE_URL = settings.LM_STUDIO_BASE_URL
 MODEL = "test-model"
@@ -174,7 +174,7 @@ async def test_summarize_if_needed_triggers_and_accumulates() -> None:
         session.add(
             Settings(
                 chat_id=chat.id,
-                max_tokens=1000,
+                context_length=1000,
                 summary_text="Old summary.",
             ),
         )
@@ -205,9 +205,48 @@ async def test_summarize_if_needed_skips_below_threshold() -> None:
     async with async_session_factory() as session:
         chat = Chat(title="Small chat")
         session.add(chat)
-        session.add(Settings(chat_id=chat.id, max_tokens=4096))
+        session.add(Settings(chat_id=chat.id, context_length=4096))
         await session.commit()
         await session.refresh(chat)
 
         result = await summarize_if_needed(session, chat.id, messages, MODEL)
         assert result == messages
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_summarize_if_needed_skips_no_compression() -> None:
+    """NO_COMPRESSION strategy should never trigger summarization."""
+    respx.post(f"{BASE_URL}/v1/chat/completions").mock(
+        return_value=httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "Should not run."}}]},
+        ),
+    )
+
+    long_text = "word " * 4000
+    messages = [
+        {"role": "user", "content": long_text},
+        {"role": "assistant", "content": "reply one"},
+        {"role": "user", "content": "older question"},
+        {"role": "assistant", "content": "older answer"},
+        {"role": "user", "content": "recent question"},
+        {"role": "assistant", "content": "recent answer"},
+    ]
+
+    async with async_session_factory() as session:
+        chat = Chat(title="No compression chat")
+        session.add(chat)
+        session.add(
+            Settings(
+                chat_id=chat.id,
+                context_length=1000,
+                strategy=ContextStrategy.NO_COMPRESSION,
+            ),
+        )
+        await session.commit()
+        await session.refresh(chat)
+
+        result = await summarize_if_needed(session, chat.id, messages, MODEL)
+        assert result == messages
+        assert len(respx.calls) == 0

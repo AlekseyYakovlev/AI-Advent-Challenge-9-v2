@@ -516,6 +516,7 @@ async function openSettingsModal() {
     const query = chatId ? `?chat_id=${chatId}` : '';
     const settings = await apiFetch(`/api/v1/settings${query}`);
     $('settings-strategy').value = settings.strategy;
+    $('settings-context-length').value = settings.context_length || 4096;
     $('settings-temperature').value = settings.temperature;
     $('temperature-value').textContent = settings.temperature;
     $('settings-max-tokens').value = settings.max_tokens;
@@ -532,6 +533,7 @@ async function saveSettings(event) {
     const perChat = $('settings-per-chat').checked;
     const body = {
         strategy: $('settings-strategy').value,
+        context_length: parseInt($('settings-context-length').value, 10),
         temperature: parseFloat($('settings-temperature').value),
         max_tokens: parseInt($('settings-max-tokens').value, 10),
         system_prompt: $('settings-system-prompt').value,

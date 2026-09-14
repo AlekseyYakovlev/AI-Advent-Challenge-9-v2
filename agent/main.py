@@ -85,6 +85,7 @@ def _settings_to_response(row: Settings) -> SettingsResponse:
         chat_id=row.chat_id,
         system_prompt=row.system_prompt,
         temperature=row.temperature,
+        context_length=row.context_length,
         max_tokens=row.max_tokens,
         strategy=row.strategy,
         facts_json=row.facts_json,

@@ -10,7 +10,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from agent.llm_client import llm_client
 from shared.database import async_session_factory
 from shared.logger import get_logger
-from shared.models import Settings
+from shared.models import ContextStrategy, Settings
 
 logger = get_logger(__name__)
 
@@ -154,10 +154,12 @@ async def summarize_if_needed(
     messages: list[dict[str, str]],
     model: str,
 ) -> list[dict[str, str]]:
-    """Summarize older messages when context exceeds 75% of max_tokens."""
+    """Summarize older messages when context exceeds 75% of context_length."""
     settings_row = await get_effective_settings(session, chat_id)
+    if settings_row.strategy == ContextStrategy.NO_COMPRESSION:
+        return messages
     total_tokens = _message_tokens(messages)
-    threshold = int(settings_row.max_tokens * SUMMARY_TRIGGER_RATIO)
+    threshold = int(settings_row.context_length * SUMMARY_TRIGGER_RATIO)
     if total_tokens <= threshold or len(messages) <= RECENT_PAIR_COUNT * 2:
         return messages
 

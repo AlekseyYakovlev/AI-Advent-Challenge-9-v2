@@ -64,7 +64,8 @@ class SettingsUpdate(BaseModel):
         max_length=SYSTEM_PROMPT_MAX_LENGTH,
     )
     temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
-    max_tokens: Optional[int] = Field(default=None, gt=0)
+    context_length: Optional[int] = Field(default=None, ge=512, le=131072)
+    max_tokens: Optional[int] = Field(default=None, ge=256, le=128000)
     strategy: Optional[ContextStrategy] = None
     facts_json: Optional[str] = Field(
         default=None,
@@ -83,6 +84,7 @@ class SettingsResponse(BaseModel):
     chat_id: Optional[int] = None
     system_prompt: str = Field(max_length=SYSTEM_PROMPT_MAX_LENGTH)
     temperature: float
+    context_length: int
     max_tokens: int
     strategy: ContextStrategy
     facts_json: str = Field(max_length=FACTS_JSON_MAX_LENGTH)

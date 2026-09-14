@@ -68,6 +68,7 @@ class LLMClient:
         model: str,
         temperature: float,
         max_tokens: int,
+        context_length: int | None = None,
     ) -> AsyncGenerator[str, None]:
         """Stream chat completion tokens via SSE."""
         url = f"{self._base_url}/v1/chat/completions"
@@ -81,6 +82,11 @@ class LLMClient:
             "max_tokens": max_tokens,
             "stream": True,
         }
+        logger.debug(
+            "stream_chat_start",
+            context_length=context_length,
+            message_count=len(messages),
+        )
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 async with client.stream(
