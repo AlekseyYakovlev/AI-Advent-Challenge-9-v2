@@ -107,8 +107,8 @@ async def build_llm_context(
     context_length = getattr(settings_row, 'context_length', 4096)
     threshold = int(context_length * SUMMARY_TRIGGER_RATIO)
     strategy = settings_row.strategy
-
-    if strategy == ContextStrategy.NO_COMPRESSION.value and total_tokens > context_length:
+    
+    if strategy == ContextStrategy.NO_COMPRESSION and total_tokens > context_length:
         logger.error(
             "context_overflow_no_compression",
             chat_id=chat_id,
@@ -124,30 +124,30 @@ async def build_llm_context(
     if total_tokens <= threshold or len(all_messages) <= (RECENT_PAIR_COUNT * 2):
         logger.info("context_under_threshold", chat_id=chat_id, tokens=total_tokens, strategy=strategy)
         return all_messages
-    
-    if strategy == ContextStrategy.NO_COMPRESSION.value:
+
+    if strategy == ContextStrategy.NO_COMPRESSION:
         logger.info("strategy_no_compression", chat_id=chat_id, messages_count=len(all_messages), tokens=total_tokens)
         return all_messages
     
-    if strategy == ContextStrategy.SLIDING_WINDOW.value:
-        recent_count = RECENT_CONTEXT_COUNT
+    if strategy == ContextStrategy.SLIDING_WINDOW:
+        recent_count = RECENT_PAIR_COUNT * 2
         recent = all_messages[-recent_count:]
         logger.info("strategy_sliding_window", chat_id=chat_id, total=len(all_messages), sent=len(recent))
         return recent
     
-    if strategy == ContextStrategy.STICKY_FACTS.value:
+    if strategy == ContextStrategy.STICKY_FACTS:
         logger.info("strategy_sticky_facts", chat_id=chat_id, total_messages=len(all_messages))
         return await _build_sticky_context(session, chat_id, all_messages, model, settings_row)
     
-    if strategy == ContextStrategy.TRUNCATE_MIDDLE.value:
+    if strategy == ContextStrategy.TRUNCATE_MIDDLE:
         logger.info("strategy_truncate_middle", chat_id=chat_id, total_messages=len(all_messages))
         return await _build_truncate_middle_context(session, chat_id, all_messages, model)
     
     logger.warning("strategy_unknown_fallback", strategy=strategy)
-    return all_messages[-RECENT_CONTEXT_COUNT:]
+    return all_messages[-(RECENT_PAIR_COUNT * 2):]
 
 async def _build_sticky_context(session: AsyncSession, chat_id: int, all_messages: list[dict[str, str]], model: str, settings_row: Settings) -> list[dict[str, str]]:
-    recent_count = RECENT_CONTEXT_COUNT
+    recent_count = RECENT_PAIR_COUNT * 2
     to_summarize = all_messages[:-recent_count]
     recent = all_messages[-recent_count:]
     if not to_summarize:
