@@ -78,8 +78,10 @@ async def _resolve_settings(
     return await _ensure_global_settings(session)
 
 
-def _normalize_strategy(strategy: str) -> ContextStrategy:
+def _normalize_strategy(strategy: str | ContextStrategy) -> ContextStrategy:
     """Map stored strategy strings to a valid enum, including legacy values."""
+    if isinstance(strategy, ContextStrategy):
+        return strategy
     valid = {item.value for item in ContextStrategy}
     if strategy in valid:
         return ContextStrategy(strategy)

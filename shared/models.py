@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
-from sqlalchemy import Column, ForeignKey, Integer
+from sqlalchemy import Column, Enum as SAEnum, ForeignKey, Integer
 from sqlmodel import Field, SQLModel
 
 
@@ -77,9 +77,17 @@ class Settings(SQLModel, table=True):
     )
     system_prompt: str = Field(default="You are a helpful assistant.")
     temperature: float = Field(default=0.7)
-    context_length: int = Field(default=4096)
+    context_length: int = Field(default=4096, ge=512, le=16384)
     max_tokens: int = Field(default=4096)
-    strategy: str = Field(default=ContextStrategy.SLIDING_WINDOW.value)
+    strategy: ContextStrategy = Field(
+        default=ContextStrategy.SLIDING_WINDOW,
+        sa_column=Column(
+            SAEnum(
+                ContextStrategy,
+                values_callable=lambda enum_cls: [member.value for member in enum_cls],
+            ),
+        ),
+    )
     facts_json: str = Field(default="{}")
     summary_text: str = Field(default="")
 

@@ -210,26 +210,42 @@ async def test_truncate_middle_keeps_initial_and_recent_counts() -> None:
 
 @pytest.mark.asyncio
 async def test_branching_strategy_fallback() -> None:
-    """Legacy branching strategy should fall back to recent messages."""
+    """Legacy branching strategy should migrate to sliding and trim to recent messages."""
+    from sqlalchemy import text
+
+    from migrate_strategies import migrate
+
     async with async_session_factory() as session:
         chat = Chat(title="Branching legacy")
         session.add(chat)
         await session.commit()
         await session.refresh(chat)
-        session.add(
-            Settings(
-                chat_id=chat.id,
-                strategy="branching",
-                context_length=512,
+        chat_id = chat.id
+        await session.execute(
+            text(
+                "INSERT INTO settings (chat_id, system_prompt, temperature, "
+                "context_length, max_tokens, strategy, facts_json, summary_text) "
+                "VALUES (:chat_id, 'You are a helpful assistant.', 0.7, 512, 4096, "
+                "'branching', '{}', '')"
             ),
+            {"chat_id": chat_id},
         )
         await session.commit()
 
+    await migrate()
+
+    async with async_session_factory() as session:
+        settings_row = (
+            await session.exec(select(Settings).where(Settings.chat_id == chat_id))
+        ).one()
+        assert settings_row.strategy == ContextStrategy.SLIDING_WINDOW
+
+        chat = (await session.exec(select(Chat).where(Chat.id == chat_id))).one()
         contents = [f"msg_{i}" + " word" * 50 for i in range(20)]
         await _append_messages(session, chat, contents)
         all_messages = await _load_message_dicts(session, chat)
 
-        llm_context = await build_llm_context(session, chat.id, all_messages, MODEL)
+        llm_context = await build_llm_context(session, chat_id, all_messages, MODEL)
 
     assert len(llm_context) == RECENT_CONTEXT_COUNT
 
