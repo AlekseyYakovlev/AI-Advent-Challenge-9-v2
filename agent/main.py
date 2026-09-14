@@ -23,7 +23,7 @@ from agent.schemas import (
 )
 from agent.llm_client import LMStudioClient
 from agent.state import cleanup_chat_caches
-from agent.ws import ws_chat
+from agent.ws import _compute_chat_stats, ws_chat
 from shared.database import async_session_factory, engine, get_session, init_db
 from shared.logger import get_logger
 from shared.models import Chat, ContextStrategy, Message, Settings
@@ -245,6 +245,16 @@ async def get_chat_tree(
     chat = await _get_chat_or_404(session, chat_id)
     path = await _build_tree_path(session, chat)
     return [_message_to_response(msg) for msg in path]
+
+
+@app.get("/api/v1/chats/{chat_id}/stats")
+async def get_chat_stats(
+    chat_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, int | float]:
+    """Get real-time statistics for a chat."""
+    chat = await _get_chat_or_404(session, chat_id)
+    return await _compute_chat_stats(session, chat, chat_id)
 
 
 @app.post(

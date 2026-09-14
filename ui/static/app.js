@@ -150,6 +150,43 @@ function renderMessages() {
     updateTokenStats();
 }
 
+function updateStats(stats) {
+    if (!stats) return;
+
+    const requestEl = $('stats-request-tokens');
+    const responseEl = $('stats-response-tokens');
+    const contextEl = $('stats-current-context');
+    const usageBar = $('stats-usage-bar');
+    const usagePercent = $('stats-usage-percent');
+
+    if (requestEl) requestEl.textContent = `${stats.total_request_tokens} tokens`;
+    if (responseEl) responseEl.textContent = `${stats.total_response_tokens} tokens`;
+    if (contextEl) contextEl.textContent = `${stats.current_context_size} / ${stats.context_window_size}`;
+
+    const percent = stats.context_usage_percent || 0;
+    if (usageBar) usageBar.style.width = `${Math.min(percent, 100)}%`;
+    if (usagePercent) usagePercent.textContent = `${percent}%`;
+
+    if (usageBar) {
+        if (percent > 90) {
+            usageBar.className = 'absolute left-0 top-0 h-full bg-red-500 rounded-full transition-all';
+        } else if (percent > 75) {
+            usageBar.className = 'absolute left-0 top-0 h-full bg-yellow-500 rounded-full transition-all';
+        } else {
+            usageBar.className = 'absolute left-0 top-0 h-full bg-indigo-500 rounded-full transition-all';
+        }
+    }
+}
+
+async function loadChatStats(chatId) {
+    try {
+        const stats = await apiFetch(`/api/v1/chats/${chatId}/stats`);
+        updateStats(stats);
+    } catch (err) {
+        console.error('Failed to load stats:', err);
+    }
+}
+
 function updateTokenStats() {
     const totalTokens = state.messages.reduce((sum, msg) => sum + (msg.token_count || 0), 0);
     const userTokens = state.messages
@@ -266,6 +303,7 @@ async function selectChat(chatId) {
     $('chat-title').textContent = chat?.title || 'Чат';
     renderChatList();
     await loadChatTree(chatId);
+    await loadChatStats(chatId);
     connectWs(chatId);
 }
 
@@ -360,8 +398,12 @@ function handleWsMessage(data) {
             if (state.currentChatId) {
                 loadChatTree(state.currentChatId);
             }
-            if (data.total_tokens) {
-                showToast(`Response generated: ${data.total_tokens} tokens`, 'info');
+            if (data.stats) {
+                updateStats(data.stats);
+                showToast(
+                    `Ответ: ${data.stats.total_response_tokens} tokens, контекст: ${data.stats.context_usage_percent}%`,
+                    'info',
+                );
             }
             break;
         case 'error':
@@ -546,6 +588,10 @@ async function saveSettings(event) {
     await apiFetch('/api/v1/settings', { method: 'PUT', body: JSON.stringify(body) });
     showToast('Настройки сохранены', 'success');
     closeSettingsModal();
+
+    if (state.currentChatId && body.context_length) {
+        await loadChatStats(state.currentChatId);
+    }
 }
 
 function bindEvents() {
