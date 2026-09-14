@@ -19,6 +19,7 @@ const state = {
     reconnectAttempt: 0,
     reconnectTimer: null,
     shouldReconnect: true,
+    lastFailedMessage: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -30,6 +31,7 @@ function showToast(message, type = 'error') {
         error: 'bg-red-900/90 border-red-700',
         info: 'bg-slate-800/90 border-slate-600',
         success: 'bg-emerald-900/90 border-emerald-700',
+        warning: 'bg-yellow-900/90 border-yellow-700',
     };
     el.className = `px-4 py-3 rounded-lg border text-sm shadow-lg ${colors[type] || colors.info}`;
     el.textContent = message;
@@ -387,7 +389,7 @@ function connectWs(chatId) {
     };
 }
 
-function blockInputWithMessage(message) {
+function blockInputWithMessage(message, suggestedStrategy = 'sliding') {
     const input = $('message-input');
     const sendBtn = $('btn-send');
 
@@ -397,11 +399,19 @@ function blockInputWithMessage(message) {
     }
     if (sendBtn) sendBtn.disabled = true;
 
-    let bannerContainer = $('overflow-banner-container');
+    const bannerContainer = $('overflow-banner-container');
     if (bannerContainer && !bannerContainer.hasChildNodes()) {
         const banner = document.createElement('div');
         banner.id = 'overflow-banner';
         banner.className = 'bg-red-900/50 border border-red-700 rounded-lg p-4 mb-4';
+
+        const strategyNames = {
+            sliding: 'Sliding Window',
+            sticky: 'Sticky Facts',
+            truncate_middle: 'Truncate Middle',
+            no_compression: 'Без сжатия',
+        };
+
         banner.innerHTML = `
             <div class="flex items-start gap-3">
                 <svg class="w-6 h-6 text-red-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -410,9 +420,16 @@ function blockInputWithMessage(message) {
                 <div class="flex-1">
                     <h3 class="text-red-200 font-semibold mb-1">Контекст переполнен</h3>
                     <p class="text-red-300 text-sm mb-3">${message}</p>
-                    <button onclick="openSettingsModal()" class="bg-red-700 hover:bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition">
-                        Изменить стратегию сжатия
-                    </button>
+                    <div class="flex gap-2">
+                        <button onclick="autoSwitchStrategy('${suggestedStrategy}')"
+                                class="bg-red-700 hover:bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition">
+                            Переключить на ${strategyNames[suggestedStrategy] || suggestedStrategy}
+                        </button>
+                        <button onclick="openSettingsModal()"
+                                class="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition">
+                            Открыть настройки
+                        </button>
+                    </div>
                 </div>
             </div>
         `;
@@ -433,6 +450,32 @@ function unblockInput() {
     if (banner) banner.remove();
 }
 
+async function autoSwitchStrategy(strategy, retryCount = 0) {
+    try {
+        const body = {
+            strategy,
+            chat_id: state.currentChatId || null,
+        };
+
+        await apiFetch('/api/v1/settings', { method: 'PUT', body: JSON.stringify(body) });
+        showToast(`Стратегия изменена на ${strategy}`, 'success');
+        unblockInput();
+
+        const lastMessage = state.lastFailedMessage;
+        if (lastMessage) {
+            state.lastFailedMessage = null;
+            await sendMessage(lastMessage);
+        }
+    } catch (err) {
+        if (retryCount < 3) {
+            showToast(`Ошибка сети. Повторная попытка ${retryCount + 1}/3...`, 'warning');
+            setTimeout(() => autoSwitchStrategy(strategy, retryCount + 1), 2000);
+        } else {
+            showToast('Не удалось сменить стратегию: ' + err.message, 'error');
+        }
+    }
+}
+
 function handleWsMessage(data) {
     switch (data.type) {
         case 'token':
@@ -442,6 +485,7 @@ function handleWsMessage(data) {
             setStreaming(false);
             removeLoadingBubble();
             unblockInput();
+            state.lastFailedMessage = null;
             if (data.stats) updateStats(data.stats);
             if (state.currentChatId) loadChatTree(state.currentChatId);
             break;
@@ -450,7 +494,13 @@ function handleWsMessage(data) {
             removeLoadingBubble();
 
             if (data.code === 'CONTEXT_OVERFLOW') {
-                blockInputWithMessage(data.detail);
+                const input = $('message-input');
+                if (input && input.value) {
+                    state.lastFailedMessage = input.value;
+                }
+
+                const suggestedStrategy = data.suggested_strategy || 'sliding';
+                blockInputWithMessage(data.detail, suggestedStrategy);
                 showToast('⚠️ ' + data.detail, 'error');
             } else {
                 showToast(data.detail || 'Ошибка', 'error');
@@ -467,18 +517,31 @@ function handleWsMessage(data) {
 
 async function sendMessage(content) {
     if (!state.currentChatId || !content.trim() || state.isStreaming) return;
+
     if (!state.selectedModel) {
         showToast('Выберите модель', 'error');
         return;
     }
+
     if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
         showToast('WebSocket не подключён', 'error');
         connectWs(state.currentChatId);
         return;
     }
+
+    const trimmed = content.trim();
+    state.lastFailedMessage = trimmed;
+
     setStreaming(true);
     appendLoadingBubble();
-    state.ws.send(JSON.stringify({ content: content.trim(), model: state.selectedModel }));
+
+    state.ws.send(JSON.stringify({
+        content: trimmed,
+        model: state.selectedModel,
+    }));
+
+    const input = $('message-input');
+    if (input) input.value = '';
 }
 
 async function branchFromMessage(messageId) {
@@ -602,8 +665,18 @@ async function openSettingsModal() {
     const chatId = perChat && state.currentChatId ? state.currentChatId : null;
     const query = chatId ? `?chat_id=${chatId}` : '';
     const settings = await apiFetch(`/api/v1/settings${query}`);
+
     $('settings-strategy').value = settings.strategy;
-    $('settings-context-length').value = settings.context_length || 4096;
+
+    const contextLength = settings.context_length || 4096;
+    $('settings-context-length').value = contextLength;
+    $('context-length-value').textContent = contextLength;
+
+    const warning = $('context-length-warning');
+    if (warning) {
+        warning.style.display = contextLength > 8192 ? 'block' : 'none';
+    }
+
     $('settings-temperature').value = settings.temperature;
     $('temperature-value').textContent = settings.temperature;
     $('settings-max-tokens').value = settings.max_tokens;
@@ -645,9 +718,7 @@ function bindEvents() {
     $('btn-new-chat').addEventListener('click', () => createChat().catch((e) => showToast(e.message)));
     $('chat-form').addEventListener('submit', (e) => {
         e.preventDefault();
-        const input = $('message-input');
-        const text = input.value;
-        input.value = '';
+        const text = $('message-input').value;
         sendMessage(text).catch((err) => {
             setStreaming(false);
             removeLoadingBubble();
@@ -670,6 +741,15 @@ function bindEvents() {
     });
     $('settings-temperature').addEventListener('input', (e) => {
         $('temperature-value').textContent = e.target.value;
+    });
+    $('settings-context-length').addEventListener('input', (e) => {
+        const val = parseInt(e.target.value, 10);
+        $('context-length-value').textContent = val;
+
+        const warning = $('context-length-warning');
+        if (warning) {
+            warning.style.display = val > 8192 ? 'block' : 'none';
+        }
     });
     $('model-select').addEventListener('change', (e) => {
         onModelSelect(e.target.value).catch((err) => showToast(err.message, 'error'));

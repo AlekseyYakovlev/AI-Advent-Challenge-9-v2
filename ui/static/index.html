@@ -127,18 +127,32 @@
                 <div>
                     <label for="settings-strategy" class="block text-sm text-slate-400 mb-1">Стратегия сжатия контекста</label>
                     <select id="settings-strategy" class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
-                        <option value="sliding">Sliding Window (Скользящее окно) — только последние сообщения</option>
-                        <option value="sticky">Sticky Facts (Ключевые факты) — суммари старых + новые</option>
-                        <option value="truncate_middle">Обрезка посередине (Truncate Middle) — сохранить начало и конец</option>
-                        <option value="no_compression">Без сжатия (No Compression) — всё как есть</option>
+                        <option value="sliding">Sliding Window — только последние 10 сообщений</option>
+                        <option value="sticky">Sticky Facts — первое сообщение + последние 10</option>
+                        <option value="truncate_middle">Truncate Middle — первые 2 + последние 10</option>
+                        <option value="no_compression">Без сжатия — всё как есть (риск переполнения)</option>
                     </select>
                     <p class="text-xs text-slate-500 mt-1">Определяет, как формировать контекст для LLM при длинных диалогах</p>
                 </div>
                 <div>
-                    <label for="settings-context-length" class="block text-sm text-slate-400 mb-1">Context Length (tokens)</label>
-                    <input type="number" id="settings-context-length" min="512" max="131072" step="512" value="4096"
-                           class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
-                    <p class="text-xs text-slate-500 mt-1">Максимальный размер контекстного окна</p>
+                    <label for="settings-context-length" class="block text-sm text-slate-400 mb-1">
+                        Context Length (tokens)
+                        <span id="context-length-value" class="text-indigo-400">4096</span>
+                    </label>
+                    <input type="range" id="settings-context-length"
+                           min="512" max="16384" step="512" value="4096"
+                           class="w-full accent-indigo-500">
+                    <div class="flex justify-between text-xs text-slate-500 mt-1">
+                        <span>512</span>
+                        <span>8192</span>
+                        <span>16384</span>
+                    </div>
+                    <p class="text-xs text-slate-500 mt-1">
+                        Максимальный размер контекстного окна. Рекомендуется не превышать лимит вашей модели.
+                    </p>
+                    <p class="text-xs text-yellow-500 mt-1" id="context-length-warning" style="display: none;">
+                        ⚠️ Значения выше 8192 могут не поддерживаться вашей локальной моделью в LM Studio
+                    </p>
                 </div>
                 <div>
                     <label for="settings-temperature" class="block text-sm text-slate-400 mb-1">
