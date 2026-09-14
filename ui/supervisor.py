@@ -3,6 +3,7 @@
 import asyncio
 import os
 import sys
+import time
 from typing import Any
 
 import httpx
@@ -14,8 +15,10 @@ logger = get_logger(__name__)
 
 HEALTHCHECK_INTERVAL = 3.0
 SHUTDOWN_WAIT_SECONDS = 3.0
-AGENT_STARTUP_RETRIES = 10
+AGENT_STARTUP_RETRIES = 20
 AGENT_STARTUP_DELAY = 0.5
+AGENT_STARTUP_CYCLES = 3
+STARTUP_GRACE_SECONDS = 10.0
 
 
 def find_pids_on_port(port: int) -> list[int]:
@@ -51,6 +54,7 @@ class AgentSupervisor:
         self.db_path = db_path
         self.process: asyncio.subprocess.Process | None = None
         self._healthcheck_task: asyncio.Task[None] | None = None
+        self._last_launch_time: float = 0.0
 
     async def start(self) -> None:
         """Clean orphans, launch the agent, and begin health monitoring."""
@@ -88,6 +92,7 @@ class AgentSupervisor:
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
         )
+        self._last_launch_time = time.monotonic()
         logger.info("agent_started", pid=self.process.pid, port=self.agent_port)
 
     async def _shutdown_agent(self) -> None:
@@ -134,13 +139,23 @@ class AgentSupervisor:
 
     async def _wait_for_agent_ready(self) -> None:
         """Wait until health and WebSocket routes are available."""
-        for attempt in range(AGENT_STARTUP_RETRIES):
-            if await self._ping_health() and await self._has_websocket_route():
-                logger.info("agent_ready", port=self.agent_port, attempt=attempt + 1)
-                return
-            await asyncio.sleep(AGENT_STARTUP_DELAY)
-        logger.warning("agent_startup_incomplete", port=self.agent_port)
-        await self._restart_agent()
+        for cycle in range(AGENT_STARTUP_CYCLES):
+            for attempt in range(AGENT_STARTUP_RETRIES):
+                if await self._ping_health() and await self._has_websocket_route():
+                    logger.info(
+                        "agent_ready",
+                        port=self.agent_port,
+                        attempt=attempt + 1,
+                        cycle=cycle + 1,
+                    )
+                    return
+                await asyncio.sleep(AGENT_STARTUP_DELAY)
+            logger.warning(
+                "agent_startup_incomplete",
+                port=self.agent_port,
+                cycle=cycle + 1,
+            )
+            await self._restart_agent()
 
     async def _restart_agent(self) -> None:
         """Kill stale process state and launch a fresh agent."""
@@ -154,7 +169,16 @@ class AgentSupervisor:
         while True:
             try:
                 await asyncio.sleep(HEALTHCHECK_INTERVAL)
-                if not await self._ping_health():
+                process_dead = (
+                    self.process is None or self.process.returncode is not None
+                )
+                if not process_dead:
+                    elapsed = time.monotonic() - self._last_launch_time
+                    if elapsed < STARTUP_GRACE_SECONDS:
+                        continue
+                if process_dead or not await self._ping_health():
+                    logger.warning("agent_unhealthy", port=self.agent_port)
                     await self._restart_agent()
+                    await self._wait_for_agent_ready()
             except asyncio.CancelledError:
                 break

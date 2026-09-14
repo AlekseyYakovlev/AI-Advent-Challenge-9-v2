@@ -68,37 +68,36 @@
                 </button>
             </header>
 
-            <!-- Context Overflow Banner - will be dynamically inserted -->
-            <div id="overflow-banner-container"></div>
-
+            <!-- Chat Statistics Panel -->
+            <div id="stats-panel" class="bg-slate-800 border border-slate-700 rounded-lg p-3 mx-4 mt-4 text-xs text-slate-400">
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <div>
+                        <div class="text-slate-500">Запросы</div>
+                        <div id="stats-request-tokens" class="text-white font-semibold">0 tokens</div>
+                    </div>
+                    <div>
+                        <div class="text-slate-500">Ответы</div>
+                        <div id="stats-response-tokens" class="text-white font-semibold">0 tokens</div>
+                    </div>
+                    <div>
+                        <div class="text-slate-500">Текущий контекст</div>
+                        <div id="stats-current-context" class="text-white font-semibold">0 / 4096</div>
+                    </div>
+                    <div>
+                        <div class="text-slate-500">Использование</div>
+                        <div class="relative h-2 bg-slate-700 rounded-full mt-1">
+                            <div id="stats-usage-bar" class="absolute left-0 top-0 h-full bg-indigo-500 rounded-full transition-all" style="width: 0%"></div>
+                        </div>
+                        <div id="stats-usage-percent" class="text-right text-slate-500 mt-1">0%</div>
+                    </div>
+                </div>
+            </div>
+            <!-- Context Overflow Banner -->
+            <div id="overflow-banner-container" class="mx-4"></div>
             <!-- Chat messages container -->
             <div id="messages" class="flex-1 overflow-y-auto p-4 space-y-4"></div>
 
             <footer class="p-4 border-t border-slate-800 bg-slate-900/50">
-                <!-- Chat Statistics Panel -->
-                <div id="stats-panel" class="bg-slate-800 border border-slate-700 rounded-lg p-3 mb-4 text-xs text-slate-400">
-                    <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-                        <div>
-                            <div class="text-slate-500">Запросы</div>
-                            <div id="stats-request-tokens" class="text-white font-semibold">0 tokens</div>
-                        </div>
-                        <div>
-                            <div class="text-slate-500">Ответы</div>
-                            <div id="stats-response-tokens" class="text-white font-semibold">0 tokens</div>
-                        </div>
-                        <div>
-                            <div class="text-slate-500">Текущий контекст</div>
-                            <div id="stats-current-context" class="text-white font-semibold">0 / 4096</div>
-                        </div>
-                        <div>
-                            <div class="text-slate-500">Использование</div>
-                            <div class="relative h-2 bg-slate-700 rounded-full mt-1">
-                                <div id="stats-usage-bar" class="absolute left-0 top-0 h-full bg-indigo-500 rounded-full transition-all" style="width: 0%"></div>
-                            </div>
-                            <div id="stats-usage-percent" class="text-right text-slate-500 mt-1">0%</div>
-                        </div>
-                    </div>
-                </div>
                 <form id="chat-form" class="flex gap-2">
                     <textarea id="message-input" rows="2" placeholder="Введите сообщение…"
                         class="flex-1 resize-none rounded-lg bg-slate-800 border border-slate-700 px-4 py-2 text-sm
@@ -126,22 +125,18 @@
                     <label for="settings-per-chat" class="text-sm">Настройки для текущего чата</label>
                 </div>
                 <div>
-                    <label class="block text-sm font-medium text-slate-300 mb-2">
-                        Стратегия сжатия контекста
-                    </label>
-                    <select id="settings-strategy" class="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white">
-                        <option value="sliding">Sliding Window (Скользящее окно) — только последние сообщения</option>
-                        <option value="sticky">Sticky Facts (Ключевые факты) — суммари старых + новые</option>
-                        <option value="truncate_middle">Обрезка посередине (Truncate Middle) — сохранить начало и конец</option>
-                        <option value="no_compression">Без сжатия (No Compression) — всё как есть</option>
+                    <label for="settings-strategy" class="block text-sm text-slate-400 mb-1">Стратегия сжатия контекста</label>
+                    <select id="settings-strategy" class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
+                        <option value="sliding">Sliding Window (Скользящее окно)</option>
+                        <option value="sticky">Sticky Facts (Ключевые факты)</option>
+                        <option value="truncate_middle">Обрезка посередине (Truncate Middle)</option>
+                        <option value="no_compression">Без сжатия (No Compression)</option>
                     </select>
-                    <p class="text-xs text-slate-400 mt-1">Определяет, как формировать контекст для LLM при длинных диалогах</p>
                 </div>
                 <div>
                     <label for="settings-context-length" class="block text-sm text-slate-400 mb-1">Context Length (tokens)</label>
                     <input type="number" id="settings-context-length" min="512" max="131072" step="512" value="4096"
-                        class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
-                    <p class="text-xs text-slate-500 mt-1">Maximum context window size</p>
+                           class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
                 </div>
                 <div>
                     <label for="settings-temperature" class="block text-sm text-slate-400 mb-1">

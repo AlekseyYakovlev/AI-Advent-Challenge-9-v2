@@ -9,6 +9,7 @@ import httpx
 import psutil
 import pytest
 
+from shared.config import settings
 from ui.supervisor import AgentSupervisor, find_pids_on_port
 
 
@@ -63,7 +64,7 @@ async def _wait_for_agent(port: int, timeout: float) -> None:
 async def test_orphan_cleanup_kills_port_holder(monkeypatch: pytest.MonkeyPatch) -> None:
     """Starting the supervisor should kill any process already on AGENT_PORT."""
     agent_port = _free_port()
-    db_path = "test_orphan.db"
+    db_path = settings.DB_PATH
     monkeypatch.setenv("AGENT_PORT", str(agent_port))
     monkeypatch.setenv("DB_PATH", db_path)
 

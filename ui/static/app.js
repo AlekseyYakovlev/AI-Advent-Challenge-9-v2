@@ -393,12 +393,9 @@ function blockInputWithMessage(message) {
 
     if (input) {
         input.disabled = true;
-        input.placeholder = 'Контекст переполнен - измените стратегию';
-        input.value = '';
+        input.placeholder = 'Контекст переполнен';
     }
-    if (sendBtn) {
-        sendBtn.disabled = true;
-    }
+    if (sendBtn) sendBtn.disabled = true;
 
     let bannerContainer = $('overflow-banner-container');
     if (bannerContainer && !bannerContainer.hasChildNodes()) {
@@ -432,12 +429,8 @@ function unblockInput() {
         input.disabled = false;
         input.placeholder = 'Введите сообщение...';
     }
-    if (sendBtn) {
-        sendBtn.disabled = false;
-    }
-    if (banner) {
-        banner.remove();
-    }
+    if (sendBtn) sendBtn.disabled = false;
+    if (banner) banner.remove();
 }
 
 function handleWsMessage(data) {
@@ -449,16 +442,8 @@ function handleWsMessage(data) {
             setStreaming(false);
             removeLoadingBubble();
             unblockInput();
-            if (state.currentChatId) {
-                loadChatTree(state.currentChatId);
-            }
-            if (data.stats) {
-                updateStats(data.stats);
-                showToast(
-                    `Ответ: ${data.stats.total_response_tokens} tokens, контекст: ${data.stats.context_usage_percent}%`,
-                    'info',
-                );
-            }
+            if (data.stats) updateStats(data.stats);
+            if (state.currentChatId) loadChatTree(state.currentChatId);
             break;
         case 'error':
             setStreaming(false);
@@ -651,7 +636,7 @@ async function saveSettings(event) {
 
     unblockInput();
 
-    if (state.currentChatId && body.context_length) {
+    if (state.currentChatId) {
         await loadChatStats(state.currentChatId);
     }
 }

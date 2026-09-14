@@ -8,6 +8,7 @@ import time
 import httpx
 import pytest
 
+from shared.config import settings
 from ui.main import app as ui_app
 from ui.supervisor import AgentSupervisor
 
@@ -39,7 +40,7 @@ async def _wait_for_agent(port: int, timeout: float) -> None:
 async def test_agent_restarts_within_5_seconds(monkeypatch: pytest.MonkeyPatch) -> None:
     """Killing the agent should trigger a restart in under 5 seconds."""
     agent_port = _free_port()
-    db_path = "test_supervisor.db"
+    db_path = settings.DB_PATH
     monkeypatch.setenv("AGENT_PORT", str(agent_port))
     monkeypatch.setenv("DB_PATH", db_path)
 
