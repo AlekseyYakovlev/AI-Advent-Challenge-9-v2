@@ -10,6 +10,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from agent.context_engine import (
+    ContextOverflowError,
     build_llm_context,
     build_system_prompt,
     extract_and_update_facts,
@@ -217,37 +218,78 @@ async def _handle_chat_message(
                 payload.content,
             )
             all_history = await _build_chat_messages(session, chat)
-            llm_history = await build_llm_context(
-                session,
-                chat_id,
-                all_history,
-                payload.model,
+
+            effective = await get_effective_settings(session, chat_id)
+            logger.info(
+                "strategy_selected",
+                chat_id=chat_id,
+                strategy=effective.strategy,
+                total_messages=len(all_history),
             )
+
+            try:
+                llm_history = await build_llm_context(
+                    session,
+                    chat_id,
+                    all_history,
+                    payload.model,
+                )
+            except ContextOverflowError as exc:
+                logger.error(
+                    "context_overflow_blocked",
+                    chat_id=chat_id,
+                    error=str(exc),
+                )
+                await websocket.send_json(
+                    {
+                        "type": "error",
+                        "detail": str(exc),
+                        "code": "CONTEXT_OVERFLOW",
+                    },
+                )
+                await session.delete(user_msg)
+                await session.commit()
+                return
+
             system_prompt = await build_system_prompt(session, chat_id)
             llm_messages = [
                 {"role": "system", "content": system_prompt},
                 *llm_history,
             ]
-            effective = await get_effective_settings(session, chat_id)
             temperature = effective.temperature
-            context_length = effective.context_length
             max_tokens = effective.max_tokens
 
             assistant_text = ""
             stream_task = asyncio.current_task()
             active_streams[chat_id] = stream_task
+
             try:
                 async for token in llm_client.stream_chat(
                     llm_messages,
                     payload.model,
                     temperature,
                     max_tokens,
-                    context_length,
                 ):
                     assistant_text += token
                     await websocket.send_json(
                         {"type": "token", "content": token},
                     )
+            except Exception as exc:
+                logger.error(
+                    "llm_stream_failed",
+                    chat_id=chat_id,
+                    error=str(exc),
+                )
+                await websocket.send_json(
+                    {
+                        "type": "error",
+                        "detail": f"LLM error: {str(exc)}",
+                        "code": "LLM_ERROR",
+                    },
+                )
+                await session.delete(user_msg)
+                await session.commit()
+                return
             finally:
                 active_streams.pop(chat_id, None)
 
@@ -263,18 +305,8 @@ async def _handle_chat_message(
                 payload.content,
                 payload.model,
             )
-            stats = await _compute_chat_stats(
-                session,
-                chat,
-                chat_id,
-                payload.model,
-            )
             await websocket.send_json(
-                {
-                    "type": "done",
-                    "message_id": assistant_msg.id,
-                    "stats": stats,
-                },
+                {"type": "done", "message_id": assistant_msg.id},
             )
 
 

@@ -1,11 +1,11 @@
-"""Context management: settings resolution, facts, and summarization."""
+"""Context compression strategies implementation."""
 
 import asyncio
 import json
 from typing import Any
 
-from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
+from sqlmodel import select
 
 from agent.llm_client import llm_client
 from shared.database import async_session_factory
@@ -14,58 +14,192 @@ from shared.models import ContextStrategy, Settings
 
 logger = get_logger(__name__)
 
-FACTS_DEBOUNCE_SECONDS = 2.0
 SUMMARY_TRIGGER_RATIO = 0.75
+RECENT_PAIR_COUNT = 5
 SUMMARY_RECOMPRESS_TOKENS = 1500
-RECENT_PAIR_COUNT = 2
-SUMMARY_PROMPT = "Summarize STRICTLY IN ENGLISH to save tokens"
+FACTS_DEBOUNCE_SECONDS = 2.0
+INITIAL_CONTEXT_COUNT = 5
+RECENT_CONTEXT_COUNT = 10
+SUMMARY_PROMPT = "Summarize the following conversation STRICTLY IN ENGLISH to save tokens. Keep key facts, decisions, and context. Be concise:"
 
-_debounce_tasks: dict[int, asyncio.Task[None]] = {}
 _pending_messages: dict[int, str] = {}
+_debounce_tasks: dict[int, asyncio.Task] = {}
 
+def _message_tokens(messages: list[dict[str, str]]) -> int:
+    return sum(llm_client.count_tokens(msg["content"]) for msg in messages)
 
-async def get_effective_settings(
-    session: AsyncSession,
-    chat_id: int,
-) -> Settings:
-    """Return per-chat settings or fall back to global defaults."""
-    result = await session.exec(
-        select(Settings).where(Settings.chat_id == chat_id),
-    )
+def _combine_summaries(old_summary: str, new_summary: str) -> str:
+    if old_summary and new_summary:
+        return f"{old_summary}\n\n{new_summary}"
+    return old_summary or new_summary
+
+async def _recompress_summary_if_needed(summary: str, model: str) -> str:
+    if llm_client.count_tokens(summary) <= SUMMARY_RECOMPRESS_TOKENS:
+        return summary
+    try:
+        return await llm_client.complete_chat(
+            messages=[{"role": "user", "content": f"{SUMMARY_PROMPT}\n\n{summary}"}],
+            model=model, temperature=0.0, max_tokens=1024,
+        )
+    except Exception as exc:
+        logger.warning("summary_recompress_failed", error=str(exc))
+        return summary
+
+async def _facts_target_row(session: AsyncSession, chat_id: int, settings_row: Settings | None) -> Settings:
+    if settings_row is not None and settings_row.chat_id == chat_id:
+        return settings_row
+    result = await session.exec(select(Settings).where(Settings.chat_id == chat_id))
     row = result.first()
     if row is not None:
         return row
-    result = await session.exec(
-        select(Settings).where(Settings.chat_id.is_(None)),
-    )
-    global_row = result.first()
-    if global_row is not None:
-        return global_row
-    row = Settings(chat_id=None)
-    session.add(row)
+    new_settings = Settings(chat_id=chat_id)
+    session.add(new_settings)
     await session.commit()
-    await session.refresh(row)
-    return row
+    await session.refresh(new_settings)
+    return new_settings
 
+def _parse_facts_json(raw: str) -> dict[str, Any]:
+    try:
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            return data
+    except json.JSONDecodeError:
+        pass
+    return {}
 
-def extract_and_update_facts(
+async def get_effective_settings(session: AsyncSession, chat_id: int) -> Settings:
+    result = await session.exec(select(Settings).where(Settings.chat_id == chat_id))
+    settings = result.first()
+    if settings is not None:
+        return settings
+    result = await session.exec(select(Settings).where(Settings.chat_id.is_(None)))
+    settings = result.first()
+    if settings is None:
+        settings = Settings(chat_id=None)
+        session.add(settings)
+        await session.commit()
+        await session.refresh(settings)
+    return settings
+
+async def build_system_prompt(session: AsyncSession, chat_id: int) -> str:
+    settings_row = await get_effective_settings(session, chat_id)
+    parts = [settings_row.system_prompt]
+    facts = _parse_facts_json(settings_row.facts_json)
+    if facts:
+        parts.append(f"Known facts: {json.dumps(facts)}")
+    if settings_row.summary_text.strip():
+        parts.append(f"Conversation summary: {settings_row.summary_text.strip()}")
+    return "\n\n".join(parts)
+
+class ContextOverflowError(Exception):
+    """Raised when context exceeds LLM capacity and cannot be compressed."""
+    pass
+
+async def build_llm_context(
     session: AsyncSession,
     chat_id: int,
-    user_message: str,
+    all_messages: list[dict[str, str]],
     model: str,
-) -> None:
-    """Schedule debounced fact extraction for the latest user message."""
-    _pending_messages[chat_id] = user_message
-    existing = _debounce_tasks.get(chat_id)
-    if existing is not None and not existing.done():
-        existing.cancel()
-    _debounce_tasks[chat_id] = asyncio.create_task(
-        _run_debounced_facts(chat_id, model),
-    )
+) -> list[dict[str, str]]:
+    """Build context for LLM based on strategy. Raises ContextOverflowError if NO_COMPRESSION exceeds capacity."""
+    settings_row = await get_effective_settings(session, chat_id)
+    total_tokens = _message_tokens(all_messages)
+    context_length = getattr(settings_row, 'context_length', 4096)
+    threshold = int(context_length * SUMMARY_TRIGGER_RATIO)
+    strategy = settings_row.strategy
 
+    if strategy == ContextStrategy.NO_COMPRESSION.value and total_tokens > context_length:
+        logger.error(
+            "context_overflow_no_compression",
+            chat_id=chat_id,
+            tokens=total_tokens,
+            context_length=context_length,
+        )
+        raise ContextOverflowError(
+            f"Context size ({total_tokens} tokens) exceeds context window "
+            f"({context_length} tokens). Please change compression strategy "
+            f"or reduce conversation length."
+        )
+
+    if total_tokens <= threshold or len(all_messages) <= (RECENT_PAIR_COUNT * 2):
+        logger.info("context_under_threshold", chat_id=chat_id, tokens=total_tokens, strategy=strategy)
+        return all_messages
+    
+    if strategy == ContextStrategy.NO_COMPRESSION.value:
+        logger.info("strategy_no_compression", chat_id=chat_id, messages_count=len(all_messages), tokens=total_tokens)
+        return all_messages
+    
+    if strategy == ContextStrategy.SLIDING_WINDOW.value:
+        recent_count = RECENT_CONTEXT_COUNT
+        recent = all_messages[-recent_count:]
+        logger.info("strategy_sliding_window", chat_id=chat_id, total=len(all_messages), sent=len(recent))
+        return recent
+    
+    if strategy == ContextStrategy.STICKY_FACTS.value:
+        logger.info("strategy_sticky_facts", chat_id=chat_id, total_messages=len(all_messages))
+        return await _build_sticky_context(session, chat_id, all_messages, model, settings_row)
+    
+    if strategy == ContextStrategy.TRUNCATE_MIDDLE.value:
+        logger.info("strategy_truncate_middle", chat_id=chat_id, total_messages=len(all_messages))
+        return await _build_truncate_middle_context(session, chat_id, all_messages, model)
+    
+    logger.warning("strategy_unknown_fallback", strategy=strategy)
+    return all_messages[-RECENT_CONTEXT_COUNT:]
+
+async def _build_sticky_context(session: AsyncSession, chat_id: int, all_messages: list[dict[str, str]], model: str, settings_row: Settings) -> list[dict[str, str]]:
+    recent_count = RECENT_CONTEXT_COUNT
+    to_summarize = all_messages[:-recent_count]
+    recent = all_messages[-recent_count:]
+    if not to_summarize:
+        return all_messages
+    old_summary = settings_row.summary_text.strip() if settings_row else ""
+    summary_input = "\n".join(f"{msg['role']}: {msg['content']}" for msg in to_summarize)
+    try:
+        new_summary = await llm_client.complete_chat(
+            messages=[{"role": "user", "content": f"{SUMMARY_PROMPT}\n\n{summary_input}"}],
+            model=model, temperature=0.0, max_tokens=1024,
+        )
+    except Exception as exc:
+        logger.warning("summarization_failed", chat_id=chat_id, error=str(exc))
+        return recent
+    combined = _combine_summaries(old_summary, new_summary.strip())
+    combined = await _recompress_summary_if_needed(combined, model)
+    if settings_row:
+        target = await _facts_target_row(session, chat_id, settings_row)
+        target.summary_text = combined
+        session.add(target)
+        try:
+            await session.commit()
+        except Exception:
+            await session.rollback()
+    context = [{"role": "system", "content": f"[Conversation summary]: {combined}"}]
+    context.extend(recent)
+    return context
+
+async def _build_truncate_middle_context(session: AsyncSession, chat_id: int, all_messages: list[dict[str, str]], model: str) -> list[dict[str, str]]:
+    initial = all_messages[:INITIAL_CONTEXT_COUNT]
+    recent = all_messages[-RECENT_CONTEXT_COUNT:]
+    middle = all_messages[INITIAL_CONTEXT_COUNT:-RECENT_CONTEXT_COUNT]
+    if not middle:
+        return all_messages
+    middle_summary = ""
+    try:
+        middle_input = "\n".join(f"{msg['role']}: {msg['content']}" for msg in middle)
+        middle_summary = (
+            await llm_client.complete_chat(
+                messages=[{"role": "user", "content": f"Summarize STRICTLY IN ENGLISH in 2-3 sentences:\n\n{middle_input}"}],
+                model=model, temperature=0.0, max_tokens=256,
+            )
+        ).strip()
+    except Exception as exc:
+        logger.warning("middle_summarization_failed", chat_id=chat_id, error=str(exc))
+    context = list(initial)
+    if middle_summary:
+        context.append({"role": "system", "content": f"[Middle of conversation summary]: {middle_summary}"})
+    context.extend(recent)
+    return context
 
 async def _run_debounced_facts(chat_id: int, model: str) -> None:
-    """Wait for debounce, then extract and merge facts into settings."""
     try:
         await asyncio.sleep(FACTS_DEBOUNCE_SECONDS)
         user_message = _pending_messages.pop(chat_id, "")
@@ -78,27 +212,17 @@ async def _run_debounced_facts(chat_id: int, model: str) -> None:
     finally:
         _debounce_tasks.pop(chat_id, None)
 
-
-async def _extract_facts(
-    session: AsyncSession,
-    chat_id: int,
-    user_message: str,
-    model: str,
-) -> None:
-    """Call the LLM to extract facts and merge them into settings."""
+async def _extract_facts(session: AsyncSession, chat_id: int, user_message: str, model: str) -> None:
     prompt = f"Extract key facts as JSON: {user_message}"
     try:
         raw = await llm_client.complete_chat(
             messages=[{"role": "user", "content": prompt}],
-            model=model,
-            temperature=0.0,
-            max_tokens=512,
+            model=model, temperature=0.0, max_tokens=512,
         )
         new_facts = _parse_facts_json(raw)
     except Exception as exc:
         logger.warning("facts_extraction_failed", chat_id=chat_id, error=str(exc))
         return
-
     settings_row = await get_effective_settings(session, chat_id)
     existing = _parse_facts_json(settings_row.facts_json)
     merged = {**existing, **new_facts}
@@ -111,326 +235,9 @@ async def _extract_facts(
         await session.rollback()
         raise
 
-
-async def _facts_target_row(
-    session: AsyncSession,
-    chat_id: int,
-    settings_row: Settings,
-) -> Settings:
-    """Return a writable per-chat settings row for fact storage."""
-    if settings_row.chat_id == chat_id:
-        return settings_row
-    result = await session.exec(
-        select(Settings).where(Settings.chat_id == chat_id),
-    )
-    row = result.first()
-    if row is not None:
-        return row
-    row = Settings(chat_id=chat_id)
-    session.add(row)
-    await session.flush()
-    return row
-
-
-def _parse_facts_json(raw: str) -> dict[str, Any]:
-    """Parse a JSON object from stored or LLM-produced facts text."""
-    try:
-        data = json.loads(raw)
-        if isinstance(data, dict):
-            return data
-    except json.JSONDecodeError:
-        pass
-    return {}
-
-
-def _message_tokens(messages: list[dict[str, str]]) -> int:
-    """Count total tokens across chat messages."""
-    return sum(llm_client.count_tokens(msg["content"]) for msg in messages)
-
-
-INITIAL_CONTEXT_COUNT = 5
-RECENT_CONTEXT_COUNT = 10
-
-
-async def build_llm_context(
-    session: AsyncSession,
-    chat_id: int,
-    all_messages: list[dict[str, str]],
-    model: str,
-) -> list[dict[str, str]]:
-    """
-    Build the context to send to LLM based on compression strategy.
-    Database history is NEVER modified - this only affects what's sent to LLM.
-    """
-    settings_row = await get_effective_settings(session, chat_id)
-    total_tokens = _message_tokens(all_messages)
-    context_length = getattr(settings_row, "context_length", 4096)
-    threshold = int(context_length * SUMMARY_TRIGGER_RATIO)
-
-    if total_tokens <= threshold or len(all_messages) <= (
-        INITIAL_CONTEXT_COUNT + RECENT_CONTEXT_COUNT
-    ):
-        logger.info(
-            "context_under_threshold",
-            chat_id=chat_id,
-            tokens=total_tokens,
-            threshold=threshold,
-            messages_count=len(all_messages),
-        )
-        return all_messages
-
-    strategy = settings_row.strategy
-
-    if strategy == ContextStrategy.NO_COMPRESSION.value:
-        logger.info(
-            "strategy_no_compression",
-            chat_id=chat_id,
-            messages_count=len(all_messages),
-            tokens=total_tokens,
-        )
-        return all_messages
-
-    if strategy == ContextStrategy.SLIDING_WINDOW.value:
-        recent = all_messages[-RECENT_CONTEXT_COUNT:]
-        logger.info(
-            "strategy_sliding_window",
-            chat_id=chat_id,
-            total_messages=len(all_messages),
-            sent_messages=len(recent),
-            discarded=len(all_messages) - len(recent),
-        )
-        return recent
-
-    if strategy == ContextStrategy.STICKY_FACTS.value:
-        logger.info(
-            "strategy_sticky_facts",
-            chat_id=chat_id,
-            total_messages=len(all_messages),
-        )
-        return await _build_sticky_context(session, chat_id, all_messages, model)
-
-    if strategy == ContextStrategy.TRUNCATE_MIDDLE.value:
-        logger.info(
-            "strategy_truncate_middle",
-            chat_id=chat_id,
-            total_messages=len(all_messages),
-        )
-        return await _build_truncate_middle_context(
-            session, chat_id, all_messages, model,
-        )
-
-    logger.warning("strategy_unknown_fallback", strategy=strategy)
-    return all_messages[-RECENT_CONTEXT_COUNT:]
-
-
-async def _build_sticky_context(
-    session: AsyncSession,
-    chat_id: int,
-    all_messages: list[dict[str, str]],
-    model: str,
-) -> list[dict[str, str]]:
-    """Build context for STICKY_FACTS: summarize old messages, send summary + recent."""
-    settings_row = await get_effective_settings(session, chat_id)
-    recent = all_messages[-RECENT_CONTEXT_COUNT:]
-    to_summarize = all_messages[:-RECENT_CONTEXT_COUNT]
-    if not to_summarize:
-        return all_messages
-
-    summary_input = "\n".join(
-        f"{msg['role']}: {msg['content']}" for msg in to_summarize
-    )
-    try:
-        new_summary = await llm_client.complete_chat(
-            messages=[
-                {
-                    "role": "user",
-                    "content": f"{SUMMARY_PROMPT}\n\n{summary_input}",
-                },
-            ],
-            model=model,
-            temperature=0.0,
-            max_tokens=1024,
-        )
-    except Exception as exc:
-        logger.warning("sticky_summarization_failed", chat_id=chat_id, error=str(exc))
-        return recent
-
-    old_summary = settings_row.summary_text.strip()
-    combined = _combine_summaries(old_summary, new_summary.strip())
-    combined = await _recompress_summary_if_needed(combined, model)
-
-    context: list[dict[str, str]] = []
-    if combined:
-        context.append({
-            "role": "system",
-            "content": f"[Conversation summary]: {combined}",
-        })
-    context.extend(recent)
-    return context
-
-
-async def _build_truncate_middle_context(
-    session: AsyncSession,
-    chat_id: int,
-    all_messages: list[dict[str, str]],
-    model: str,
-) -> list[dict[str, str]]:
-    """
-    Build context for TRUNCATE_MIDDLE strategy:
-    Keep initial messages + recent messages, cut the middle.
-    Optionally summarize the cut middle part.
-    """
-    initial = all_messages[:INITIAL_CONTEXT_COUNT]
-    recent = all_messages[-RECENT_CONTEXT_COUNT:]
-    middle = all_messages[INITIAL_CONTEXT_COUNT:-RECENT_CONTEXT_COUNT]
-
-    if not middle:
-        return all_messages
-
-    middle_summary = ""
-    try:
-        middle_input = "\n".join(
-            f"{msg['role']}: {msg['content']}" for msg in middle
-        )
-        middle_summary = await llm_client.complete_chat(
-            messages=[
-                {
-                    "role": "user",
-                    "content": (
-                        "Summarize the following conversation middle part STRICTLY IN ENGLISH "
-                        "in 2-3 sentences, focusing on key decisions and outcomes:\n\n"
-                        f"{middle_input}"
-                    ),
-                },
-            ],
-            model=model,
-            temperature=0.0,
-            max_tokens=256,
-        )
-        middle_summary = middle_summary.strip()
-    except Exception as exc:
-        logger.warning("middle_summarization_failed", chat_id=chat_id, error=str(exc))
-
-    context = list(initial)
-    if middle_summary:
-        context.append({
-            "role": "system",
-            "content": f"[Middle of conversation summary]: {middle_summary}",
-        })
-        logger.info(
-            "truncate_middle_with_summary",
-            chat_id=chat_id,
-            initial_count=len(initial),
-            middle_messages=len(middle),
-            recent_count=len(recent),
-            summary_tokens=llm_client.count_tokens(middle_summary),
-        )
-    else:
-        logger.info(
-            "truncate_middle_without_summary",
-            chat_id=chat_id,
-            initial_count=len(initial),
-            middle_cut=len(middle),
-            recent_count=len(recent),
-        )
-
-    context.extend(recent)
-    return context
-
-
-async def summarize_if_needed(
-    session: AsyncSession,
-    chat_id: int,
-    messages: list[dict[str, str]],
-    model: str,
-) -> list[dict[str, str]]:
-    """Summarize older messages when context exceeds 75% of context_length."""
-    settings_row = await get_effective_settings(session, chat_id)
-    if settings_row.strategy == ContextStrategy.NO_COMPRESSION.value:
-        return messages
-    total_tokens = _message_tokens(messages)
-    threshold = int(settings_row.context_length * SUMMARY_TRIGGER_RATIO)
-    if total_tokens <= threshold or len(messages) <= RECENT_PAIR_COUNT * 2:
-        return messages
-
-    recent_count = RECENT_PAIR_COUNT * 2
-    to_summarize = messages[:-recent_count]
-    recent = messages[-recent_count:]
-    if not to_summarize:
-        return messages
-
-    summary_input = "\n".join(
-        f"{msg['role']}: {msg['content']}" for msg in to_summarize
-    )
-    try:
-        new_summary = await llm_client.complete_chat(
-            messages=[
-                {
-                    "role": "user",
-                    "content": f"{SUMMARY_PROMPT}\n\n{summary_input}",
-                },
-            ],
-            model=model,
-            temperature=0.0,
-            max_tokens=1024,
-        )
-    except Exception as exc:
-        logger.warning("summarization_failed", chat_id=chat_id, error=str(exc))
-        return messages
-
-    old_summary = settings_row.summary_text.strip()
-    combined = _combine_summaries(old_summary, new_summary.strip())
-    combined = await _recompress_summary_if_needed(combined, model)
-    target = await _facts_target_row(session, chat_id, settings_row)
-    target.summary_text = combined
-    session.add(target)
-    try:
-        await session.commit()
-        await session.refresh(target)
-    except Exception:
-        await session.rollback()
-        raise
-    return recent
-
-
-def _combine_summaries(old_summary: str, new_summary: str) -> str:
-    """Accumulate old and new summaries."""
-    if old_summary and new_summary:
-        return f"{old_summary}\n\n{new_summary}"
-    return old_summary or new_summary
-
-
-async def _recompress_summary_if_needed(summary: str, model: str) -> str:
-    """Re-summarize when accumulated summary exceeds 1500 tokens."""
-    if llm_client.count_tokens(summary) <= SUMMARY_RECOMPRESS_TOKENS:
-        return summary
-    try:
-        return await llm_client.complete_chat(
-            messages=[
-                {
-                    "role": "user",
-                    "content": f"{SUMMARY_PROMPT}\n\n{summary}",
-                },
-            ],
-            model=model,
-            temperature=0.0,
-            max_tokens=1024,
-        )
-    except Exception as exc:
-        logger.warning("summary_recompress_failed", error=str(exc))
-        return summary
-
-
-async def build_system_prompt(
-    session: AsyncSession,
-    chat_id: int,
-) -> str:
-    """Build the system prompt with optional facts and summary."""
-    settings_row = await get_effective_settings(session, chat_id)
-    parts = [settings_row.system_prompt]
-    facts = _parse_facts_json(settings_row.facts_json)
-    if facts:
-        parts.append(f"Known facts: {json.dumps(facts)}")
-    if settings_row.summary_text.strip():
-        parts.append(f"Conversation summary: {settings_row.summary_text.strip()}")
-    return "\n\n".join(parts)
+def extract_and_update_facts(session: AsyncSession, chat_id: int, user_message: str, model: str) -> None:
+    _pending_messages[chat_id] = user_message
+    if chat_id in _debounce_tasks:
+        _debounce_tasks[chat_id].cancel()
+    task = asyncio.create_task(_run_debounced_facts(chat_id, model))
+    _debounce_tasks[chat_id] = task

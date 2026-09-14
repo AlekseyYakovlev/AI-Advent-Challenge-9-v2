@@ -11,12 +11,13 @@ from sqlmodel import select
 from agent.context_engine import (
     FACTS_DEBOUNCE_SECONDS,
     SUMMARY_PROMPT,
+    ContextOverflowError,
     _debounce_tasks,
     _pending_messages,
+    build_llm_context,
     build_system_prompt,
     extract_and_update_facts,
     get_effective_settings,
-    summarize_if_needed,
 )
 from shared.config import settings
 from shared.database import async_session_factory
@@ -140,8 +141,8 @@ async def test_extract_and_update_facts_debounce_and_merge() -> None:
 
 @respx.mock
 @pytest.mark.asyncio
-async def test_summarize_if_needed_triggers_and_accumulates() -> None:
-    """Summarization should trigger above 75% and use the English prompt."""
+async def test_sticky_facts_triggers_and_accumulates() -> None:
+    """STICKY_FACTS should trigger above 75% and use the English prompt."""
     captured_prompts: list[str] = []
 
     def mock_completion(request: httpx.Request) -> httpx.Response:
@@ -162,11 +163,16 @@ async def test_summarize_if_needed_triggers_and_accumulates() -> None:
     messages = [
         {"role": "user", "content": long_text},
         {"role": "assistant", "content": "reply one"},
-        {"role": "user", "content": "older question"},
-        {"role": "assistant", "content": "older answer"},
+    ]
+    for i in range(8):
+        messages.extend([
+            {"role": "user", "content": f"older question {i}"},
+            {"role": "assistant", "content": f"older answer {i}"},
+        ])
+    messages.extend([
         {"role": "user", "content": "recent question"},
         {"role": "assistant", "content": "recent answer"},
-    ]
+    ])
 
     async with async_session_factory() as session:
         chat = Chat(title="Summary chat")
@@ -175,15 +181,16 @@ async def test_summarize_if_needed_triggers_and_accumulates() -> None:
             Settings(
                 chat_id=chat.id,
                 context_length=1000,
+                strategy=ContextStrategy.STICKY_FACTS.value,
                 summary_text="Old summary.",
             ),
         )
         await session.commit()
         await session.refresh(chat)
 
-        trimmed = await summarize_if_needed(session, chat.id, messages, MODEL)
+        trimmed = await build_llm_context(session, chat.id, messages, MODEL)
 
-        assert len(trimmed) == 4
+        assert len(trimmed) == 11
         assert SUMMARY_PROMPT in captured_prompts[0]
         result = await session.exec(
             select(Settings).where(Settings.chat_id == chat.id),
@@ -195,8 +202,8 @@ async def test_summarize_if_needed_triggers_and_accumulates() -> None:
 
 
 @pytest.mark.asyncio
-async def test_summarize_if_needed_skips_below_threshold() -> None:
-    """Short conversations should not be summarized."""
+async def test_build_llm_context_skips_below_threshold() -> None:
+    """Short conversations should not be compressed."""
     messages = [
         {"role": "user", "content": "Hi"},
         {"role": "assistant", "content": "Hello"},
@@ -209,14 +216,14 @@ async def test_summarize_if_needed_skips_below_threshold() -> None:
         await session.commit()
         await session.refresh(chat)
 
-        result = await summarize_if_needed(session, chat.id, messages, MODEL)
+        result = await build_llm_context(session, chat.id, messages, MODEL)
         assert result == messages
 
 
 @respx.mock
 @pytest.mark.asyncio
-async def test_summarize_if_needed_skips_no_compression() -> None:
-    """NO_COMPRESSION strategy should never trigger summarization."""
+async def test_no_compression_raises_on_overflow() -> None:
+    """NO_COMPRESSION strategy should raise when context exceeds window."""
     respx.post(f"{BASE_URL}/v1/chat/completions").mock(
         return_value=httpx.Response(
             200,
@@ -241,12 +248,12 @@ async def test_summarize_if_needed_skips_no_compression() -> None:
             Settings(
                 chat_id=chat.id,
                 context_length=1000,
-                strategy=ContextStrategy.NO_COMPRESSION,
+                strategy=ContextStrategy.NO_COMPRESSION.value,
             ),
         )
         await session.commit()
         await session.refresh(chat)
 
-        result = await summarize_if_needed(session, chat.id, messages, MODEL)
-        assert result == messages
+        with pytest.raises(ContextOverflowError):
+            await build_llm_context(session, chat.id, messages, MODEL)
         assert len(respx.calls) == 0

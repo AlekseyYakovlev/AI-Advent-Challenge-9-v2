@@ -387,6 +387,59 @@ function connectWs(chatId) {
     };
 }
 
+function blockInputWithMessage(message) {
+    const input = $('message-input');
+    const sendBtn = $('btn-send');
+
+    if (input) {
+        input.disabled = true;
+        input.placeholder = 'Контекст переполнен - измените стратегию';
+        input.value = '';
+    }
+    if (sendBtn) {
+        sendBtn.disabled = true;
+    }
+
+    let bannerContainer = $('overflow-banner-container');
+    if (bannerContainer && !bannerContainer.hasChildNodes()) {
+        const banner = document.createElement('div');
+        banner.id = 'overflow-banner';
+        banner.className = 'bg-red-900/50 border border-red-700 rounded-lg p-4 mb-4';
+        banner.innerHTML = `
+            <div class="flex items-start gap-3">
+                <svg class="w-6 h-6 text-red-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                </svg>
+                <div class="flex-1">
+                    <h3 class="text-red-200 font-semibold mb-1">Контекст переполнен</h3>
+                    <p class="text-red-300 text-sm mb-3">${message}</p>
+                    <button onclick="openSettingsModal()" class="bg-red-700 hover:bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition">
+                        Изменить стратегию сжатия
+                    </button>
+                </div>
+            </div>
+        `;
+        bannerContainer.appendChild(banner);
+    }
+}
+
+function unblockInput() {
+    const input = $('message-input');
+    const sendBtn = $('btn-send');
+    const banner = $('overflow-banner');
+
+    if (input) {
+        input.disabled = false;
+        input.placeholder = 'Введите сообщение...';
+    }
+    if (sendBtn) {
+        sendBtn.disabled = false;
+    }
+    if (banner) {
+        banner.remove();
+    }
+}
+
 function handleWsMessage(data) {
     switch (data.type) {
         case 'token':
@@ -395,6 +448,7 @@ function handleWsMessage(data) {
         case 'done':
             setStreaming(false);
             removeLoadingBubble();
+            unblockInput();
             if (state.currentChatId) {
                 loadChatTree(state.currentChatId);
             }
@@ -409,7 +463,13 @@ function handleWsMessage(data) {
         case 'error':
             setStreaming(false);
             removeLoadingBubble();
-            showToast(data.detail || 'Ошибка', 'error');
+
+            if (data.code === 'CONTEXT_OVERFLOW') {
+                blockInputWithMessage(data.detail);
+                showToast('⚠️ ' + data.detail, 'error');
+            } else {
+                showToast(data.detail || 'Ошибка', 'error');
+            }
             break;
         case 'model_loaded':
         case 'model_event':
@@ -588,6 +648,8 @@ async function saveSettings(event) {
     await apiFetch('/api/v1/settings', { method: 'PUT', body: JSON.stringify(body) });
     showToast('Настройки сохранены', 'success');
     closeSettingsModal();
+
+    unblockInput();
 
     if (state.currentChatId && body.context_length) {
         await loadChatStats(state.currentChatId);
