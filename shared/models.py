@@ -11,9 +11,9 @@ from sqlmodel import Field, SQLModel
 class ContextStrategy(str, Enum):
     """Context window management strategy for a chat."""
 
-    SLIDING = "sliding"
-    STICKY = "sticky"
-    BRANCHING = "branching"
+    SLIDING_WINDOW = "sliding"
+    STICKY_FACTS = "sticky"
+    TRUNCATE_MIDDLE = "truncate_middle"
     NO_COMPRESSION = "no_compression"
 
 
@@ -79,7 +79,7 @@ class Settings(SQLModel, table=True):
     temperature: float = Field(default=0.7)
     context_length: int = Field(default=4096)
     max_tokens: int = Field(default=4096)
-    strategy: ContextStrategy = Field(default=ContextStrategy.SLIDING)
+    strategy: str = Field(default=ContextStrategy.SLIDING_WINDOW.value)
     facts_json: str = Field(default="{}")
     summary_text: str = Field(default="")
 

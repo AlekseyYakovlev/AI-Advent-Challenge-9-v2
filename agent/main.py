@@ -26,7 +26,7 @@ from agent.state import cleanup_chat_caches
 from agent.ws import ws_chat
 from shared.database import async_session_factory, engine, get_session, init_db
 from shared.logger import get_logger
-from shared.models import Chat, Message, Settings
+from shared.models import Chat, ContextStrategy, Message, Settings
 
 logger = get_logger(__name__)
 
@@ -78,6 +78,14 @@ async def _resolve_settings(
     return await _ensure_global_settings(session)
 
 
+def _normalize_strategy(strategy: str) -> ContextStrategy:
+    """Map stored strategy strings to a valid enum, including legacy values."""
+    valid = {item.value for item in ContextStrategy}
+    if strategy in valid:
+        return ContextStrategy(strategy)
+    return ContextStrategy.SLIDING_WINDOW
+
+
 def _settings_to_response(row: Settings) -> SettingsResponse:
     """Map a Settings ORM row to the API response schema."""
     return SettingsResponse(
@@ -87,7 +95,7 @@ def _settings_to_response(row: Settings) -> SettingsResponse:
         temperature=row.temperature,
         context_length=row.context_length,
         max_tokens=row.max_tokens,
-        strategy=row.strategy,
+        strategy=_normalize_strategy(row.strategy),
         facts_json=row.facts_json,
         summary_text=row.summary_text,
     )

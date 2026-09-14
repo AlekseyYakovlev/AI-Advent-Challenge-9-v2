@@ -148,6 +148,196 @@ def _message_tokens(messages: list[dict[str, str]]) -> int:
     return sum(llm_client.count_tokens(msg["content"]) for msg in messages)
 
 
+INITIAL_CONTEXT_COUNT = 5
+RECENT_CONTEXT_COUNT = 10
+
+
+async def build_llm_context(
+    session: AsyncSession,
+    chat_id: int,
+    all_messages: list[dict[str, str]],
+    model: str,
+) -> list[dict[str, str]]:
+    """
+    Build the context to send to LLM based on compression strategy.
+    Database history is NEVER modified - this only affects what's sent to LLM.
+    """
+    settings_row = await get_effective_settings(session, chat_id)
+    total_tokens = _message_tokens(all_messages)
+    context_length = getattr(settings_row, "context_length", 4096)
+    threshold = int(context_length * SUMMARY_TRIGGER_RATIO)
+
+    if total_tokens <= threshold or len(all_messages) <= (
+        INITIAL_CONTEXT_COUNT + RECENT_CONTEXT_COUNT
+    ):
+        logger.info(
+            "context_under_threshold",
+            chat_id=chat_id,
+            tokens=total_tokens,
+            threshold=threshold,
+            messages_count=len(all_messages),
+        )
+        return all_messages
+
+    strategy = settings_row.strategy
+
+    if strategy == ContextStrategy.NO_COMPRESSION.value:
+        logger.info(
+            "strategy_no_compression",
+            chat_id=chat_id,
+            messages_count=len(all_messages),
+            tokens=total_tokens,
+        )
+        return all_messages
+
+    if strategy == ContextStrategy.SLIDING_WINDOW.value:
+        recent = all_messages[-RECENT_CONTEXT_COUNT:]
+        logger.info(
+            "strategy_sliding_window",
+            chat_id=chat_id,
+            total_messages=len(all_messages),
+            sent_messages=len(recent),
+            discarded=len(all_messages) - len(recent),
+        )
+        return recent
+
+    if strategy == ContextStrategy.STICKY_FACTS.value:
+        logger.info(
+            "strategy_sticky_facts",
+            chat_id=chat_id,
+            total_messages=len(all_messages),
+        )
+        return await _build_sticky_context(session, chat_id, all_messages, model)
+
+    if strategy == ContextStrategy.TRUNCATE_MIDDLE.value:
+        logger.info(
+            "strategy_truncate_middle",
+            chat_id=chat_id,
+            total_messages=len(all_messages),
+        )
+        return await _build_truncate_middle_context(
+            session, chat_id, all_messages, model,
+        )
+
+    logger.warning("strategy_unknown_fallback", strategy=strategy)
+    return all_messages[-RECENT_CONTEXT_COUNT:]
+
+
+async def _build_sticky_context(
+    session: AsyncSession,
+    chat_id: int,
+    all_messages: list[dict[str, str]],
+    model: str,
+) -> list[dict[str, str]]:
+    """Build context for STICKY_FACTS: summarize old messages, send summary + recent."""
+    settings_row = await get_effective_settings(session, chat_id)
+    recent = all_messages[-RECENT_CONTEXT_COUNT:]
+    to_summarize = all_messages[:-RECENT_CONTEXT_COUNT]
+    if not to_summarize:
+        return all_messages
+
+    summary_input = "\n".join(
+        f"{msg['role']}: {msg['content']}" for msg in to_summarize
+    )
+    try:
+        new_summary = await llm_client.complete_chat(
+            messages=[
+                {
+                    "role": "user",
+                    "content": f"{SUMMARY_PROMPT}\n\n{summary_input}",
+                },
+            ],
+            model=model,
+            temperature=0.0,
+            max_tokens=1024,
+        )
+    except Exception as exc:
+        logger.warning("sticky_summarization_failed", chat_id=chat_id, error=str(exc))
+        return recent
+
+    old_summary = settings_row.summary_text.strip()
+    combined = _combine_summaries(old_summary, new_summary.strip())
+    combined = await _recompress_summary_if_needed(combined, model)
+
+    context: list[dict[str, str]] = []
+    if combined:
+        context.append({
+            "role": "system",
+            "content": f"[Conversation summary]: {combined}",
+        })
+    context.extend(recent)
+    return context
+
+
+async def _build_truncate_middle_context(
+    session: AsyncSession,
+    chat_id: int,
+    all_messages: list[dict[str, str]],
+    model: str,
+) -> list[dict[str, str]]:
+    """
+    Build context for TRUNCATE_MIDDLE strategy:
+    Keep initial messages + recent messages, cut the middle.
+    Optionally summarize the cut middle part.
+    """
+    initial = all_messages[:INITIAL_CONTEXT_COUNT]
+    recent = all_messages[-RECENT_CONTEXT_COUNT:]
+    middle = all_messages[INITIAL_CONTEXT_COUNT:-RECENT_CONTEXT_COUNT]
+
+    if not middle:
+        return all_messages
+
+    middle_summary = ""
+    try:
+        middle_input = "\n".join(
+            f"{msg['role']}: {msg['content']}" for msg in middle
+        )
+        middle_summary = await llm_client.complete_chat(
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        "Summarize the following conversation middle part STRICTLY IN ENGLISH "
+                        "in 2-3 sentences, focusing on key decisions and outcomes:\n\n"
+                        f"{middle_input}"
+                    ),
+                },
+            ],
+            model=model,
+            temperature=0.0,
+            max_tokens=256,
+        )
+        middle_summary = middle_summary.strip()
+    except Exception as exc:
+        logger.warning("middle_summarization_failed", chat_id=chat_id, error=str(exc))
+
+    context = list(initial)
+    if middle_summary:
+        context.append({
+            "role": "system",
+            "content": f"[Middle of conversation summary]: {middle_summary}",
+        })
+        logger.info(
+            "truncate_middle_with_summary",
+            chat_id=chat_id,
+            initial_count=len(initial),
+            middle_messages=len(middle),
+            recent_count=len(recent),
+            summary_tokens=llm_client.count_tokens(middle_summary),
+        )
+    else:
+        logger.info(
+            "truncate_middle_without_summary",
+            chat_id=chat_id,
+            initial_count=len(initial),
+            middle_cut=len(middle),
+            recent_count=len(recent),
+        )
+
+    context.extend(recent)
+    return context
+
+
 async def summarize_if_needed(
     session: AsyncSession,
     chat_id: int,
@@ -156,7 +346,7 @@ async def summarize_if_needed(
 ) -> list[dict[str, str]]:
     """Summarize older messages when context exceeds 75% of context_length."""
     settings_row = await get_effective_settings(session, chat_id)
-    if settings_row.strategy == ContextStrategy.NO_COMPRESSION:
+    if settings_row.strategy == ContextStrategy.NO_COMPRESSION.value:
         return messages
     total_tokens = _message_tokens(messages)
     threshold = int(settings_row.context_length * SUMMARY_TRIGGER_RATIO)

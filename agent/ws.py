@@ -10,10 +10,10 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from agent.context_engine import (
+    build_llm_context,
     build_system_prompt,
     extract_and_update_facts,
     get_effective_settings,
-    summarize_if_needed,
 )
 from agent.llm_client import llm_client
 from agent.state import (
@@ -168,17 +168,17 @@ async def _handle_chat_message(
                 chat,
                 payload.content,
             )
-            history = await _build_chat_messages(session, chat)
-            history = await summarize_if_needed(
+            all_history = await _build_chat_messages(session, chat)
+            llm_history = await build_llm_context(
                 session,
                 chat_id,
-                history,
+                all_history,
                 payload.model,
             )
             system_prompt = await build_system_prompt(session, chat_id)
             llm_messages = [
                 {"role": "system", "content": system_prompt},
-                *history,
+                *llm_history,
             ]
             effective = await get_effective_settings(session, chat_id)
             temperature = effective.temperature

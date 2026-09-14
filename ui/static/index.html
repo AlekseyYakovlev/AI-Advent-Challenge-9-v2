@@ -98,14 +98,16 @@
                     <label for="settings-per-chat" class="text-sm">Настройки для текущего чата</label>
                 </div>
                 <div>
-                    <label for="settings-strategy" class="block text-sm text-slate-400 mb-1">Стратегия сжатия контекста</label>
-                    <select id="settings-strategy"
-                        class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
-                        <option value="sliding">Sliding Window (Скользящее окно)</option>
-                        <option value="sticky">Sticky Facts (Ключевые факты)</option>
-                        <option value="branching">Branching (Ветвление)</option>
-                        <option value="no_compression">Без сжатия (No Compression)</option>
+                    <label class="block text-sm font-medium text-slate-300 mb-2">
+                        Стратегия сжатия контекста
+                    </label>
+                    <select id="settings-strategy" class="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-white">
+                        <option value="sliding">Sliding Window (Скользящее окно) — только последние сообщения</option>
+                        <option value="sticky">Sticky Facts (Ключевые факты) — суммари старых + новые</option>
+                        <option value="truncate_middle">Обрезка посередине (Truncate Middle) — сохранить начало и конец</option>
+                        <option value="no_compression">Без сжатия (No Compression) — всё как есть</option>
                     </select>
+                    <p class="text-xs text-slate-400 mt-1">Определяет, как формировать контекст для LLM при длинных диалогах</p>
                 </div>
                 <div>
                     <label for="settings-context-length" class="block text-sm text-slate-400 mb-1">Context Length (tokens)</label>
