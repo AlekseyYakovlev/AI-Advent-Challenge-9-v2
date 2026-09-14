@@ -9,6 +9,7 @@ from sqlmodel import select
 from agent.context_engine import (
     INITIAL_CONTEXT_COUNT,
     RECENT_CONTEXT_COUNT,
+    ContextOverflowError,
     build_llm_context,
 )
 from agent.main import app
@@ -43,6 +44,14 @@ async def _append_messages(
     chat.current_leaf_message_id = parent_id
     session.add(chat)
     await session.commit()
+
+
+async def _count_messages(session, chat_id: int) -> int:
+    """Return total message rows stored for a chat."""
+    result = await session.exec(
+        select(Message).where(Message.chat_id == chat_id),
+    )
+    return len(result.all())
 
 
 async def _load_message_dicts(session, chat: Chat) -> list[dict[str, str]]:
@@ -254,7 +263,7 @@ async def test_sliding_window_strategy() -> None:
 
 @pytest.mark.asyncio
 async def test_no_compression_sends_all_messages() -> None:
-    """NO_COMPRESSION should send the full history even above threshold."""
+    """NO_COMPRESSION should send the full history when under context window."""
     async with async_session_factory() as session:
         chat = Chat(title="No compression")
         session.add(chat)
@@ -264,7 +273,7 @@ async def test_no_compression_sends_all_messages() -> None:
             Settings(
                 chat_id=chat.id,
                 strategy=ContextStrategy.NO_COMPRESSION.value,
-                context_length=512,
+                context_length=8192,
             ),
         )
         await session.commit()
@@ -320,4 +329,148 @@ async def test_sticky_facts_strategy() -> None:
         for msg in llm_context
     )
     assert len([msg for msg in llm_context if msg["role"] == "user"]) == RECENT_CONTEXT_COUNT
-    assert row.summary_text == ""
+    assert "Sticky summary." in row.summary_text
+
+
+@pytest.mark.asyncio
+async def test_no_compression_preserves_all_messages(client: AsyncClient) -> None:
+    """NO_COMPRESSION: all messages preserved in DB."""
+    chat_resp = await client.post("/api/v1/chats", json={"title": "Test"})
+    chat_id = chat_resp.json()["id"]
+
+    await client.put(
+        "/api/v1/settings",
+        json={
+            "chat_id": chat_id,
+            "strategy": "no_compression",
+            "context_length": 4096,
+        },
+    )
+
+    async with async_session_factory() as session:
+        chat = await session.get(Chat, chat_id)
+        assert chat is not None
+        await _append_messages(session, chat, ["x" * 200] * 10)
+
+    tree_resp = await client.get(f"/api/v1/chats/{chat_id}/tree")
+    assert len(tree_resp.json()) >= 10
+
+
+@pytest.mark.asyncio
+async def test_sliding_window_preserves_database(client: AsyncClient) -> None:
+    """SLIDING_WINDOW: old messages preserved in DB but not sent to LLM."""
+    chat_resp = await client.post("/api/v1/chats", json={"title": "Test"})
+    chat_id = chat_resp.json()["id"]
+
+    await client.put(
+        "/api/v1/settings",
+        json={
+            "chat_id": chat_id,
+            "strategy": "sliding",
+            "context_length": 1000,
+        },
+    )
+
+    async with async_session_factory() as session:
+        chat = await session.get(Chat, chat_id)
+        assert chat is not None
+        await _append_messages(session, chat, ["x" * 200] * 20)
+        before = await _count_messages(session, chat_id)
+        all_messages = await _load_message_dicts(session, chat)
+        await build_llm_context(session, chat_id, all_messages, MODEL)
+        after = await _count_messages(session, chat_id)
+
+    assert before == after
+    tree_resp = await client.get(f"/api/v1/chats/{chat_id}/tree")
+    assert len(tree_resp.json()) >= 20
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_sticky_facts_preserves_database(client: AsyncClient) -> None:
+    """STICKY_FACTS: all messages preserved in DB."""
+    respx.post(f"{BASE_URL}/v1/chat/completions").mock(
+        return_value=httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "Summary."}}]},
+        ),
+    )
+
+    chat_resp = await client.post("/api/v1/chats", json={"title": "Test"})
+    chat_id = chat_resp.json()["id"]
+
+    await client.put(
+        "/api/v1/settings",
+        json={
+            "chat_id": chat_id,
+            "strategy": "sticky",
+            "context_length": 1000,
+        },
+    )
+
+    async with async_session_factory() as session:
+        chat = await session.get(Chat, chat_id)
+        assert chat is not None
+        await _append_messages(session, chat, ["x" * 200] * 20)
+        before = await _count_messages(session, chat_id)
+        all_messages = await _load_message_dicts(session, chat)
+        await build_llm_context(session, chat_id, all_messages, MODEL)
+        after = await _count_messages(session, chat_id)
+
+    assert before == after
+    tree_resp = await client.get(f"/api/v1/chats/{chat_id}/tree")
+    assert len(tree_resp.json()) >= 20
+
+
+@pytest.mark.asyncio
+async def test_strategy_setting_persists(client: AsyncClient) -> None:
+    """Strategy setting persists in database."""
+    chat_resp = await client.post("/api/v1/chats", json={"title": "Test"})
+    chat_id = chat_resp.json()["id"]
+
+    await client.put(
+        "/api/v1/settings",
+        json={"chat_id": chat_id, "strategy": "no_compression"},
+    )
+
+    settings_resp = await client.get(f"/api/v1/settings?chat_id={chat_id}")
+    assert settings_resp.json()["strategy"] == "no_compression"
+
+
+@pytest.mark.asyncio
+async def test_context_length_setting_persists(client: AsyncClient) -> None:
+    """Context length setting persists in database."""
+    chat_resp = await client.post("/api/v1/chats", json={"title": "Test"})
+    chat_id = chat_resp.json()["id"]
+
+    await client.put(
+        "/api/v1/settings",
+        json={"chat_id": chat_id, "context_length": 2048},
+    )
+
+    settings_resp = await client.get(f"/api/v1/settings?chat_id={chat_id}")
+    assert settings_resp.json()["context_length"] == 2048
+
+
+@pytest.mark.asyncio
+async def test_no_compression_raises_context_overflow() -> None:
+    """NO_COMPRESSION raises ContextOverflowError when context exceeds window."""
+    async with async_session_factory() as session:
+        chat = Chat(title="Overflow")
+        session.add(chat)
+        session.add(
+            Settings(
+                chat_id=chat.id,
+                strategy=ContextStrategy.NO_COMPRESSION.value,
+                context_length=500,
+            ),
+        )
+        await session.commit()
+        await session.refresh(chat)
+
+        contents = [f"msg_{i}" + " word" * 80 for i in range(20)]
+        await _append_messages(session, chat, contents)
+        all_messages = await _load_message_dicts(session, chat)
+
+        with pytest.raises(ContextOverflowError):
+            await build_llm_context(session, chat.id, all_messages, MODEL)
