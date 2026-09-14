@@ -5,7 +5,7 @@ import functools
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from typing import Any, TypeVar
 
-from sqlalchemy import event
+from sqlalchemy import event, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel
@@ -60,10 +60,18 @@ def retry_on_locked_db(
     return wrapper
 
 
+async def _migrate_legacy_strategies(conn: Any) -> None:
+    """Map removed strategy values to their replacements."""
+    await conn.execute(
+        text("UPDATE settings SET strategy = 'sliding' WHERE strategy = 'branching'"),
+    )
+
+
 async def init_db() -> None:
     """Create all database tables if they do not exist."""
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
+        await _migrate_legacy_strategies(conn)
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:

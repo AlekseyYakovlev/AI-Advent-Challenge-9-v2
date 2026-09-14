@@ -8,8 +8,39 @@ from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 from sqlmodel import select
 
-from shared.database import engine, retry_on_locked_db
-from shared.models import Chat, Message, TokenUsage
+from shared.database import async_session_factory, engine, init_db, retry_on_locked_db
+from shared.models import Chat, ContextStrategy, Message, Settings, TokenUsage
+
+
+@pytest.mark.asyncio
+async def test_context_strategy_has_four_values() -> None:
+    """ContextStrategy enum should expose all four compression strategies."""
+    values = {item.value for item in ContextStrategy}
+    assert values == {
+        "sliding",
+        "sticky",
+        "truncate_middle",
+        "no_compression",
+    }
+
+
+@pytest.mark.asyncio
+async def test_init_db_migrates_branching_strategy() -> None:
+    """init_db() should rewrite legacy branching strategy to sliding."""
+    async with async_session_factory() as session:
+        row = Settings(strategy="branching")
+        session.add(row)
+        await session.commit()
+        settings_id = row.id
+
+    await init_db()
+
+    async with async_session_factory() as session:
+        migrated = (
+            await session.exec(select(Settings).where(Settings.id == settings_id))
+        ).one()
+
+    assert migrated.strategy == ContextStrategy.SLIDING_WINDOW.value
 
 
 @pytest.mark.asyncio
