@@ -12,7 +12,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from agent.context_engine import (
     ContextOverflowError,
     build_llm_context,
-    build_system_prompt,
+    compute_chat_stats,
     extract_and_update_facts,
     get_effective_settings,
 )
@@ -79,75 +79,6 @@ def _check_rate_limit(chat_id: int) -> bool:
         return False
     ws_rate_limiter[chat_id].append(now)
     return True
-
-
-async def _build_chat_messages(
-    session: AsyncSession,
-    chat: Chat,
-) -> list[dict[str, str]]:
-    """Walk the active branch and return role/content dicts oldest-first."""
-    if chat.current_leaf_message_id is None:
-        return []
-    path: list[Message] = []
-    current_id: int | None = chat.current_leaf_message_id
-    while current_id is not None:
-        message = await session.get(Message, current_id)
-        if message is None or message.chat_id != chat.id:
-            break
-        path.append(message)
-        current_id = message.parent_id
-    return [
-        {
-            "role": msg.role,
-            "content": msg.content,
-            "token_count": msg.token_count,
-        }
-        for msg in reversed(path)
-    ]
-
-
-async def _compute_chat_stats(
-    session: AsyncSession,
-    chat: Chat,
-    chat_id: int,
-    model: str = "gpt-4",
-) -> dict[str, int | float]:
-    """Calculate token totals and context usage for the active branch."""
-    messages = await _build_chat_messages(session, chat)
-    settings = await get_effective_settings(session, chat_id)
-    context_window_size = getattr(settings, "context_length", 4096)
-    llm_context = await build_llm_context(
-        session,
-        chat_id,
-        messages,
-        model,
-    )
-    current_context_size = sum(
-        llm_client.count_tokens(msg["content"]) for msg in llm_context
-    )
-    total_request_tokens = sum(
-        msg.get("token_count", 0)
-        for msg in messages
-        if msg.get("role") == "user"
-    )
-    total_response_tokens = sum(
-        msg.get("token_count", 0)
-        for msg in messages
-        if msg.get("role") == "assistant"
-    )
-    usage_percent = (
-        round((current_context_size / context_window_size) * 100, 1)
-        if context_window_size > 0
-        else 0
-    )
-    return {
-        "total_request_tokens": total_request_tokens,
-        "total_response_tokens": total_response_tokens,
-        "current_context_size": current_context_size,
-        "context_window_size": context_window_size,
-        "context_usage_percent": usage_percent,
-        "message_count": len(messages),
-    }
 
 
 async def _persist_user_message(
@@ -217,21 +148,18 @@ async def _handle_chat_message(
                 chat,
                 payload.content,
             )
-            all_history = await _build_chat_messages(session, chat)
 
             effective = await get_effective_settings(session, chat_id)
             logger.info(
                 "strategy_selected",
                 chat_id=chat_id,
                 strategy=effective.strategy,
-                total_messages=len(all_history),
             )
 
             try:
-                llm_history = await build_llm_context(
+                llm_messages = await build_llm_context(
                     session,
                     chat_id,
-                    all_history,
                     payload.model,
                 )
             except ContextOverflowError as exc:
@@ -252,11 +180,6 @@ async def _handle_chat_message(
                 await session.commit()
                 return
 
-            system_prompt = await build_system_prompt(session, chat_id)
-            llm_messages = [
-                {"role": "system", "content": system_prompt},
-                *llm_history,
-            ]
             temperature = effective.temperature
             max_tokens = effective.max_tokens
 
@@ -306,8 +229,13 @@ async def _handle_chat_message(
                 payload.content,
                 payload.model,
             )
+            stats = await compute_chat_stats(session, chat_id, payload.model)
             await websocket.send_json(
-                {"type": "done", "message_id": assistant_msg.id},
+                {
+                    "type": "done",
+                    "message_id": assistant_msg.id,
+                    "stats": stats,
+                },
             )
 
 

@@ -22,6 +22,11 @@ MODEL = "test-model"
 TRUNCATE_INITIAL_COUNT = 2
 
 
+def _history_only(messages: list[dict]) -> list[dict]:
+    """Strip system prompt from build_llm_context output."""
+    return [msg for msg in messages if msg["role"] != "system"]
+
+
 async def _append_messages(
     session,
     chat: Chat,
@@ -151,11 +156,10 @@ async def test_truncate_middle_sends_beginning_and_end() -> None:
             )
             await _append_messages(session, chat, contents)
 
-            all_messages = await _load_message_dicts(session, chat)
-            assert len(all_messages) >= 20
+            assert len(await _load_message_dicts(session, chat)) >= 20
 
-            llm_context = await build_llm_context(
-                session, chat_id, all_messages, MODEL,
+            llm_context = _history_only(
+                await build_llm_context(session, chat_id, MODEL),
             )
 
         assert llm_context[0]["content"] == first_msg
@@ -185,9 +189,9 @@ async def test_truncate_middle_keeps_initial_and_recent_counts() -> None:
 
         contents = [f"msg_{i}" + " word" * 50 for i in range(25)]
         await _append_messages(session, chat, contents)
-        all_messages = await _load_message_dicts(session, chat)
-
-        llm_context = await build_llm_context(session, chat.id, all_messages, MODEL)
+        llm_context = _history_only(
+            await build_llm_context(session, chat.id, MODEL),
+        )
 
     padding = " word" * 50
     user_contents = [
@@ -237,9 +241,9 @@ async def test_branching_strategy_fallback() -> None:
         chat = (await session.exec(select(Chat).where(Chat.id == chat_id))).one()
         contents = [f"msg_{i}" + " word" * 50 for i in range(20)]
         await _append_messages(session, chat, contents)
-        all_messages = await _load_message_dicts(session, chat)
-
-        llm_context = await build_llm_context(session, chat_id, all_messages, MODEL)
+        llm_context = _history_only(
+            await build_llm_context(session, chat_id, MODEL),
+        )
 
     assert len(llm_context) == RECENT_MESSAGE_COUNT
 
@@ -263,9 +267,9 @@ async def test_sliding_window_strategy() -> None:
 
         contents = [f"msg_{i}" + " word" * 50 for i in range(20)]
         await _append_messages(session, chat, contents)
-        all_messages = await _load_message_dicts(session, chat)
-
-        llm_context = await build_llm_context(session, chat.id, all_messages, MODEL)
+        llm_context = _history_only(
+            await build_llm_context(session, chat.id, MODEL),
+        )
 
     assert len(llm_context) == RECENT_MESSAGE_COUNT
     assert llm_context[-1]["content"].startswith("msg_19")
@@ -292,7 +296,9 @@ async def test_no_compression_sends_all_messages() -> None:
         await _append_messages(session, chat, contents)
         all_messages = await _load_message_dicts(session, chat)
 
-        llm_context = await build_llm_context(session, chat.id, all_messages, MODEL)
+        llm_context = _history_only(
+            await build_llm_context(session, chat.id, MODEL),
+        )
 
     assert len(llm_context) == len(all_messages)
 
@@ -316,9 +322,9 @@ async def test_sticky_facts_strategy() -> None:
 
         contents = [f"msg_{i}" + " word" * 50 for i in range(20)]
         await _append_messages(session, chat, contents)
-        all_messages = await _load_message_dicts(session, chat)
-
-        llm_context = await build_llm_context(session, chat.id, all_messages, MODEL)
+        llm_context = _history_only(
+            await build_llm_context(session, chat.id, MODEL),
+        )
 
     assert llm_context[0]["content"].startswith("msg_0")
     assert llm_context[-1]["content"].startswith("msg_19")
@@ -345,9 +351,9 @@ async def test_sticky_facts_no_duplication_small_chat() -> None:
 
         contents = [f"msg_{i}" + " word" * 50 for i in range(5)]
         await _append_messages(session, chat, contents)
-        all_messages = await _load_message_dicts(session, chat)
-
-        llm_context = await build_llm_context(session, chat.id, all_messages, MODEL)
+        llm_context = _history_only(
+            await build_llm_context(session, chat.id, MODEL),
+        )
 
     assert len(llm_context) == 5
     assert len(llm_context) == len({msg["content"] for msg in llm_context})
@@ -397,8 +403,7 @@ async def test_sliding_window_preserves_database(client: AsyncClient) -> None:
         assert chat is not None
         await _append_messages(session, chat, ["x" * 200] * 20)
         before = await _count_messages(session, chat_id)
-        all_messages = await _load_message_dicts(session, chat)
-        await build_llm_context(session, chat_id, all_messages, MODEL)
+        await build_llm_context(session, chat_id, MODEL)
         after = await _count_messages(session, chat_id)
 
     assert before == after
@@ -426,8 +431,7 @@ async def test_sticky_facts_preserves_database(client: AsyncClient) -> None:
         assert chat is not None
         await _append_messages(session, chat, ["x" * 200] * 20)
         before = await _count_messages(session, chat_id)
-        all_messages = await _load_message_dicts(session, chat)
-        await build_llm_context(session, chat_id, all_messages, MODEL)
+        await build_llm_context(session, chat_id, MODEL)
         after = await _count_messages(session, chat_id)
 
     assert before == after
@@ -483,7 +487,5 @@ async def test_no_compression_raises_context_overflow() -> None:
 
         contents = [f"msg_{i}" + " word" * 80 for i in range(20)]
         await _append_messages(session, chat, contents)
-        all_messages = await _load_message_dicts(session, chat)
-
         with pytest.raises(ContextOverflowError):
-            await build_llm_context(session, chat.id, all_messages, MODEL)
+            await build_llm_context(session, chat.id, MODEL)

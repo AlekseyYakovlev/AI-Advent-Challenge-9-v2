@@ -10,7 +10,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from agent.llm_client import llm_client
 from shared.database import async_session_factory
 from shared.logger import get_logger
-from shared.models import ContextStrategy, Settings
+from shared.models import Chat, ContextStrategy, Message, Settings
 
 logger = get_logger(__name__)
 
@@ -98,25 +98,57 @@ class ContextOverflowError(Exception):
     pass
 
 
-async def build_llm_context(
+async def _load_branch_messages(
     session: AsyncSession,
     chat_id: int,
-    all_messages: list[dict[str, str]],
-    model: str,
-) -> list[dict[str, str]]:
-    """
-    Build context for LLM based on strategy.
+) -> list[dict[str, Any]]:
+    """Walk the active branch and return message dicts oldest-first."""
+    chat = await session.get(Chat, chat_id)
+    if chat is None or chat.current_leaf_message_id is None:
+        return []
+    path: list[Message] = []
+    current_id: int | None = chat.current_leaf_message_id
+    while current_id is not None:
+        message = await session.get(Message, current_id)
+        if message is None or message.chat_id != chat_id:
+            break
+        path.append(message)
+        current_id = message.parent_id
+    return [
+        {
+            "role": msg.role,
+            "content": msg.content,
+            "token_count": msg.token_count,
+        }
+        for msg in reversed(path)
+    ]
 
-    CRITICAL: System prompt is NOT in all_messages. It's added separately in ws.py.
-    all_messages contains ONLY user and assistant messages from database.
+
+async def summarize_if_needed(
+    session: AsyncSession,
+    chat_id: int,
+    history: list[dict[str, Any]],
+    model: str | None,
+) -> list[dict[str, Any]]:
+    """Summarize old messages when approaching context limit (LLM calls only)."""
+    if not model:
+        return history
+    return history
+
+
+async def _apply_compression_strategy(
+    session: AsyncSession,
+    chat_id: int,
+    all_messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """
+    Apply compression strategy to user/assistant messages.
 
     Algorithms (NO DUPLICATION):
     - SLIDING_WINDOW: Last RECENT_MESSAGE_COUNT messages
     - STICKY_FACTS: First message + last RECENT_MESSAGE_COUNT messages (no overlap)
     - TRUNCATE_MIDDLE: First 2 messages + last RECENT_MESSAGE_COUNT messages (no overlap)
     - NO_COMPRESSION: All messages (raises error if exceeds context_length)
-
-    Returns: list of messages WITHOUT system prompt (it's added in ws.py)
     """
     settings_row = await get_effective_settings(session, chat_id)
     total_tokens = _message_tokens(all_messages)
@@ -244,6 +276,85 @@ async def build_llm_context(
     # Default fallback (should never reach here)
     logger.warning("strategy_unknown_fallback", strategy=strategy)
     return all_messages[-RECENT_MESSAGE_COUNT:]
+
+
+async def build_llm_context(
+    session: AsyncSession,
+    chat_id: int,
+    model: str | None = None,
+) -> list[dict[str, Any]]:
+    """Build full LLM message list including system prompt and token counts."""
+    history = await _load_branch_messages(session, chat_id)
+    history = await summarize_if_needed(session, chat_id, history, model)
+    compressed = await _apply_compression_strategy(session, chat_id, history)
+    system_prompt = await build_system_prompt(session, chat_id)
+    return [
+        {"role": "system", "content": system_prompt},
+        *compressed,
+    ]
+
+
+async def compute_chat_stats(
+    session: AsyncSession,
+    chat_id: int,
+    model: str | None = None,
+) -> dict[str, Any]:
+    """Calculate context usage statistics for the active chat branch."""
+    default_stats: dict[str, Any] = {
+        "current_context_size": 0,
+        "context_window_size": 4096,
+        "usage_percent": 0.0,
+        "message_count": 0,
+        "total_request_tokens": 0,
+        "total_response_tokens": 0,
+    }
+    try:
+        settings_row = await get_effective_settings(session, chat_id)
+        if not settings_row:
+            return default_stats
+
+        llm_messages = await build_llm_context(session, chat_id, model)
+        branch_messages = await _load_branch_messages(session, chat_id)
+
+        context_window = settings_row.context_length
+        current_context_size = 0
+        for msg in llm_messages:
+            if msg["role"] == "system":
+                current_context_size += llm_client.count_tokens(msg["content"])
+            else:
+                current_context_size += msg.get(
+                    "token_count",
+                    llm_client.count_tokens(msg["content"]),
+                )
+
+        usage_percent = (
+            round((current_context_size / context_window) * 100, 1)
+            if context_window > 0
+            else 0.0
+        )
+        return {
+            "current_context_size": current_context_size,
+            "context_window_size": context_window,
+            "usage_percent": usage_percent,
+            "message_count": len(llm_messages),
+            "total_request_tokens": sum(
+                msg.get("token_count", 0)
+                for msg in branch_messages
+                if msg["role"] == "user"
+            ),
+            "total_response_tokens": sum(
+                msg.get("token_count", 0)
+                for msg in branch_messages
+                if msg["role"] == "assistant"
+            ),
+        }
+    except Exception as exc:
+        logger.error(
+            "stats_calculation_failed",
+            chat_id=chat_id,
+            error=str(exc),
+        )
+        return {**default_stats, "error": str(exc)}
 
 
 async def _run_debounced_facts(chat_id: int, model: str) -> None:

@@ -6,6 +6,8 @@ const WS_BASE = `ws://${window.location.hostname}:${AGENT_PORT}`;
 const STOP_RECONNECT_CODES = new Set([1008, 1011, 1003, 1013]);
 const MAX_RECONNECT_DELAY = 30000;
 
+let statsRequestController = null;
+
 const state = {
     chats: [],
     currentChatId: null,
@@ -152,20 +154,36 @@ function renderMessages() {
     updateTokenStats();
 }
 
+function updateStatsIndicator(stats) {
+    const ctxEl = $('stats-current-context');
+    if (!ctxEl) return;
+    if (!stats || stats.error) {
+        ctxEl.textContent = '- / -';
+        ctxEl.className = 'text-slate-500 font-semibold';
+        ctxEl.title = stats?.error ? `Ошибка: ${stats.error}` : 'Нет данных';
+        return;
+    }
+    ctxEl.textContent = `${stats.current_context_size} / ${stats.context_window_size}`;
+    ctxEl.title = `Использование: ${stats.usage_percent}%`;
+    if (stats.usage_percent >= 90) ctxEl.className = 'text-red-400 font-semibold';
+    else if (stats.usage_percent >= 75) ctxEl.className = 'text-yellow-400 font-semibold';
+    else ctxEl.className = 'text-white font-semibold';
+}
+
 function updateStats(stats) {
     if (!stats) return;
 
+    updateStatsIndicator(stats);
+
     const requestEl = $('stats-request-tokens');
     const responseEl = $('stats-response-tokens');
-    const contextEl = $('stats-current-context');
     const usageBar = $('stats-usage-bar');
     const usagePercent = $('stats-usage-percent');
 
-    if (requestEl) requestEl.textContent = `${stats.total_request_tokens} tokens`;
-    if (responseEl) responseEl.textContent = `${stats.total_response_tokens} tokens`;
-    if (contextEl) contextEl.textContent = `${stats.current_context_size} / ${stats.context_window_size}`;
+    if (requestEl) requestEl.textContent = `${stats.total_request_tokens ?? 0} tokens`;
+    if (responseEl) responseEl.textContent = `${stats.total_response_tokens ?? 0} tokens`;
 
-    const percent = stats.context_usage_percent || 0;
+    const percent = stats.usage_percent ?? stats.context_usage_percent ?? 0;
     if (usageBar) usageBar.style.width = `${Math.min(percent, 100)}%`;
     if (usagePercent) usagePercent.textContent = `${percent}%`;
 
@@ -181,11 +199,15 @@ function updateStats(stats) {
 }
 
 async function loadChatStats(chatId) {
+    if (statsRequestController) statsRequestController.abort();
+    statsRequestController = new AbortController();
     try {
-        const stats = await apiFetch(`/api/v1/chats/${chatId}/stats`);
-        updateStats(stats);
+        const stats = await apiFetch(`/api/v1/chats/${chatId}/stats`, {
+            signal: statsRequestController.signal,
+        });
+        if (state.currentChatId === chatId) updateStats(stats);
     } catch (err) {
-        console.error('Failed to load stats:', err);
+        if (err.name !== 'AbortError') updateStatsIndicator(null);
     }
 }
 
@@ -361,6 +383,7 @@ function connectWs(chatId) {
 
     ws.onopen = () => {
         state.reconnectAttempt = 0;
+        if (state.currentChatId === chatId) loadChatStats(chatId);
     };
 
     ws.onmessage = (event) => {

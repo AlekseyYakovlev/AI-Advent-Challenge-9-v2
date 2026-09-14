@@ -12,6 +12,7 @@ from agent.context_engine import (
     FACTS_DEBOUNCE_SECONDS,
     RECENT_MESSAGE_COUNT,
     ContextOverflowError,
+    _apply_compression_strategy,
     _debounce_tasks,
     _pending_messages,
     build_llm_context,
@@ -19,9 +20,10 @@ from agent.context_engine import (
     extract_and_update_facts,
     get_effective_settings,
 )
+from agent.llm_client import llm_client
 from shared.config import settings
 from shared.database import async_session_factory
-from shared.models import Chat, ContextStrategy, Settings
+from shared.models import Chat, ContextStrategy, Message, Settings
 
 BASE_URL = settings.LM_STUDIO_BASE_URL
 MODEL = "test-model"
@@ -170,7 +172,7 @@ async def test_sticky_facts_keeps_first_and_recent_without_duplication() -> None
         await session.commit()
         await session.refresh(chat)
 
-        trimmed = await build_llm_context(session, chat.id, messages, MODEL)
+        trimmed = await _apply_compression_strategy(session, chat.id, messages)
 
         assert trimmed[0]["content"] == long_text
         assert trimmed[-1]["content"] == "recent answer"
@@ -181,11 +183,6 @@ async def test_sticky_facts_keeps_first_and_recent_without_duplication() -> None
 @pytest.mark.asyncio
 async def test_build_llm_context_skips_below_threshold() -> None:
     """Short conversations should not be compressed."""
-    messages = [
-        {"role": "user", "content": "Hi"},
-        {"role": "assistant", "content": "Hello"},
-    ]
-
     async with async_session_factory() as session:
         chat = Chat(title="Small chat")
         session.add(chat)
@@ -193,8 +190,27 @@ async def test_build_llm_context_skips_below_threshold() -> None:
         await session.commit()
         await session.refresh(chat)
 
-        result = await build_llm_context(session, chat.id, messages, MODEL)
-        assert result == messages
+        parent_id = chat.current_leaf_message_id
+        for role, content in [("user", "Hi"), ("assistant", "Hello")]:
+            msg = Message(
+                chat_id=chat.id,
+                parent_id=parent_id,
+                role=role,
+                content=content,
+                token_count=llm_client.count_tokens(content),
+            )
+            session.add(msg)
+            await session.flush()
+            parent_id = msg.id
+        chat.current_leaf_message_id = parent_id
+        session.add(chat)
+        await session.commit()
+
+        result = await build_llm_context(session, chat.id, MODEL)
+        history = [msg for msg in result if msg["role"] != "system"]
+        assert len(history) == 2
+        assert history[0]["content"] == "Hi"
+        assert history[1]["content"] == "Hello"
 
 
 @respx.mock
@@ -232,5 +248,5 @@ async def test_no_compression_raises_on_overflow() -> None:
         await session.refresh(chat)
 
         with pytest.raises(ContextOverflowError):
-            await build_llm_context(session, chat.id, messages, MODEL)
+            await _apply_compression_strategy(session, chat.id, messages)
         assert len(respx.calls) == 0

@@ -12,7 +12,10 @@ from sqlmodel import SQLModel
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from shared.config import settings
+from shared.logger import get_logger
 from shared.models import Chat, Message, Settings, TokenUsage  # noqa: F401
+
+logger = get_logger(__name__)
 
 T = TypeVar("T")
 
@@ -67,9 +70,32 @@ async def _migrate_legacy_strategies(conn: Any) -> None:
     )
 
 
+async def migrate_add_context_length(conn: Any) -> None:
+    """Add context_length column to settings when missing (idempotent)."""
+    table_check = await conn.execute(
+        text(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='table' AND name='settings'",
+        ),
+    )
+    if table_check.fetchone() is None:
+        return
+
+    result = await conn.execute(text("PRAGMA table_info(settings)"))
+    columns = [row[1] for row in result.fetchall()]
+    if "context_length" not in columns:
+        logger.info("migrating_settings_add_context_length")
+        await conn.execute(
+            text(
+                "ALTER TABLE settings ADD COLUMN context_length INTEGER DEFAULT 4096",
+            ),
+        )
+
+
 async def init_db() -> None:
     """Create all database tables if they do not exist."""
     async with engine.begin() as conn:
+        await migrate_add_context_length(conn)
         await conn.run_sync(SQLModel.metadata.create_all)
         await _migrate_legacy_strategies(conn)
 
