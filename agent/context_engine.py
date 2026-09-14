@@ -25,13 +25,16 @@ SUMMARY_PROMPT = "Summarize the following conversation STRICTLY IN ENGLISH to sa
 _pending_messages: dict[int, str] = {}
 _debounce_tasks: dict[int, asyncio.Task] = {}
 
+
 def _message_tokens(messages: list[dict[str, str]]) -> int:
     return sum(llm_client.count_tokens(msg["content"]) for msg in messages)
+
 
 def _combine_summaries(old_summary: str, new_summary: str) -> str:
     if old_summary and new_summary:
         return f"{old_summary}\n\n{new_summary}"
     return old_summary or new_summary
+
 
 async def _recompress_summary_if_needed(summary: str, model: str) -> str:
     if llm_client.count_tokens(summary) <= SUMMARY_RECOMPRESS_TOKENS:
@@ -44,6 +47,7 @@ async def _recompress_summary_if_needed(summary: str, model: str) -> str:
     except Exception as exc:
         logger.warning("summary_recompress_failed", error=str(exc))
         return summary
+
 
 async def _facts_target_row(session: AsyncSession, chat_id: int, settings_row: Settings | None) -> Settings:
     if settings_row is not None and settings_row.chat_id == chat_id:
@@ -58,6 +62,7 @@ async def _facts_target_row(session: AsyncSession, chat_id: int, settings_row: S
     await session.refresh(new_settings)
     return new_settings
 
+
 def _parse_facts_json(raw: str) -> dict[str, Any]:
     try:
         data = json.loads(raw)
@@ -66,6 +71,7 @@ def _parse_facts_json(raw: str) -> dict[str, Any]:
     except json.JSONDecodeError:
         pass
     return {}
+
 
 async def get_effective_settings(session: AsyncSession, chat_id: int) -> Settings:
     result = await session.exec(select(Settings).where(Settings.chat_id == chat_id))
@@ -81,6 +87,7 @@ async def get_effective_settings(session: AsyncSession, chat_id: int) -> Setting
         await session.refresh(settings)
     return settings
 
+
 async def build_system_prompt(session: AsyncSession, chat_id: int) -> str:
     settings_row = await get_effective_settings(session, chat_id)
     parts = [settings_row.system_prompt]
@@ -91,9 +98,12 @@ async def build_system_prompt(session: AsyncSession, chat_id: int) -> str:
         parts.append(f"Conversation summary: {settings_row.summary_text.strip()}")
     return "\n\n".join(parts)
 
+
 class ContextOverflowError(Exception):
     """Raised when context exceeds LLM capacity and cannot be compressed."""
+
     pass
+
 
 async def build_llm_context(
     session: AsyncSession,
@@ -107,44 +117,44 @@ async def build_llm_context(
     context_length = getattr(settings_row, 'context_length', 4096)
     threshold = int(context_length * SUMMARY_TRIGGER_RATIO)
     strategy = settings_row.strategy
-    
-    if strategy == ContextStrategy.NO_COMPRESSION and total_tokens > context_length:
-        logger.error(
-            "context_overflow_no_compression",
-            chat_id=chat_id,
-            tokens=total_tokens,
-            context_length=context_length,
-        )
-        raise ContextOverflowError(
-            f"Context size ({total_tokens} tokens) exceeds context window "
-            f"({context_length} tokens). Please change compression strategy "
-            f"or reduce conversation length."
-        )
 
+    # NO_COMPRESSION: always send all messages, but reject when over capacity
+    if strategy == ContextStrategy.NO_COMPRESSION:
+        if total_tokens > context_length:
+            logger.error("context_overflow_no_compression", chat_id=chat_id, tokens=total_tokens, context_length=context_length)
+            raise ContextOverflowError(
+                f"Context size ({total_tokens} tokens) exceeds context window ({context_length} tokens). "
+                f"Please change compression strategy or reduce conversation length."
+            )
+        logger.info("strategy_no_compression", chat_id=chat_id, messages_count=len(all_messages), tokens=total_tokens)
+        return all_messages
+
+    # If under threshold, send all messages
     if total_tokens <= threshold or len(all_messages) <= (RECENT_PAIR_COUNT * 2):
         logger.info("context_under_threshold", chat_id=chat_id, tokens=total_tokens, strategy=strategy)
         return all_messages
 
-    if strategy == ContextStrategy.NO_COMPRESSION:
-        logger.info("strategy_no_compression", chat_id=chat_id, messages_count=len(all_messages), tokens=total_tokens)
-        return all_messages
-    
+    # SLIDING_WINDOW: Send only recent messages
     if strategy == ContextStrategy.SLIDING_WINDOW:
         recent_count = RECENT_PAIR_COUNT * 2
         recent = all_messages[-recent_count:]
         logger.info("strategy_sliding_window", chat_id=chat_id, total=len(all_messages), sent=len(recent))
         return recent
-    
+
+    # STICKY_FACTS: Summarize old messages, send summary + recent
     if strategy == ContextStrategy.STICKY_FACTS:
         logger.info("strategy_sticky_facts", chat_id=chat_id, total_messages=len(all_messages))
         return await _build_sticky_context(session, chat_id, all_messages, model, settings_row)
-    
+
+    # TRUNCATE_MIDDLE: Keep beginning and end, cut the middle
     if strategy == ContextStrategy.TRUNCATE_MIDDLE:
         logger.info("strategy_truncate_middle", chat_id=chat_id, total_messages=len(all_messages))
         return await _build_truncate_middle_context(session, chat_id, all_messages, model)
-    
+
+    # Default fallback
     logger.warning("strategy_unknown_fallback", strategy=strategy)
     return all_messages[-(RECENT_PAIR_COUNT * 2):]
+
 
 async def _build_sticky_context(session: AsyncSession, chat_id: int, all_messages: list[dict[str, str]], model: str, settings_row: Settings) -> list[dict[str, str]]:
     recent_count = RECENT_PAIR_COUNT * 2
@@ -172,9 +182,10 @@ async def _build_sticky_context(session: AsyncSession, chat_id: int, all_message
             await session.commit()
         except Exception:
             await session.rollback()
-    context = [{"role": "system", "content": f"[Conversation summary]: {combined}"}]
+    context = [{"role": "system", "content": f"Previous conversation summary:\n{combined}"}]
     context.extend(recent)
     return context
+
 
 async def _build_truncate_middle_context(session: AsyncSession, chat_id: int, all_messages: list[dict[str, str]], model: str) -> list[dict[str, str]]:
     initial = all_messages[:INITIAL_CONTEXT_COUNT]
@@ -195,9 +206,10 @@ async def _build_truncate_middle_context(session: AsyncSession, chat_id: int, al
         logger.warning("middle_summarization_failed", chat_id=chat_id, error=str(exc))
     context = list(initial)
     if middle_summary:
-        context.append({"role": "system", "content": f"[Middle of conversation summary]: {middle_summary}"})
+        context.append({"role": "system", "content": f"[Middle summary]: {middle_summary}"})
     context.extend(recent)
     return context
+
 
 async def _run_debounced_facts(chat_id: int, model: str) -> None:
     try:
@@ -211,6 +223,7 @@ async def _run_debounced_facts(chat_id: int, model: str) -> None:
         return
     finally:
         _debounce_tasks.pop(chat_id, None)
+
 
 async def _extract_facts(session: AsyncSession, chat_id: int, user_message: str, model: str) -> None:
     prompt = f"Extract key facts as JSON: {user_message}"
@@ -234,6 +247,7 @@ async def _extract_facts(session: AsyncSession, chat_id: int, user_message: str,
     except Exception:
         await session.rollback()
         raise
+
 
 def extract_and_update_facts(session: AsyncSession, chat_id: int, user_message: str, model: str) -> None:
     _pending_messages[chat_id] = user_message

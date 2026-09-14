@@ -305,18 +305,8 @@ async def _handle_chat_message(
                 payload.content,
                 payload.model,
             )
-            stats = await _compute_chat_stats(
-                session,
-                chat,
-                chat_id,
-                payload.model,
-            )
             await websocket.send_json(
-                {
-                    "type": "done",
-                    "message_id": assistant_msg.id,
-                    "stats": stats,
-                },
+                {"type": "done", "message_id": assistant_msg.id},
             )
 
 

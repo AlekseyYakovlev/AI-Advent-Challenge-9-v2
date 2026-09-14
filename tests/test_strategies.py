@@ -159,7 +159,7 @@ async def test_truncate_middle_sends_beginning_and_end() -> None:
         assert llm_context[0]["content"] == first_msg
         assert llm_context[-1]["content"] == last_msg
         assert any(
-            msg["role"] == "system" and "Middle of conversation summary" in msg["content"]
+            msg["role"] == "system" and "[Middle summary]" in msg["content"]
             for msg in llm_context
         )
         assert middle_msg not in {msg["content"] for msg in llm_context}
@@ -325,7 +325,7 @@ async def test_sticky_facts_strategy() -> None:
         assert row is not None
 
     assert any(
-        msg["role"] == "system" and "Conversation summary" in msg["content"]
+        msg["role"] == "system" and "Previous conversation summary" in msg["content"]
         for msg in llm_context
     )
     assert len([msg for msg in llm_context if msg["role"] == "user"]) == RECENT_CONTEXT_COUNT
