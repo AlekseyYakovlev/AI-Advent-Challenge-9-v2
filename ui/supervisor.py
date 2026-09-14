@@ -4,6 +4,7 @@ import asyncio
 import os
 import sys
 import time
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -79,6 +80,20 @@ class AgentSupervisor:
         if self.process is not None and self.process.returncode is None:
             return
         env = {**os.environ, "DB_PATH": self.db_path}
+
+        log_dir = Path("logs")
+        try:
+            log_dir.mkdir(exist_ok=True)
+            log_file = log_dir / "agent.log"
+            log_fd = os.open(
+                str(log_file),
+                os.O_WRONLY | os.O_CREAT | os.O_APPEND,
+                0o644,
+            )
+        except OSError as exc:
+            logger.warning("failed_to_open_log_file", error=str(exc))
+            log_fd = asyncio.subprocess.DEVNULL
+
         self.process = await asyncio.create_subprocess_exec(
             sys.executable,
             "-m",
@@ -89,9 +104,10 @@ class AgentSupervisor:
             "--port",
             str(self.agent_port),
             env=env,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
+            stdout=log_fd,
+            stderr=log_fd,
         )
+        self._log_fd = log_fd
         self._last_launch_time = time.monotonic()
         logger.info("agent_started", pid=self.process.pid, port=self.agent_port)
 
@@ -106,6 +122,15 @@ class AgentSupervisor:
         except asyncio.TimeoutError:
             self.process.kill()
             await self.process.wait()
+
+        if hasattr(self, "_log_fd"):
+            if isinstance(self._log_fd, int):
+                try:
+                    os.close(self._log_fd)
+                except OSError:
+                    pass
+            self._log_fd = None
+
         logger.info("agent_stopped", port=self.agent_port)
         self.process = None
 

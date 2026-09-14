@@ -6,8 +6,6 @@ const WS_BASE = `ws://${window.location.hostname}:${AGENT_PORT}`;
 const STOP_RECONNECT_CODES = new Set([1008, 1011, 1003, 1013]);
 const MAX_RECONNECT_DELAY = 30000;
 
-let statsRequestController = null;
-
 const state = {
     chats: [],
     currentChatId: null,
@@ -22,6 +20,11 @@ const state = {
     reconnectTimer: null,
     shouldReconnect: true,
     lastFailedMessage: null,
+    lastStats: null,
+    lastStatsChatId: null,
+    contextWindow: null,
+    isStatsLocal: false,
+    statsAbortController: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -151,81 +154,86 @@ function renderMessages() {
         appendLoadingBubble();
     }
     container.scrollTop = container.scrollHeight;
-    updateTokenStats();
+    renderStatsPanel();
 }
 
-function updateStatsIndicator(stats) {
+function renderStatsPanel() {
+    const userTokens = state.messages
+        .filter((m) => m.role === 'user')
+        .reduce((s, m) => s + (m.token_count || 0), 0);
+    const assistantTokens = state.messages
+        .filter((m) => m.role === 'assistant')
+        .reduce((s, m) => s + (m.token_count || 0), 0);
+    const reqEl = $('stats-request-tokens');
+    const respEl = $('stats-response-tokens');
+    if (reqEl) reqEl.textContent = `${userTokens} tokens`;
+    if (respEl) respEl.textContent = `${assistantTokens} tokens`;
+
+    const stats = state.lastStats;
+    const ctxSize = stats?.current_context_size ?? (userTokens + assistantTokens);
+    const ctxWindow = stats?.context_window_size ?? state.contextWindow ?? 4096;
+    const percent = stats?.usage_percent
+        ?? (ctxWindow > 0 ? Math.round((ctxSize / ctxWindow) * 1000) / 10 : 0);
+
     const ctxEl = $('stats-current-context');
-    if (!ctxEl) return;
-    if (!stats || stats.error) {
-        ctxEl.textContent = '- / -';
-        ctxEl.className = 'text-slate-500 font-semibold';
-        ctxEl.title = stats?.error ? `Ошибка: ${stats.error}` : 'Нет данных';
-        return;
+    if (ctxEl) {
+        ctxEl.textContent = `${ctxSize} / ${ctxWindow}`;
+        ctxEl.className = percent >= 90 ? 'text-red-400 font-semibold'
+            : percent >= 75 ? 'text-yellow-400 font-semibold'
+            : 'text-white font-semibold';
     }
-    ctxEl.textContent = `${stats.current_context_size} / ${stats.context_window_size}`;
-    ctxEl.title = `Использование: ${stats.usage_percent}%`;
-    if (stats.usage_percent >= 90) ctxEl.className = 'text-red-400 font-semibold';
-    else if (stats.usage_percent >= 75) ctxEl.className = 'text-yellow-400 font-semibold';
-    else ctxEl.className = 'text-white font-semibold';
-}
+    const bar = $('stats-usage-bar');
+    if (bar) {
+        bar.style.width = `${Math.min(percent, 100)}%`;
+        bar.className = `absolute left-0 top-0 h-full rounded-full transition-all ${
+            percent > 90 ? 'bg-red-500' : percent > 75 ? 'bg-yellow-500' : 'bg-indigo-500'}`;
+    }
+    const pctEl = $('stats-usage-percent');
+    if (pctEl) pctEl.textContent = `${percent}%`;
 
-function updateStats(stats) {
-    if (!stats) return;
-
-    updateStatsIndicator(stats);
-
-    const requestEl = $('stats-request-tokens');
-    const responseEl = $('stats-response-tokens');
-    const usageBar = $('stats-usage-bar');
-    const usagePercent = $('stats-usage-percent');
-
-    if (requestEl) requestEl.textContent = `${stats.total_request_tokens ?? 0} tokens`;
-    if (responseEl) responseEl.textContent = `${stats.total_response_tokens ?? 0} tokens`;
-
-    const percent = stats.usage_percent ?? stats.context_usage_percent ?? 0;
-    if (usageBar) usageBar.style.width = `${Math.min(percent, 100)}%`;
-    if (usagePercent) usagePercent.textContent = `${percent}%`;
-
-    if (usageBar) {
-        if (percent > 90) {
-            usageBar.className = 'absolute left-0 top-0 h-full bg-red-500 rounded-full transition-all';
-        } else if (percent > 75) {
-            usageBar.className = 'absolute left-0 top-0 h-full bg-yellow-500 rounded-full transition-all';
-        } else {
-            usageBar.className = 'absolute left-0 top-0 h-full bg-indigo-500 rounded-full transition-all';
+    const localIndicator = $('stats-local-indicator');
+    if (localIndicator) {
+        localIndicator.style.display = state.lastStats ? 'none' : 'block';
+        if (!state.lastStats) {
+            localIndicator.textContent = '⚠️ Локальный подсчет (сервер недоступен)';
+            localIndicator.className = 'text-xs text-yellow-500 mt-1';
         }
     }
 }
 
-async function loadChatStats(chatId) {
-    if (statsRequestController) statsRequestController.abort();
-    statsRequestController = new AbortController();
-    try {
-        const stats = await apiFetch(`/api/v1/chats/${chatId}/stats`, {
-            signal: statsRequestController.signal,
-        });
-        if (state.currentChatId === chatId) updateStats(stats);
-    } catch (err) {
-        if (err.name !== 'AbortError') updateStatsIndicator(null);
+function updateStats(stats) {
+    if (stats?.chat_id && stats.chat_id !== state.currentChatId) {
+        return;
     }
+    if (!stats || stats.error) {
+        state.lastStats = null;
+        state.isStatsLocal = true;
+    } else {
+        state.lastStats = stats;
+        state.lastStatsChatId = stats.chat_id;
+        state.contextWindow = stats.context_window_size;
+        state.isStatsLocal = false;
+    }
+    renderStatsPanel();
 }
 
-function updateTokenStats() {
-    const totalTokens = state.messages.reduce((sum, msg) => sum + (msg.token_count || 0), 0);
-    const userTokens = state.messages
-        .filter((m) => m.role === 'user')
-        .reduce((sum, msg) => sum + (msg.token_count || 0), 0);
-    const assistantTokens = state.messages
-        .filter((m) => m.role === 'assistant')
-        .reduce((sum, msg) => sum + (msg.token_count || 0), 0);
-    const statsEl = $('token-stats');
-    if (statsEl) {
-        statsEl.innerHTML = `
-            <span class="text-xs text-slate-400">
-                Total: ${totalTokens} tokens
-                (User: ${userTokens}, Assistant: ${assistantTokens})
-            </span>`;
+async function loadChatStats(chatId) {
+    if (state.statsAbortController) {
+        state.statsAbortController.abort();
+        state.statsAbortController = null;
+    }
+    state.statsAbortController = new AbortController();
+    try {
+        const stats = await apiFetch(
+            `/api/v1/chats/${chatId}/stats`,
+            { signal: state.statsAbortController.signal },
+        );
+        updateStats(stats);
+    } catch (err) {
+        if (err.name !== 'AbortError') {
+            console.error('Failed to load stats:', err);
+            updateStats(null);
+        }
     }
 }
 
@@ -321,6 +329,9 @@ async function selectChat(chatId) {
     }
     disconnectWs(false);
     state.currentChatId = chatId;
+    state.lastStats = null;
+    state.lastStatsChatId = null;
+    state.isStatsLocal = false;
     state.childrenByParent.clear();
     state.activeChildByParent.clear();
     const chat = state.chats.find((c) => c.id === chatId);
@@ -574,6 +585,7 @@ async function branchFromMessage(messageId) {
         body: JSON.stringify({ message_id: messageId }),
     });
     await loadChatTree(state.currentChatId);
+    loadChatStats(state.currentChatId);
     $('message-input').focus();
 }
 
@@ -594,6 +606,7 @@ async function switchBranch(parentRef, direction) {
         body: JSON.stringify({ message_id: leafId }),
     });
     await loadChatTree(state.currentChatId);
+    loadChatStats(state.currentChatId);
 }
 
 async function loadModels() {
@@ -642,6 +655,7 @@ async function refreshModelSelector() {
 
 async function onModelSelect(modelId) {
     if (!modelId) return;
+    state.contextWindow = null;
     try {
         state.models = await apiFetch('/api/v1/lm-studio/models');
     } catch {

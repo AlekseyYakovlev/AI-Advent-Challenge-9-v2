@@ -298,15 +298,17 @@ async def compute_chat_stats(
     session: AsyncSession,
     chat_id: int,
     model: str | None = None,
+    context_window: int = 4096,
 ) -> dict[str, Any]:
     """Calculate context usage statistics for the active chat branch."""
     default_stats: dict[str, Any] = {
         "current_context_size": 0,
-        "context_window_size": 4096,
+        "context_window_size": context_window,
         "usage_percent": 0.0,
         "message_count": 0,
         "total_request_tokens": 0,
         "total_response_tokens": 0,
+        "chat_id": chat_id,
     }
     try:
         settings_row = await get_effective_settings(session, chat_id)
@@ -316,7 +318,7 @@ async def compute_chat_stats(
         llm_messages = await build_llm_context(session, chat_id, model)
         branch_messages = await _load_branch_messages(session, chat_id)
 
-        context_window = settings_row.context_length
+        effective_window = settings_row.context_length
         current_context_size = 0
         for msg in llm_messages:
             if msg["role"] == "system":
@@ -328,13 +330,13 @@ async def compute_chat_stats(
                 )
 
         usage_percent = (
-            round((current_context_size / context_window) * 100, 1)
-            if context_window > 0
+            round((current_context_size / effective_window) * 100, 1)
+            if effective_window > 0
             else 0.0
         )
         return {
             "current_context_size": current_context_size,
-            "context_window_size": context_window,
+            "context_window_size": effective_window,
             "usage_percent": usage_percent,
             "message_count": len(llm_messages),
             "total_request_tokens": sum(
@@ -347,6 +349,7 @@ async def compute_chat_stats(
                 for msg in branch_messages
                 if msg["role"] == "assistant"
             ),
+            "chat_id": chat_id,
         }
     except Exception as exc:
         logger.error(

@@ -55,7 +55,6 @@
             <header class="flex items-center gap-3 px-4 py-3 border-b border-slate-800 bg-slate-900/50">
                 <div class="flex-1 min-w-0">
                     <h1 id="chat-title" class="text-lg font-semibold truncate">AI Agent</h1>
-                    <div id="token-stats" class="text-xs text-slate-400"></div>
                 </div>
                 <select id="model-select"
                     class="rounded-lg bg-slate-800 border border-slate-700 px-3 py-1.5 text-sm max-w-xs truncate">
@@ -90,6 +89,9 @@
                         </div>
                         <div id="stats-usage-percent" class="text-right text-slate-500 mt-1">0%</div>
                     </div>
+                </div>
+                <div id="stats-local-indicator" class="text-xs text-yellow-500 mt-1" style="display: none;">
+                    ⚠️ Локальный подсчет (сервер недоступен)
                 </div>
             </div>
             <!-- Context Overflow Banner -->
