@@ -35,7 +35,7 @@
 Plans:
 **Wave 1**
 
-- [ ] 01-01-PLAN.md — Password hashing, User/Session tables, login/logout/me routes, CORS allowlist, login.html
+- [x] 01-01-PLAN.md — Password hashing, User/Session tables, login/logout/me routes, CORS allowlist, login.html
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -143,7 +143,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Auth Foundation | 0/? | Not started | - |
+| 1. Auth Foundation | 1/5 | In Progress|  |
 | 2. Memory (Day 11) | 0/? | Not started | - |
 | 3. Personalization (Day 12) | 0/? | Not started | - |
 | 4. Task State Machine (Day 13) | 0/? | Not started | - |
