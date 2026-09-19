@@ -21,10 +21,10 @@ async def test_cors_allows_ui_origins(client: AsyncClient, origin: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_cors_allows_any_origin(client: AsyncClient) -> None:
-    """Single-user app allows any origin via CORS middleware."""
+async def test_cors_rejects_unknown_origin(client: AsyncClient) -> None:
+    """Unknown origins must not be reflected once cookies carry real auth."""
     resp = await client.get(
         "/health",
         headers={"Origin": "http://evil.example.com"},
     )
-    assert resp.headers.get("access-control-allow-origin") == "http://evil.example.com"
+    assert resp.headers.get("access-control-allow-origin") is None
