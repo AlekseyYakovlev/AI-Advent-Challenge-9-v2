@@ -14,6 +14,8 @@ CONTENT_MAX_LENGTH = 100_000
 SYSTEM_PROMPT_MAX_LENGTH = 10_000
 FACTS_JSON_MAX_LENGTH = 50_000
 SUMMARY_TEXT_MAX_LENGTH = 50_000
+USERNAME_MAX_LENGTH = 64
+PASSWORD_MAX_LENGTH = 128
 
 
 class HealthResponse(BaseModel):
@@ -121,3 +123,17 @@ class ModelLoadRequest(BaseModel):
     model_id: str
     gpu_offload: int = Field(default=0, ge=-1, le=100)
     context_length: Optional[int] = Field(default=None, gt=0)
+
+
+class LoginRequest(BaseModel):
+    """Request body for username/password login."""
+
+    username: str = Field(min_length=1, max_length=USERNAME_MAX_LENGTH)
+    password: str = Field(min_length=1, max_length=PASSWORD_MAX_LENGTH)
+
+
+class UserResponse(BaseModel):
+    """Serialized user (never includes password_hash)."""
+
+    id: int
+    username: str = Field(max_length=USERNAME_MAX_LENGTH)

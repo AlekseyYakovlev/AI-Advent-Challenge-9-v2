@@ -47,8 +47,13 @@ function showToast(message, type = 'error') {
 async function apiFetch(path, options = {}) {
     const resp = await fetch(`${AGENT_BASE}${path}`, {
         headers: { 'Content-Type': 'application/json', ...options.headers },
+        credentials: 'include',
         ...options,
     });
+    if (resp.status === 401) {
+        window.location.href = '/static/login.html?expired=1';
+        return;
+    }
     if (!resp.ok) {
         const body = await resp.json().catch(() => ({}));
         const detail = body.detail || resp.statusText;
@@ -56,6 +61,11 @@ async function apiFetch(path, options = {}) {
     }
     if (resp.status === 204) return null;
     return resp.json();
+}
+
+async function logout() {
+    await apiFetch('/api/v1/auth/logout', { method: 'POST' });
+    window.location.href = '/static/login.html';
 }
 
 function renderMarkdown(text) {
@@ -298,7 +308,10 @@ function renderChatList() {
 
 async function checkAgentHealth() {
     try {
-        const resp = await fetch(`${AGENT_BASE}/health`, { signal: AbortSignal.timeout(2000) });
+        const resp = await fetch(`${AGENT_BASE}/health`, {
+            signal: AbortSignal.timeout(2000),
+            credentials: 'include',
+        });
         const ok = resp.ok;
         $('agent-status-text').textContent = ok ? 'online' : 'offline';
         $('agent-status-text').className = ok ? 'text-emerald-400' : 'text-red-400';
@@ -753,6 +766,7 @@ async function saveSettings(event) {
 
 function bindEvents() {
     $('btn-new-chat').addEventListener('click', () => createChat().catch((e) => showToast(e.message)));
+    $('btn-logout').addEventListener('click', () => logout().catch((e) => showToast(e.message, 'error')));
     $('chat-form').addEventListener('submit', (e) => {
         e.preventDefault();
         const text = $('message-input').value;

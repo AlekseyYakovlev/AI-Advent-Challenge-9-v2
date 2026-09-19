@@ -2,32 +2,43 @@
 
 import asyncio
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, status
+from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Response, WebSocket, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from agent.dependencies import get_current_user
 from agent.schemas import (
     BranchRequest,
     ChatCreate,
     ChatResponse,
     HealthResponse,
+    LoginRequest,
     MessageResponse,
     ModelLoadRequest,
     ModelLoadResult,
     SettingsResponse,
     SettingsUpdate,
+    UserResponse,
 )
 from agent.llm_client import LMStudioClient
-from agent.state import cleanup_chat_caches
+from agent.state import CORS_ORIGINS, cleanup_chat_caches
 from agent.context_engine import compute_chat_stats
 from agent.ws import ws_chat
+from shared.auth import (
+    SESSION_COOKIE_NAME,
+    SESSION_TTL_DAYS,
+    generate_session_token,
+    hash_session_token,
+    verify_password,
+)
 from shared.database import async_session_factory, engine, get_session, init_db
 from shared.logger import get_logger
-from shared.models import Chat, ContextStrategy, Message, Settings
+from shared.models import Chat, ContextStrategy, Message, Session as SessionRow, Settings, User
 
 logger = get_logger(__name__)
 
@@ -161,7 +172,7 @@ app = FastAPI(title="AI Agent", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -187,6 +198,76 @@ async def debug_routes() -> dict[str, list[dict[str, Any]]]:
 async def health() -> HealthResponse:
     """Return service health status."""
     return HealthResponse()
+
+
+@app.post("/api/v1/auth/login", response_model=UserResponse)
+async def login(
+    body: LoginRequest,
+    response: Response,
+    session: AsyncSession = Depends(get_session),
+) -> UserResponse:
+    """Verify credentials and issue a DB-backed HTTP-only session cookie."""
+    result = await session.exec(select(User).where(User.username == body.username))
+    user = result.first()
+    if user is None or not verify_password(body.password, user.password_hash):
+        logger.info("login_failed", username=body.username)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Неверное имя пользователя или пароль",
+        )
+
+    token = generate_session_token()
+    session_row = SessionRow(
+        token_hash=hash_session_token(token),
+        user_id=user.id,
+        expires_at=datetime.now(timezone.utc) + timedelta(days=SESSION_TTL_DAYS),
+    )
+    session.add(session_row)
+    try:
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+
+    response.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=token,
+        httponly=True,
+        samesite="lax",
+        path="/",
+    )
+    logger.info("login_success", username=user.username)
+    return UserResponse(id=user.id, username=user.username)
+
+
+@app.post("/api/v1/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout(
+    response: Response,
+    session_id: str | None = Cookie(default=None, alias=SESSION_COOKIE_NAME),
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    """Revoke the presented session server-side and clear the cookie."""
+    if session_id is not None:
+        result = await session.exec(
+            select(SessionRow).where(SessionRow.token_hash == hash_session_token(session_id)),
+        )
+        row = result.first()
+        if row is not None:
+            try:
+                await session.delete(row)
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+    response.delete_cookie(SESSION_COOKIE_NAME, path="/")
+    logger.info("logout", user_id=current_user.id)
+
+
+@app.get("/api/v1/auth/me", response_model=UserResponse)
+async def get_me(current_user: User = Depends(get_current_user)) -> UserResponse:
+    """Return the currently authenticated user."""
+    return UserResponse(id=current_user.id, username=current_user.username)
 
 
 @app.get("/api/v1/chats", response_model=list[ChatResponse])

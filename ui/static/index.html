@@ -45,8 +45,13 @@
                 </button>
             </div>
             <nav id="chat-list" class="flex-1 overflow-y-auto p-2 space-y-1"></nav>
-            <div id="agent-status" class="p-3 border-t border-slate-800 text-xs text-slate-400">
-                Agent: <span id="agent-status-text">подключение…</span>
+            <div id="agent-status" class="p-3 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
+                <span>Agent: <span id="agent-status-text">подключение…</span></span>
+                <button id="btn-logout"
+                    class="rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 px-3 py-2 text-sm transition"
+                    title="Выйти">
+                    Выйти
+                </button>
             </div>
         </aside>
 

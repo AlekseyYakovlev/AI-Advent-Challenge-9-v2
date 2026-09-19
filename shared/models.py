@@ -106,3 +106,32 @@ class TokenUsage(SQLModel, table=True):
     date: datetime
     prompt_tokens: int = Field(default=0)
     completion_tokens: int = Field(default=0)
+
+
+class User(SQLModel, table=True):
+    """A registered account (every account has equal "admin" capability)."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    username: str = Field(unique=True, index=True)
+    password_hash: str
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+    )
+
+
+class Session(SQLModel, table=True):
+    """A server-side, revocable login session for a user."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    token_hash: str = Field(unique=True, index=True)
+    user_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("user.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+    )
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+    )
+    expires_at: datetime
