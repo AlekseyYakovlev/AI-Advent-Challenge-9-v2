@@ -28,7 +28,13 @@
   2. User can create additional user accounts, all with the same "admin" capability
   3. The session persists across page reloads and covers both REST calls and the WebSocket chat connection, via an HTTP-only session cookie (never localStorage/JWT)
   4. Existing chats/settings/memory are scoped to a backfilled bootstrap admin user, and each subsequently created user only sees their own chats/settings/memory
-**Plans**: TBD
+**Plans**: 5 plans (5 waves)
+Plans:
+- [ ] 01-01-PLAN.md — Password hashing, User/Session tables, login/logout/me routes, CORS allowlist, login.html
+- [ ] 01-02-PLAN.md — Nullable user_id columns, additive migration, bootstrap admin, backfill, run.py credential banner
+- [ ] 01-03-PLAN.md — Gate and user-scope every REST route, owner-scoped settings fallback, test-suite repair
+- [ ] 01-04-PLAN.md — Pre-accept session and chat-ownership gate on the chat WebSocket
+- [ ] 01-05-PLAN.md — POST /api/v1/auth/users and the "Add user" modal (AUTH-02)
 
 ### Phase 2: Memory (Day 11)
 **Goal**: The agent maintains three explicitly separated, inspectable memory layers, populated only through deliberate LLM tool calls — never implicit/automatic classification
