@@ -437,17 +437,19 @@ def main() -> None:
 
 **If this table is empty:** N/A — two low-risk items logged above; neither blocks planning.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Should the raw session token be hashed before storage in the `Session` table, or stored as plaintext (as sketched in the Code Examples)?**
    - What we know: D-01 only specifies "an opaque random token in the HTTP-only cookie maps to a session row" — it does not mandate hashing at rest. Storing the raw high-entropy token indexed is a common, acceptable pattern (comparable to many frameworks' default session-store behavior) and is what the Code Examples above show for simplicity.
    - What's unclear: Whether the user wants the extra defense-in-depth of hashing tokens at rest (mirrors password-reset-token best practice) given this is coursework in a trusted, local-only environment.
    - Recommendation: Ship the simpler plaintext-token-in-DB approach for this MVP phase (matches "thinnest possible correct slice" framing); note hashing-at-rest as a fast-follow hardening option, not a blocker.
+   - **RESOLVED (during planning, in `01-01-PLAN.md` Task 2 "SESSION-TOKEN-AT-REST DECISION"):** hash at rest. The DB stores only `sha256(token)` in `Session.token_hash`; the raw `secrets.token_urlsafe(32)` value exists solely in the HTTP-only cookie and is never persisted or logged. This overrides the plaintext-token sketch in the Code Examples above. Plain SHA-256 (not argon2) is correct here because the token already carries 256 bits of entropy, so it needs no key-stretching, and lookups stay a single indexed equality query. Tracked as threat T-01-06 in `01-01-PLAN.md`'s STRIDE register.
 
 2. **Exact cookie name and header casing for the WS-side lookup.**
    - What we know: REST and WS must share the same cookie (D-10 says "same origin as `_validate_origin()`"), so whatever name is chosen for `Set-Cookie` in the login endpoint must match what `websocket.cookies.get(...)` looks up.
    - What's unclear: Nothing blocking — this is a naming decision for planning (`session_id` used consistently throughout this research is a reasonable default).
    - Recommendation: Planner should pick one constant (e.g., `SESSION_COOKIE_NAME = "session_id"`) defined once in `shared/auth.py` or `agent/dependencies.py` and imported everywhere it's needed, to avoid a naming mismatch between the login endpoint and the WS/REST auth dependencies.
+   - **RESOLVED (during planning, in `01-01-PLAN.md`):** a single shared constant `SESSION_COOKIE_NAME = "session_id"` is defined once in `shared/auth.py` and imported everywhere it is needed — `agent/dependencies.py` (`Cookie(alias=SESSION_COOKIE_NAME)` for both `get_current_user` and `get_current_user_ws`), `agent/main.py` (`response.set_cookie` / `response.delete_cookie`), `ui/static/login.html`, and `agent/ws.py`'s handshake cookie lookup. No literal cookie-name string is duplicated anywhere, so a REST/WS naming mismatch is structurally impossible.
 
 ## Environment Availability
 
