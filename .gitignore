@@ -24,6 +24,9 @@ htmlcov/
 .tox/
 .cache/
 
+# Claude Code local overrides
+.claude/settings.local.json
+
 # IDE / OS
 .idea/
 .vscode/

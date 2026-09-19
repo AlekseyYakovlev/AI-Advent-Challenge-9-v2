@@ -7,28 +7,27 @@
 
 ## Context Compression Strategies
 
-The system implements 4 context compression strategies that control what is sent to the LLM.
+The system implements 4 context compression strategies (`agent/context_engine.py::_apply_compression_strategy`)
+that control what is sent to the LLM. All are deterministic slicing/dropping of messages —
+**none of them summarize the dropped content**; that content simply isn't sent to the LLM this turn.
 **Important:** Database history is NEVER modified - strategies only affect LLM context.
 
 ### 1. Sliding Window (sliding)
-- **Behavior:** Keeps only the last 10 messages (RECENT_PAIR_COUNT * 2)
-- **When triggered:** Total tokens exceed 75% of context_length
+- **Behavior:** Keeps only the last `RECENT_MESSAGE_COUNT` (10) messages; everything older is dropped from the LLM context entirely
+- **When triggered:** Total tokens exceed 75% of `context_length` (`SUMMARY_TRIGGER_RATIO`), or the chat already has more than 10 messages
 - **Best for:** Fast chats, maintaining recent context
 - **Database:** All messages preserved
 
 ### 2. Sticky Facts (sticky)
-- **Behavior:** Summarizes old messages into English summary, keeps recent messages
-- **When triggered:** Total tokens exceed 75% of context_length
-- **Best for:** Long consultations, extracting key facts
-- **Accumulation:** [Old Summary] + [New Summary] + [Recent messages]
-- **Re-summarization:** When summary exceeds 1500 tokens
-- **Database:** All messages preserved, summary stored in settings.summary_text
+- **Behavior:** Keeps the first message of the active branch + the last 10 messages (no overlap); the middle is dropped, not summarized
+- **When triggered:** Same threshold as above (75% of `context_length`)
+- **Best for:** Long consultations where the original instruction/goal must stay visible, combined with the facts mechanism below
+- **Database:** All messages preserved
 
 ### 3. Truncate Middle (truncate_middle)
-- **Behavior:** Keeps first 5 messages + middle summary + last 10 messages
-- **When triggered:** Total tokens exceed 75% of context_length
+- **Behavior:** Keeps the first 2 messages + the last 10 messages (no overlap); the middle is dropped, not summarized
+- **When triggered:** Same threshold as above (75% of `context_length`)
 - **Best for:** Preserving initial instructions and recent context
-- **Middle summary:** Generated in English, 2-3 sentences
 - **Database:** All messages preserved
 
 ### 4. No Compression (no_compression)
@@ -37,6 +36,32 @@ The system implements 4 context compression strategies that control what is sent
 - **Protection:** Raises ContextOverflowError if tokens exceed context_length
 - **Best for:** Short conversations, when full context is critical
 - **Database:** All messages preserved
+
+## Key-Value Facts Extraction
+
+Independent of which compression strategy is selected, `agent/context_engine.py::extract_and_update_facts`
+runs after every user message:
+- Debounced 2s (`FACTS_DEBOUNCE_SECONDS`) per chat — rapid consecutive messages coalesce into one extraction call
+- Calls the LLM to extract key facts (goal, constraints, preferences, decisions) as a JSON object
+- Merges the result into `Settings.facts_json` (new keys overwrite old ones on conflict)
+- `build_system_prompt` injects the accumulated facts into the system prompt on every turn, **for every strategy**, not just `sticky`
+
+`Settings.summary_text` still exists in the schema and API (`PUT /api/v1/settings`) for backward
+compatibility, and is injected into the system prompt when non-empty, but nothing in the current
+codebase writes to it automatically — `summarize_if_needed()` is a no-op stub, and the field has no
+UI control. It can only be populated by calling the settings API directly.
+
+## Branching (message forking)
+
+Branching is a separate feature from context compression, not a `ContextStrategy` value (an earlier
+`"branching"` strategy enum value was migrated away — see `migrate_strategies.py`). It works directly
+on the message tree:
+- `Chat.current_leaf_message_id` marks a checkpoint; `POST /api/v1/chats/{id}/branch` repoints it to any
+  earlier message without copying data
+- Sending a new message after branching to an earlier point creates a sibling under that message's
+  `parent_id`, forking the conversation into two independent branches
+- The UI (`ui/static/app.js`) exposes "branch from message" plus prev/next sibling controls to fork and
+  switch between branches
 
 ## Context Overflow Protection
 
