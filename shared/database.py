@@ -2,18 +2,20 @@
 
 import asyncio
 import functools
+import secrets
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from typing import Any, TypeVar
 
 from sqlalchemy import event, text
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlmodel import SQLModel
+from sqlmodel import SQLModel, select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from shared.auth import hash_password
 from shared.config import settings
 from shared.logger import get_logger
-from shared.models import Chat, Message, Settings, TokenUsage  # noqa: F401
+from shared.models import Chat, Message, Session, Settings, TokenUsage, User  # noqa: F401
 
 logger = get_logger(__name__)
 
@@ -92,10 +94,91 @@ async def migrate_add_context_length(conn: Any) -> None:
         )
 
 
+async def migrate_add_user_id_columns(conn: Any) -> None:
+    """Add nullable user_id columns to chat and settings when missing (idempotent)."""
+    for table in ("chat", "settings"):
+        table_check = await conn.execute(
+            text(
+                "SELECT name FROM sqlite_master "
+                "WHERE type='table' AND name=:table",
+            ),
+            {"table": table},
+        )
+        if table_check.fetchone() is None:
+            continue
+
+        result = await conn.execute(text(f"PRAGMA table_info({table})"))
+        columns = [row[1] for row in result.fetchall()]
+        if "user_id" not in columns:
+            logger.info("migrating_add_user_id", table=table)
+            await conn.execute(
+                text(
+                    f"ALTER TABLE {table} ADD COLUMN user_id INTEGER REFERENCES user(id)",
+                ),
+            )
+
+
+async def ensure_bootstrap_admin() -> tuple[str, str] | None:
+    """Create a bootstrap admin account when no users exist (D-05)."""
+    async with async_session_factory() as session:
+        result = await session.exec(select(User))
+        if result.first() is not None:
+            return None
+
+        username = "admin"
+        password = secrets.token_urlsafe(18)
+        row = User(username=username, password_hash=hash_password(password))
+        session.add(row)
+        try:
+            await session.commit()
+            await session.refresh(row)
+        except Exception:
+            await session.rollback()
+            raise
+
+        logger.info("bootstrap_admin_created", username=username)
+        return username, password
+
+
+async def backfill_user_id(admin_id: int) -> None:
+    """Assign every ownerless chat/settings row to the given admin (D-07)."""
+    async with engine.begin() as conn:
+        for table in ("chat", "settings"):
+            result = await conn.execute(
+                text(
+                    f"UPDATE {table} SET user_id = :admin_id WHERE user_id IS NULL",
+                ),
+                {"admin_id": admin_id},
+            )
+            logger.info("backfilled_user_id", table=table, rows=result.rowcount)
+
+
+async def bootstrap_admin_if_needed() -> tuple[str, str] | None:
+    """Run migrations, create the bootstrap admin if needed, and backfill legacy rows."""
+    await init_db()
+    credentials = await ensure_bootstrap_admin()
+
+    async with async_session_factory() as session:
+        if credentials is not None:
+            result = await session.exec(
+                select(User).where(User.username == credentials[0]),
+            )
+        else:
+            result = await session.exec(select(User).order_by(User.created_at.asc()))
+        admin = result.first()
+
+    if admin is None:
+        return None
+
+    await backfill_user_id(admin.id)
+    return credentials
+
+
 async def init_db() -> None:
     """Create all database tables if they do not exist."""
     async with engine.begin() as conn:
         await migrate_add_context_length(conn)
+        await migrate_add_user_id_columns(conn)
         await conn.run_sync(SQLModel.metadata.create_all)
         await _migrate_legacy_strategies(conn)
 
