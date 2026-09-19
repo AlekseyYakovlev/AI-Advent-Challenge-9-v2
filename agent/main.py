@@ -36,7 +36,7 @@ from shared.auth import (
     hash_session_token,
     verify_password,
 )
-from shared.database import async_session_factory, engine, get_session, init_db
+from shared.database import engine, get_session, init_db
 from shared.logger import get_logger
 from shared.models import Chat, ContextStrategy, Message, Session as SessionRow, Settings, User
 
@@ -45,15 +45,18 @@ logger = get_logger(__name__)
 lm_studio_client = LMStudioClient()
 
 
-async def _ensure_global_settings(session: AsyncSession) -> Settings:
-    """Create default global settings row when missing."""
-    result = await session.exec(
-        select(Settings).where(Settings.chat_id.is_(None)),
-    )
+async def _ensure_global_settings(session: AsyncSession, user_id: int | None) -> Settings:
+    """Create default global settings row for the given owner when missing."""
+    conditions = [Settings.chat_id.is_(None)]
+    if user_id is None:
+        conditions.append(Settings.user_id.is_(None))
+    else:
+        conditions.append(Settings.user_id == user_id)
+    result = await session.exec(select(Settings).where(*conditions))
     row = result.first()
     if row is not None:
         return row
-    row = Settings(chat_id=None)
+    row = Settings(chat_id=None, user_id=user_id)
     session.add(row)
     await session.commit()
     await session.refresh(row)
@@ -63,10 +66,12 @@ async def _ensure_global_settings(session: AsyncSession) -> Settings:
 async def _get_chat_or_404(
     session: AsyncSession,
     chat_id: int,
+    user_id: int,
 ) -> Chat:
-    """Load a chat by id or raise HTTP 404."""
+    """Load a chat owned by user_id or raise HTTP 404 (never 403, to avoid an IDOR oracle)."""
     chat = await session.get(Chat, chat_id)
-    if chat is None:
+    if chat is None or chat.user_id != user_id:
+        logger.warning("chat_access_denied", chat_id=chat_id, user_id=user_id)
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Chat {chat_id} not found",
@@ -77,17 +82,18 @@ async def _get_chat_or_404(
 async def _resolve_settings(
     session: AsyncSession,
     chat_id: int | None,
+    user_id: int,
 ) -> Settings:
-    """Return per-chat settings or fall back to global defaults."""
+    """Return per-chat settings or fall back to the caller's global defaults."""
     if chat_id is not None:
-        await _get_chat_or_404(session, chat_id)
+        await _get_chat_or_404(session, chat_id, user_id)
         result = await session.exec(
             select(Settings).where(Settings.chat_id == chat_id),
         )
         row = result.first()
         if row is not None:
             return row
-    return await _ensure_global_settings(session)
+    return await _ensure_global_settings(session, user_id)
 
 
 def _normalize_strategy(strategy: str | ContextStrategy) -> ContextStrategy:
@@ -161,8 +167,6 @@ async def lifespan(_app: FastAPI):
     """Initialize the database on startup and dispose the engine on shutdown."""
     logger.info("agent_starting")
     await init_db()
-    async with async_session_factory() as session:
-        await _ensure_global_settings(session)
     yield
     logger.info("agent_shutting_down")
     await engine.dispose()
@@ -273,10 +277,13 @@ async def get_me(current_user: User = Depends(get_current_user)) -> UserResponse
 @app.get("/api/v1/chats", response_model=list[ChatResponse])
 async def list_chats(
     session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> list[ChatResponse]:
-    """List all chats ordered by creation time descending."""
+    """List the caller's chats ordered by creation time descending."""
     result = await session.exec(
-        select(Chat).order_by(Chat.created_at.desc()),
+        select(Chat)
+        .where(Chat.user_id == current_user.id)
+        .order_by(Chat.created_at.desc()),
     )
     return [_chat_to_response(chat) for chat in result.all()]
 
@@ -289,9 +296,10 @@ async def list_chats(
 async def create_chat(
     body: ChatCreate,
     session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> ChatResponse:
-    """Create a new chat session."""
-    chat = Chat(title=body.title)
+    """Create a new chat session owned by the caller."""
+    chat = Chat(title=body.title, user_id=current_user.id)
     session.add(chat)
     await session.commit()
     await session.refresh(chat)
@@ -305,9 +313,10 @@ async def create_chat(
 async def delete_chat(
     chat_id: int,
     session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> None:
     """Delete a chat and clear related in-memory caches."""
-    chat = await _get_chat_or_404(session, chat_id)
+    chat = await _get_chat_or_404(session, chat_id, current_user.id)
     try:
         await session.delete(chat)
         await session.commit()
@@ -324,9 +333,10 @@ async def delete_chat(
 async def get_chat_tree(
     chat_id: int,
     session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> list[MessageResponse]:
     """Return the message path from the current leaf to the root."""
-    chat = await _get_chat_or_404(session, chat_id)
+    chat = await _get_chat_or_404(session, chat_id, current_user.id)
     path = await _build_tree_path(session, chat)
     return [_message_to_response(msg) for msg in path]
 
@@ -336,9 +346,10 @@ async def get_chat_stats(
     chat_id: int,
     model: str | None = Query(default=None),
     session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> dict[str, Any]:
     """Get real-time statistics for a chat."""
-    await _get_chat_or_404(session, chat_id)
+    await _get_chat_or_404(session, chat_id, current_user.id)
     return await compute_chat_stats(session, chat_id, model=model)
 
 
@@ -350,9 +361,10 @@ async def branch_chat(
     chat_id: int,
     body: BranchRequest,
     session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> ChatResponse:
     """Switch the active branch to the given message."""
-    chat = await _get_chat_or_404(session, chat_id)
+    chat = await _get_chat_or_404(session, chat_id, current_user.id)
     message = await session.get(Message, body.message_id)
     if message is None or message.chat_id != chat_id:
         raise HTTPException(
@@ -370,9 +382,10 @@ async def branch_chat(
 async def get_settings(
     chat_id: int | None = Query(default=None),
     session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> SettingsResponse:
-    """Return effective settings with global fallback."""
-    row = await _resolve_settings(session, chat_id)
+    """Return effective settings with global fallback, scoped to the caller."""
+    row = await _resolve_settings(session, chat_id, current_user.id)
     return _settings_to_response(row)
 
 
@@ -380,18 +393,19 @@ async def get_settings(
 async def update_settings(
     body: SettingsUpdate,
     session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ) -> SettingsResponse:
-    """Create or update global or per-chat settings."""
+    """Create or update global or per-chat settings owned by the caller."""
     if body.chat_id is None:
-        row = await _ensure_global_settings(session)
+        row = await _ensure_global_settings(session, current_user.id)
     else:
-        await _get_chat_or_404(session, body.chat_id)
+        await _get_chat_or_404(session, body.chat_id, current_user.id)
         result = await session.exec(
             select(Settings).where(Settings.chat_id == body.chat_id),
         )
         row = result.first()
         if row is None:
-            row = Settings(chat_id=body.chat_id)
+            row = Settings(chat_id=body.chat_id, user_id=current_user.id)
             session.add(row)
     updates = body.model_dump(exclude_unset=True, exclude={"chat_id"})
     for field, value in updates.items():
@@ -407,7 +421,9 @@ async def update_settings(
 
 
 @app.get("/api/v1/lm-studio/models")
-async def list_lm_studio_models() -> list[dict[str, Any]]:
+async def list_lm_studio_models(
+    current_user: User = Depends(get_current_user),
+) -> list[dict[str, Any]]:
     """List models available in LM Studio."""
     try:
         return await lm_studio_client.list_models()
@@ -424,7 +440,10 @@ async def list_lm_studio_models() -> list[dict[str, Any]]:
 
 
 @app.post("/api/v1/lm-studio/load-model", response_model=ModelLoadResult)
-async def load_lm_studio_model(body: ModelLoadRequest) -> ModelLoadResult:
+async def load_lm_studio_model(
+    body: ModelLoadRequest,
+    current_user: User = Depends(get_current_user),
+) -> ModelLoadResult:
     """Load a model in LM Studio."""
     return await lm_studio_client.load_model(
         body.model_id,
@@ -437,7 +456,10 @@ async def load_lm_studio_model(body: ModelLoadRequest) -> ModelLoadResult:
     "/api/v1/lm-studio/unload-model/{model_id}",
     response_model=ModelLoadResult,
 )
-async def unload_lm_studio_model(model_id: str) -> ModelLoadResult:
+async def unload_lm_studio_model(
+    model_id: str,
+    current_user: User = Depends(get_current_user),
+) -> ModelLoadResult:
     """Unload a model from LM Studio."""
     return await lm_studio_client.unload_model(model_id)
 

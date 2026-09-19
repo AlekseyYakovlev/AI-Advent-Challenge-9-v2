@@ -13,6 +13,7 @@ from agent.main import app
 from shared.config import settings
 from shared.database import async_session_factory
 from shared.models import Message
+from tests.conftest import login_test_client
 
 BASE_URL = settings.LM_STUDIO_BASE_URL
 MODEL = "test-model"
@@ -39,6 +40,7 @@ async def test_five_parallel_ws_messages_no_integrity_error() -> None:
     )
 
     with TestClient(app) as client:
+        login_test_client(client)
         chat_resp = client.post("/api/v1/chats", json={"title": "Concurrent"})
         chat_id = chat_resp.json()["id"]
 

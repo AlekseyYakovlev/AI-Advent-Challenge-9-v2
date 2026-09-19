@@ -34,15 +34,23 @@ def _message_tokens(messages: list[dict[str, str]]) -> int:
 
 
 async def get_effective_settings(session: AsyncSession, chat_id: int) -> Settings:
-    """Return per-chat settings or fall back to global defaults."""
+    """Return per-chat settings or fall back to the chat owner's global defaults."""
     result = await session.exec(select(Settings).where(Settings.chat_id == chat_id))
     settings = result.first()
     if settings is not None:
         return settings
-    result = await session.exec(select(Settings).where(Settings.chat_id.is_(None)))
+
+    chat = await session.get(Chat, chat_id)
+    owner_id = chat.user_id if chat is not None else None
+    conditions = [Settings.chat_id.is_(None)]
+    if owner_id is None:
+        conditions.append(Settings.user_id.is_(None))
+    else:
+        conditions.append(Settings.user_id == owner_id)
+    result = await session.exec(select(Settings).where(*conditions))
     settings = result.first()
     if settings is None:
-        settings = Settings(chat_id=None)
+        settings = Settings(chat_id=None, user_id=owner_id)
         session.add(settings)
         await session.commit()
         await session.refresh(settings)
@@ -85,7 +93,8 @@ async def _facts_target_row(
     row = result.first()
     if row is not None:
         return row
-    new_settings = Settings(chat_id=chat_id)
+    chat = await session.get(Chat, chat_id)
+    new_settings = Settings(chat_id=chat_id, user_id=chat.user_id if chat is not None else None)
     session.add(new_settings)
     await session.commit()
     await session.refresh(new_settings)
