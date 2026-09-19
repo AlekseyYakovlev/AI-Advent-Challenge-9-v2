@@ -33,6 +33,14 @@ class Chat(SQLModel, table=True):
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
     )
+    user_id: Optional[int] = Field(
+        default=None,
+        sa_column=Column(
+            Integer,
+            ForeignKey("user.id", ondelete="CASCADE"),
+            nullable=True,
+        ),
+    )
 
 
 class Message(SQLModel, table=True):
@@ -90,6 +98,14 @@ class Settings(SQLModel, table=True):
     )
     facts_json: str = Field(default="{}")
     summary_text: str = Field(default="")
+    user_id: Optional[int] = Field(
+        default=None,
+        sa_column=Column(
+            Integer,
+            ForeignKey("user.id", ondelete="CASCADE"),
+            nullable=True,
+        ),
+    )
 
 
 class TokenUsage(SQLModel, table=True):
