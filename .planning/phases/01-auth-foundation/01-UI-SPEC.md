@@ -29,19 +29,27 @@ Existing surfaces this phase must extend, not replace: `ui/static/index.html` (c
 
 ## Spacing Scale
 
-Declared values — this codebase already uses Tailwind's default 4px-increment grid (not a strict 8pt-only scale). Phase 1 must reuse these exact values, not invent new ones:
+Canonical scale for Phase 1 (multiples of 4, per GSD default): **4, 8, 16, 24, 32, 48, 64**. Phase 1's own new controls must be built from this set:
 
-| Token | Value | Usage (existing precedent) |
+| Token | Value | Usage (Phase 1 new elements) |
 |-------|-------|-------|
 | 3xs | 4px | `space-y-1` (nav item stacking), icon-text gaps |
-| xxs | 6px | `py-1.5` on compact controls (model-select, gear button) |
-| xs | 8px | `p-2`, `gap-2` (form field gaps, toast padding-x subset) |
-| sm | 12px | `p-3` (stats panel, toast vertical padding) |
+| xs | 8px | `p-2`, `gap-2` (form field gaps, toast padding-x subset); **compact controls (logout button) use `py-2` = 8px, not the legacy `py-1.5`** |
 | md | 16px | `p-4`, `px-4 py-2` (primary buttons, panels, modal body) — **default spacing unit for Phase 1 forms** |
-| lg | 20px | `px-5 py-4` (modal header/body horizontal), `px-5 py-2` (send button) |
 | xl | 24px | reserved for section-level breaks if login page needs vertical rhythm beyond the card |
 
-Exceptions: the codebase deliberately mixes 4/6/8/12/16/20 rather than a pure 8pt scale (e.g. `py-1.5` = 6px on compact buttons, `p-3` = 12px on panels). Phase 1 UI (login card, add-user modal, session-expired banner) must match these existing values exactly for visual consistency — do not introduce a stricter 8pt-only grid that would visually diverge from `index.html`.
+The **logout control** (Component Notes) is a new Phase 1 element and must use `py-2` (8px, token `xs`), not `py-1.5` — this is a deliberate 2px increase from the visual weight of `#btn-settings` to stay on-grid; the deviation is intentionally minor and does not change layout at any breakpoint.
+
+### Spacing Deviations (Approved)
+
+Some *existing, already-shipped* `index.html`/`app.js` surfaces that Phase 1 visually matches (but does not modify) use off-grid values. These are not invented by this phase; they are pre-existing precedent that new Phase 1 surfaces partially reuse for visual consistency with the surrounding chrome. Recorded here as an explicit, developer-approved deviation from the canonical 4/8/16/24/32/48/64 set — parallel to the Registry Safety approval pattern — rather than left as unstated researcher precedent-matching:
+
+| Token | Value | Where reused in Phase 1 | Reason | Approval |
+|-------|-------|--------------------------|--------|----------|
+| sm | 12px (`p-3`) | Stats-panel-style padding, toast-style vertical padding, if Phase 1 reuses the existing toast pattern for auth errors | Matches shipped `index.html` toast/stats-panel padding exactly; changing it would visually desync new UI from the existing chrome it sits beside | developer-approved deviation — precedent-matching with shipped UI, confirmed 2026-09-19 |
+| lg | 20px (`px-5 py-4` / `px-5 py-2`) | Modal header/body horizontal padding (add-user modal reuses `#settings-modal`'s exact class pattern), submit-button horizontal padding if matching `#btn-send` | Modal reuses `#settings-modal`'s DOM/class pattern verbatim per Component Notes — introducing a different padding value here would make the add-user modal visually inconsistent with the settings modal it's modeled on | developer-approved deviation — precedent-matching with shipped `#settings-modal`, confirmed 2026-09-19 |
+
+`xxs` (6px, legacy `py-1.5` on the existing model-select/gear button) is **not** carried forward into any new Phase 1 element — see the logout-control note above. It remains only as existing, unmodified precedent elsewhere in `index.html`, out of this phase's scope.
 
 ---
 
@@ -99,10 +107,10 @@ All UI copy is in Russian, matching the existing app (`"Новый чат"`, `"�
 
 ## Component Notes for Executor
 
-- **`login.html`**: standalone page (not embedded gate — CONTEXT.md D-08, deliberate deviation, keep it). Structure: `bg-slate-950` full-height body, centered card `bg-slate-900 border border-slate-700 rounded-xl` (same treatment as `#settings-modal`'s inner panel, at `max-w-sm` instead of `max-w-lg`), containing heading, username input, password input (both styled like `#settings-system-prompt`: `bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm`, `focus:ring-2 focus:ring-indigo-500`), submit button (`bg-indigo-600 hover:bg-indigo-500 rounded-lg px-4 py-2 text-sm font-medium`), and an error-message slot below the form.
+- **`login.html`**: standalone page (not embedded gate — CONTEXT.md D-08, deliberate deviation, keep it). Structure: `bg-slate-950` full-height body, centered card `bg-slate-900 border border-slate-700 rounded-xl` (same treatment as `#settings-modal`'s inner panel, at `max-w-sm` instead of `max-w-lg`), containing heading, username input, password input (both styled like `#settings-system-prompt`: `bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm`, `focus:ring-2 focus:ring-indigo-500`), submit button (`bg-indigo-600 hover:bg-indigo-500 rounded-lg px-4 py-2 text-sm font-medium`), and an error-message slot below the form. **Focal point:** the centered card itself is the sole visual anchor — no logo/illustration/graphic; the eye is drawn to the heading + the indigo focus ring on whichever input is active, consistent with the app's existing no-imagery, utility-first visual style.
 - **Session-expired banner**: injected above the form on `login.html`, only when redirected there after a 401 (CONTEXT.md D-09) — not shown on a normal/direct visit to `login.html`.
-- **Add-user modal**: reuse `#settings-modal`'s exact DOM/class pattern (`fixed inset-0 z-50 flex items-center justify-center bg-black/60` overlay; `bg-slate-900 border border-slate-700 rounded-xl shadow-xl` panel; header row with title + `×` close button; `p-5 space-y-4` form body; footer with Cancel (`text-slate-400 hover:text-white`) + primary submit (`bg-indigo-600 hover:bg-indigo-500`) buttons, right-aligned). Trigger location left to executor's discretion per CONTEXT.md (modal vs. settings-panel section vs. dedicated page) — modal via a small "Users" control near `#btn-settings` in the header is recommended to minimize new UI surface.
-- **Logout control**: place near `#agent-status` in the sidebar footer, styled as a secondary button (`bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg px-3 py-1.5 text-sm`), matching `#btn-settings`'s visual weight — not accent-colored (logout is not the primary action of any screen it appears on).
+- **Add-user modal**: reuse `#settings-modal`'s exact DOM/class pattern (`fixed inset-0 z-50 flex items-center justify-center bg-black/60` overlay; `bg-slate-900 border border-slate-700 rounded-xl shadow-xl` panel; header row with title + `×` close button; `p-5 space-y-4` form body; footer with Cancel (`text-slate-400 hover:text-white`) + primary submit (`bg-indigo-600 hover:bg-indigo-500`) buttons, right-aligned). The reused `×` close button must carry `aria-label="Закрыть"` (Close) — same requirement applies retroactively as good practice if `#settings-modal`'s close button lacks it, but is mandatory on this new instance regardless. Trigger location left to executor's discretion per CONTEXT.md (modal vs. settings-panel section vs. dedicated page) — modal via a small "Users" control near `#btn-settings` in the header is recommended to minimize new UI surface.
+- **Logout control**: place near `#agent-status` in the sidebar footer, styled as a secondary button (`bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg px-3 py-2 text-sm`), matching `#btn-settings`'s visual weight — not accent-colored (logout is not the primary action of any screen it appears on). Uses `py-2` (8px, on-grid) rather than the legacy `py-1.5` (6px) seen on the existing model-select/gear button — see Spacing Deviations.
 - **No password-strength UI**: CONTEXT.md D-12 explicitly accepts any non-empty password — do not add a strength meter, complexity hints, or client-side minimum-length validation.
 
 ---
