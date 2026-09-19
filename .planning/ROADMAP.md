@@ -43,7 +43,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 01-03-PLAN.md — Gate and user-scope every REST route, owner-scoped settings fallback, test-suite repair
+- [x] 01-03-PLAN.md — Gate and user-scope every REST route, owner-scoped settings fallback, test-suite repair
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -143,7 +143,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Auth Foundation | 2/5 | In Progress|  |
+| 1. Auth Foundation | 3/5 | In Progress|  |
 | 2. Memory (Day 11) | 0/? | Not started | - |
 | 3. Personalization (Day 12) | 0/? | Not started | - |
 | 4. Task State Machine (Day 13) | 0/? | Not started | - |
