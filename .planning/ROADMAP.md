@@ -39,7 +39,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 01-02-PLAN.md — Nullable user_id columns, additive migration, bootstrap admin, backfill, run.py credential banner
+- [x] 01-02-PLAN.md — Nullable user_id columns, additive migration, bootstrap admin, backfill, run.py credential banner
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -143,7 +143,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Auth Foundation | 1/5 | In Progress|  |
+| 1. Auth Foundation | 2/5 | In Progress|  |
 | 2. Memory (Day 11) | 0/? | Not started | - |
 | 3. Personalization (Day 12) | 0/? | Not started | - |
 | 4. Task State Machine (Day 13) | 0/? | Not started | - |
