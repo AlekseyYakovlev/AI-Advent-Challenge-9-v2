@@ -3,7 +3,7 @@
 import httpx
 import pytest
 import respx
-from httpx import ASGITransport, AsyncClient
+from httpx import AsyncClient
 from sqlmodel import select
 
 from agent.context_engine import (
@@ -11,7 +11,6 @@ from agent.context_engine import (
     ContextOverflowError,
     build_llm_context,
 )
-from agent.main import app
 from agent.llm_client import llm_client
 from shared.config import settings
 from shared.database import async_session_factory
@@ -78,36 +77,36 @@ async def _load_message_dicts(session, chat: Chat) -> list[dict[str, str]]:
 
 
 @pytest.mark.asyncio
-async def test_truncate_middle_preserves_database() -> None:
+async def test_truncate_middle_preserves_database(authenticated_client: AsyncClient) -> None:
     """TRUNCATE_MIDDLE: middle cut from LLM context but all messages preserved in DB."""
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        chat_resp = await client.post("/api/v1/chats", json={"title": "Test"})
-        chat_id = chat_resp.json()["id"]
+    chat_resp = await authenticated_client.post("/api/v1/chats", json={"title": "Test"})
+    chat_id = chat_resp.json()["id"]
 
-        await client.put(
-            "/api/v1/settings",
-            json={
-                "chat_id": chat_id,
-                "strategy": "truncate_middle",
-                "context_length": 500,
-            },
-        )
+    await authenticated_client.put(
+        "/api/v1/settings",
+        json={
+            "chat_id": chat_id,
+            "strategy": "truncate_middle",
+            "context_length": 500,
+        },
+    )
 
-        async with async_session_factory() as session:
-            chat = await session.get(Chat, chat_id)
-            assert chat is not None
-            contents = [f"Message {i}: " + "x" * 200 for i in range(25)]
-            await _append_messages(session, chat, contents)
+    async with async_session_factory() as session:
+        chat = await session.get(Chat, chat_id)
+        assert chat is not None
+        contents = [f"Message {i}: " + "x" * 200 for i in range(25)]
+        await _append_messages(session, chat, contents)
 
-        tree_resp = await client.get(f"/api/v1/chats/{chat_id}/tree")
-        messages = tree_resp.json()
-        assert len(messages) >= 25, "Database must preserve all messages"
+    tree_resp = await authenticated_client.get(f"/api/v1/chats/{chat_id}/tree")
+    messages = tree_resp.json()
+    assert len(messages) >= 25, "Database must preserve all messages"
 
 
 @respx.mock
 @pytest.mark.asyncio
-async def test_truncate_middle_sends_beginning_and_end() -> None:
+async def test_truncate_middle_sends_beginning_and_end(
+    authenticated_client: AsyncClient,
+) -> None:
     """TRUNCATE_MIDDLE should send first two and last messages to LLM."""
     respx.post(f"{BASE_URL}/v1/chat/completions").mock(
         return_value=httpx.Response(
@@ -120,53 +119,51 @@ async def test_truncate_middle_sends_beginning_and_end() -> None:
         ),
     )
 
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        chat_resp = await client.post("/api/v1/chats", json={"title": "Test"})
-        chat_id = chat_resp.json()["id"]
+    chat_resp = await authenticated_client.post("/api/v1/chats", json={"title": "Test"})
+    chat_id = chat_resp.json()["id"]
 
-        await client.put(
-            "/api/v1/settings",
-            json={
-                "chat_id": chat_id,
-                "strategy": "truncate_middle",
-                "context_length": 512,
-            },
+    await authenticated_client.put(
+        "/api/v1/settings",
+        json={
+            "chat_id": chat_id,
+            "strategy": "truncate_middle",
+            "context_length": 512,
+        },
+    )
+
+    first_msg = "FIRST_MESSAGE_IMPORTANT_CONTEXT " + "x" * 200
+    second_msg = "SECOND_MESSAGE_IMPORTANT " + "a" * 200
+    middle_msg = "MIDDLE_MESSAGE_CUT " + "y" * 200
+    last_msg = "LAST_MESSAGE_RECENT " + "z" * 200
+    padding = " word" * 80
+
+    async with async_session_factory() as session:
+        chat = await session.get(Chat, chat_id)
+        assert chat is not None
+        contents: list[str] = []
+        contents.extend(
+            (first_msg if i == 0 else second_msg if i == 1 else f"first_{i}{padding}")
+            for i in range(5)
+        )
+        contents.extend(
+            (middle_msg if i == 0 else f"middle_{i}{padding}") for i in range(10)
+        )
+        contents.extend(
+            (last_msg if i == 4 else f"recent_{i}{padding}") for i in range(5)
+        )
+        await _append_messages(session, chat, contents)
+
+        assert len(await _load_message_dicts(session, chat)) >= 20
+
+        llm_context = _history_only(
+            await build_llm_context(session, chat_id, MODEL),
         )
 
-        first_msg = "FIRST_MESSAGE_IMPORTANT_CONTEXT " + "x" * 200
-        second_msg = "SECOND_MESSAGE_IMPORTANT " + "a" * 200
-        middle_msg = "MIDDLE_MESSAGE_CUT " + "y" * 200
-        last_msg = "LAST_MESSAGE_RECENT " + "z" * 200
-        padding = " word" * 80
-
-        async with async_session_factory() as session:
-            chat = await session.get(Chat, chat_id)
-            assert chat is not None
-            contents: list[str] = []
-            contents.extend(
-                (first_msg if i == 0 else second_msg if i == 1 else f"first_{i}{padding}")
-                for i in range(5)
-            )
-            contents.extend(
-                (middle_msg if i == 0 else f"middle_{i}{padding}") for i in range(10)
-            )
-            contents.extend(
-                (last_msg if i == 4 else f"recent_{i}{padding}") for i in range(5)
-            )
-            await _append_messages(session, chat, contents)
-
-            assert len(await _load_message_dicts(session, chat)) >= 20
-
-            llm_context = _history_only(
-                await build_llm_context(session, chat_id, MODEL),
-            )
-
-        assert llm_context[0]["content"] == first_msg
-        assert llm_context[1]["content"] == second_msg
-        assert llm_context[-1]["content"] == last_msg
-        assert middle_msg not in {msg["content"] for msg in llm_context}
-        assert len(respx.calls) == 0
+    assert llm_context[0]["content"] == first_msg
+    assert llm_context[1]["content"] == second_msg
+    assert llm_context[-1]["content"] == last_msg
+    assert middle_msg not in {msg["content"] for msg in llm_context}
+    assert len(respx.calls) == 0
 
 
 @respx.mock
@@ -360,12 +357,12 @@ async def test_sticky_facts_no_duplication_small_chat() -> None:
 
 
 @pytest.mark.asyncio
-async def test_no_compression_preserves_all_messages(client: AsyncClient) -> None:
+async def test_no_compression_preserves_all_messages(authenticated_client: AsyncClient) -> None:
     """NO_COMPRESSION: all messages preserved in DB."""
-    chat_resp = await client.post("/api/v1/chats", json={"title": "Test"})
+    chat_resp = await authenticated_client.post("/api/v1/chats", json={"title": "Test"})
     chat_id = chat_resp.json()["id"]
 
-    await client.put(
+    await authenticated_client.put(
         "/api/v1/settings",
         json={
             "chat_id": chat_id,
@@ -379,17 +376,17 @@ async def test_no_compression_preserves_all_messages(client: AsyncClient) -> Non
         assert chat is not None
         await _append_messages(session, chat, ["x" * 200] * 10)
 
-    tree_resp = await client.get(f"/api/v1/chats/{chat_id}/tree")
+    tree_resp = await authenticated_client.get(f"/api/v1/chats/{chat_id}/tree")
     assert len(tree_resp.json()) >= 10
 
 
 @pytest.mark.asyncio
-async def test_sliding_window_preserves_database(client: AsyncClient) -> None:
+async def test_sliding_window_preserves_database(authenticated_client: AsyncClient) -> None:
     """SLIDING_WINDOW: old messages preserved in DB but not sent to LLM."""
-    chat_resp = await client.post("/api/v1/chats", json={"title": "Test"})
+    chat_resp = await authenticated_client.post("/api/v1/chats", json={"title": "Test"})
     chat_id = chat_resp.json()["id"]
 
-    await client.put(
+    await authenticated_client.put(
         "/api/v1/settings",
         json={
             "chat_id": chat_id,
@@ -407,17 +404,17 @@ async def test_sliding_window_preserves_database(client: AsyncClient) -> None:
         after = await _count_messages(session, chat_id)
 
     assert before == after
-    tree_resp = await client.get(f"/api/v1/chats/{chat_id}/tree")
+    tree_resp = await authenticated_client.get(f"/api/v1/chats/{chat_id}/tree")
     assert len(tree_resp.json()) >= 20
 
 
 @pytest.mark.asyncio
-async def test_sticky_facts_preserves_database(client: AsyncClient) -> None:
+async def test_sticky_facts_preserves_database(authenticated_client: AsyncClient) -> None:
     """STICKY_FACTS: all messages preserved in DB."""
-    chat_resp = await client.post("/api/v1/chats", json={"title": "Test"})
+    chat_resp = await authenticated_client.post("/api/v1/chats", json={"title": "Test"})
     chat_id = chat_resp.json()["id"]
 
-    await client.put(
+    await authenticated_client.put(
         "/api/v1/settings",
         json={
             "chat_id": chat_id,
@@ -435,37 +432,37 @@ async def test_sticky_facts_preserves_database(client: AsyncClient) -> None:
         after = await _count_messages(session, chat_id)
 
     assert before == after
-    tree_resp = await client.get(f"/api/v1/chats/{chat_id}/tree")
+    tree_resp = await authenticated_client.get(f"/api/v1/chats/{chat_id}/tree")
     assert len(tree_resp.json()) >= 20
 
 
 @pytest.mark.asyncio
-async def test_strategy_setting_persists(client: AsyncClient) -> None:
+async def test_strategy_setting_persists(authenticated_client: AsyncClient) -> None:
     """Strategy setting persists in database."""
-    chat_resp = await client.post("/api/v1/chats", json={"title": "Test"})
+    chat_resp = await authenticated_client.post("/api/v1/chats", json={"title": "Test"})
     chat_id = chat_resp.json()["id"]
 
-    await client.put(
+    await authenticated_client.put(
         "/api/v1/settings",
         json={"chat_id": chat_id, "strategy": "no_compression"},
     )
 
-    settings_resp = await client.get(f"/api/v1/settings?chat_id={chat_id}")
+    settings_resp = await authenticated_client.get(f"/api/v1/settings?chat_id={chat_id}")
     assert settings_resp.json()["strategy"] == "no_compression"
 
 
 @pytest.mark.asyncio
-async def test_context_length_setting_persists(client: AsyncClient) -> None:
+async def test_context_length_setting_persists(authenticated_client: AsyncClient) -> None:
     """Context length setting persists in database."""
-    chat_resp = await client.post("/api/v1/chats", json={"title": "Test"})
+    chat_resp = await authenticated_client.post("/api/v1/chats", json={"title": "Test"})
     chat_id = chat_resp.json()["id"]
 
-    await client.put(
+    await authenticated_client.put(
         "/api/v1/settings",
         json={"chat_id": chat_id, "context_length": 2048},
     )
 
-    settings_resp = await client.get(f"/api/v1/settings?chat_id={chat_id}")
+    settings_resp = await authenticated_client.get(f"/api/v1/settings?chat_id={chat_id}")
     assert settings_resp.json()["context_length"] == 2048
 
 
