@@ -18,6 +18,7 @@ from agent.context_engine import (
     get_effective_settings,
 )
 from agent.dependencies import get_current_user_ws
+from agent import invariants
 from agent.llm_client import llm_client
 from agent.state import (
     CORS_ORIGINS,
@@ -344,12 +345,74 @@ async def _handle_chat_message(
                             },
                         )
 
+            active_invariants = await invariants.resolve_active_invariants(session, chat_id)
+            flagged: dict[str, Any] | None = None
+            justification_text = ""
+            critique: dict[str, Any] = {"conflict": False}
+            if active_invariants:
+                critique = await invariants.run_self_critique(
+                    active_invariants,
+                    assistant_text,
+                    pending_tool_calls,
+                    payload.model,
+                )
+                flagged = invariants.match_flagged_invariant(active_invariants, critique)
+
+            if flagged is not None:
+                llm_messages.append(
+                    {
+                        "role": "user",
+                        "content": invariants.build_justify_retract_prompt(flagged, critique),
+                    },
+                )
+                try:
+                    async for token in llm_client.stream_chat(
+                        llm_messages,
+                        payload.model,
+                        temperature,
+                        max_tokens,
+                    ):
+                        justification_text += token
+                        assistant_text += token
+                        await websocket.send_json(
+                            {"type": "token", "content": token},
+                        )
+                except Exception as exc:
+                    logger.warning(
+                        "invariant_justify_retract_failed",
+                        chat_id=chat_id,
+                        error=str(exc),
+                    )
+
             assistant_msg = await _persist_assistant_message(
                 session,
                 chat,
                 user_msg.id,
                 assistant_text,
             )
+
+            conflict_payload: dict[str, Any] | None = None
+            if flagged is not None:
+                conflict_row = await invariants.record_conflict(
+                    session,
+                    chat_id,
+                    assistant_msg.id,
+                    flagged["scope"],
+                    flagged["id"],
+                    flagged["title"],
+                    justification_text or critique.get("explanation", ""),
+                )
+                conflict_payload = {
+                    "id": conflict_row.id,
+                    "chat_id": conflict_row.chat_id,
+                    "message_id": conflict_row.message_id,
+                    "invariant_scope": conflict_row.invariant_scope,
+                    "invariant_id": conflict_row.invariant_id,
+                    "invariant_title": conflict_row.invariant_title,
+                    "note": conflict_row.note,
+                    "created_at": conflict_row.created_at.isoformat(),
+                }
+
             extract_and_update_facts(
                 session,
                 chat_id,
@@ -364,6 +427,7 @@ async def _handle_chat_message(
                     "stats": stats,
                     "memory_writes": memory_writes,
                     "task_writes": task_writes,
+                    "invariant_conflict": conflict_payload,
                 },
             )
 

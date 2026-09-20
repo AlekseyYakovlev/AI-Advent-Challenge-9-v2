@@ -255,6 +255,33 @@ class ChatInvariant(SQLModel, table=True):
     )
 
 
+class InvariantConflict(SQLModel, table=True):
+    """Persisted record of a detected invariant conflict (D-13)."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    chat_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("chat.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+    )
+    message_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("message.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+    )
+    invariant_scope: str = Field(max_length=10)
+    invariant_id: int
+    invariant_title: str = Field(max_length=200)
+    note: str = Field(default="", max_length=2000)
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+    )
+
+
 class TaskState(str, Enum):
     """Lifecycle state of a task (TASK-01)."""
 
