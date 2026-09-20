@@ -180,7 +180,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 05-03-PLAN.md — InvariantConflict table, self-critique complete_chat call, justify/retract round-trip, conflict persistence and log endpoint, inline amber banner + tab badge (INV-04, INV-05)
+- [x] 05-03-PLAN.md — InvariantConflict table, self-critique complete_chat call, justify/retract round-trip, conflict persistence and log endpoint, inline amber banner + tab badge (INV-04, INV-05)
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -212,7 +212,7 @@ Plans:
 | 2. Memory (Day 11) | 5/5 | Complete   | 2026-09-20 |
 | 3. Personalization (Day 12) | 3/3 | Complete   | 2026-09-20 |
 | 4. Task State Machine (Day 13) | 4/4 | Complete   | 2026-09-20 |
-| 5. Invariants (Day 14) | 2/4 | In Progress|  |
+| 5. Invariants (Day 14) | 3/4 | In Progress|  |
 | 6. Controlled Transitions (Day 15) | 0/? | Not started | - |
 
 ---
