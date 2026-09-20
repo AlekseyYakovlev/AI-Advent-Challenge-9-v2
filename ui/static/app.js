@@ -32,6 +32,7 @@ const state = {
     editingGlobalInvariantId: null,
     lastChatInvariants: null,
     editingChatInvariantId: null,
+    lastConflicts: [],
 };
 
 const TASK_STATE_LABELS = {
@@ -182,6 +183,11 @@ function renderMessages() {
         bubble.appendChild(controls);
         wrapper.appendChild(bubble);
         container.appendChild(wrapper);
+        state.lastConflicts
+            .filter((conflict) => conflict.message_id === msg.id)
+            .forEach((conflict) => {
+                container.appendChild(buildConflictBanner(conflict));
+            });
     });
     if (state.isStreaming) {
         appendLoadingBubble();
@@ -566,6 +572,54 @@ async function loadChatInvariants(chatId) {
     }
 }
 
+async function loadChatConflicts(chatId) {
+    try {
+        const data = await apiFetch(`/api/v1/chats/${chatId}/invariant-conflicts`);
+        state.lastConflicts = data;
+        renderConflictBadge();
+        renderMessages();
+    } catch (err) {
+        console.error('Failed to load invariant conflicts:', err);
+        showToast('Не удалось загрузить инварианты. Проверьте соединение и попробуйте снова.', 'error');
+        state.lastConflicts = [];
+    }
+}
+
+function renderConflictBadge() {
+    const badge = $('invariant-conflict-badge');
+    if (!badge) return;
+    badge.textContent = String(state.lastConflicts.length);
+    badge.classList.toggle('hidden', state.lastConflicts.length === 0);
+}
+
+function buildConflictBanner(conflict) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'flex justify-start';
+
+    const bubble = document.createElement('div');
+    bubble.className = 'max-w-[75%] rounded-xl border border-amber-700 bg-amber-900/50 px-4 py-2 text-sm';
+
+    const heading = document.createElement('div');
+    heading.className = 'text-amber-400 font-semibold';
+    heading.textContent = '⚠️ Обнаружен конфликт с инвариантом';
+    bubble.appendChild(heading);
+
+    const body = document.createElement('div');
+    body.className = 'message-content prose prose-invert prose-sm max-w-none mt-1';
+
+    const titleEl = document.createElement('span');
+    titleEl.textContent = `«${conflict.invariant_title}» — `;
+    body.appendChild(titleEl);
+
+    const noteEl = document.createElement('span');
+    noteEl.innerHTML = renderMarkdown(conflict.note);
+    body.appendChild(noteEl);
+
+    bubble.appendChild(body);
+    wrapper.appendChild(bubble);
+    return wrapper;
+}
+
 function populateOverridesSelect() {
     const select = $('invariant-chat-overrides');
     if (!select) return;
@@ -913,6 +967,7 @@ async function selectChat(chatId) {
     state.isStatsLocal = false;
     state.childrenByParent.clear();
     state.activeChildByParent.clear();
+    state.lastConflicts = [];
     const chat = state.chats.find((c) => c.id === chatId);
     $('chat-title').textContent = chat?.title || 'Чат';
     renderChatList();
@@ -921,6 +976,7 @@ async function selectChat(chatId) {
     await loadChatMemory(chatId);
     await loadChatTasks(chatId);
     await loadChatInvariants(chatId);
+    await loadChatConflicts(chatId);
     connectWs(chatId);
 }
 
@@ -1108,6 +1164,10 @@ function handleWsMessage(data) {
                 loadChatMemory(state.currentChatId);
                 loadChatTasks(state.currentChatId);
                 loadChatInvariants(state.currentChatId);
+                loadChatConflicts(state.currentChatId);
+            }
+            if (data.invariant_conflict) {
+                showToast('⚠️ Обнаружен конфликт с инвариантом', 'warning');
             }
             break;
         case 'error':
