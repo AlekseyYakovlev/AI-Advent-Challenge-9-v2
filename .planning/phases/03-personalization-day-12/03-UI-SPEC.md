@@ -52,17 +52,15 @@ Sizes/weights extracted from the existing Memory panel, Settings form, and sideb
 
 | Role | Size | Weight | Line Height |
 |------|------|--------|-------------|
-| Panel heading (`#profile-panel` title, mirrors `#memory-panel`'s `<h3>`) | 12px (`text-xs`, inherited from panel container) | 600 (`font-semibold`) | default (~1.4) |
+| Panel heading (`#profile-panel` title) | 12px (`text-xs`, inherited from panel container) | 500 (`font-medium`) | default (~1.4) |
 | Field label (`<label>` above each textarea, mirrors Settings form labels) | 14px (`text-sm`) | 400 (`font-normal`, default — matches `settings-system-prompt`'s label, not bolded) | 1.5 |
 | Body / textarea content (profile field text, matches message/system-prompt textareas) | 14px (`text-sm`) | 400 | 1.5 |
 | Helper/hint text (below each field, matches `settings-context-length`'s hint paragraphs) | 12px (`text-xs`) | 400 | 1.4 |
-| Primary action button label ("Сохранить профиль") | 14px (`text-sm`) | 500 (`font-medium`) — see Documented Exception below | default |
+| Primary action button label ("Сохранить профиль") | 14px (`text-sm`) | 500 (`font-medium`) | default |
 
-**Declared new weights for this phase: 2 — 400 (regular) and 600 (semibold).** These are the only weights this phase's new typographic roles (labels, body/textarea text, helper text, panel heading) introduce.
+**Design decision — panel heading uses 500, not `#memory-panel`'s 600.** `#memory-panel`'s `<h3>` (`ui/static/index.html` line 49) uses `font-semibold` (600). This phase's `#profile-panel` heading deliberately does not copy that value; instead it reuses `font-medium` (500) — the same weight as the save button and every other primary button in this app (`btn-new-chat`, `btn-send`, Settings' submit button). This keeps the phase's new UI to exactly two weights total.
 
-**Documented Exception — 500 (`font-medium`) save button:** the Profile panel's save button reuses `font-medium` (500), matching every other primary button already shipped in this app (`btn-new-chat`, `btn-send`, Settings' submit button). This is **not a new weight invented by this phase** — it is a pre-existing codebase value matched for consistency with already-shipped buttons, rather than diverging by inventing a 600-weight button that would break that convention. It is pre-approved as a project-wide exception to the 2-weight-per-phase cap for that reason; the checker should treat it as pre-approved and not count it as a third new weight.
-
-Declared set for this phase: **2 sizes** (12px, 14px — both already used codebase-wide, no new sizes introduced), **2 new weights** (400, 600), plus **1 documented pre-existing exception** (500, button-label only, per above — do not introduce any further new weights).
+Declared set for this phase: **2 sizes** (12px, 14px — both already used codebase-wide, no new sizes introduced), **2 weights total** (400 regular — labels, body/textarea text, helper text; 500 medium — panel heading and save button label). No third weight value appears anywhere in this phase's new UI.
 
 ---
 
