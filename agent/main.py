@@ -26,6 +26,7 @@ from agent.schemas import (
     GlobalInvariantResponse,
     GlobalInvariantUpdate,
     HealthResponse,
+    InvariantConflictResponse,
     LoginRequest,
     MemoryEntryResponse,
     MessageResponse,
@@ -59,6 +60,7 @@ from shared.models import (
     ChatInvariant,
     ContextStrategy,
     GlobalInvariant,
+    InvariantConflict,
     Message,
     Profile,
     Session as SessionRow,
@@ -223,6 +225,20 @@ async def _chat_invariant_to_response(
         overrides_title=overrides_title,
         created_at=row.created_at,
         updated_at=row.updated_at,
+    )
+
+
+def _invariant_conflict_to_response(row: InvariantConflict) -> InvariantConflictResponse:
+    """Map an InvariantConflict ORM row to the API response schema."""
+    return InvariantConflictResponse(
+        id=row.id,
+        chat_id=row.chat_id,
+        message_id=row.message_id,
+        invariant_scope=row.invariant_scope,
+        invariant_id=row.invariant_id,
+        invariant_title=row.invariant_title,
+        note=row.note,
+        created_at=row.created_at,
     )
 
 
@@ -646,6 +662,21 @@ async def delete_chat_invariant_endpoint(
     await _get_chat_or_404(session, chat_id, current_user.id)
     await _get_chat_invariant_or_404(session, chat_id, invariant_id)
     await invariants.delete_chat_invariant(session, invariant_id)
+
+
+@app.get(
+    "/api/v1/chats/{chat_id}/invariant-conflicts",
+    response_model=list[InvariantConflictResponse],
+)
+async def get_invariant_conflicts(
+    chat_id: int,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> list[InvariantConflictResponse]:
+    """Return this chat's persisted invariant-conflict log (ownership-checked, D-13)."""
+    await _get_chat_or_404(session, chat_id, current_user.id)
+    rows = await invariants.list_conflicts(session, chat_id)
+    return [_invariant_conflict_to_response(row) for row in rows]
 
 
 @app.post("/api/v1/tasks/{task_id}/pause", response_model=TaskResponse)
