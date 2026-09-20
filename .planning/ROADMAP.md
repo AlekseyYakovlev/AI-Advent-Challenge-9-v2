@@ -137,7 +137,7 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 04-01-PLAN.md — Task/TaskTransition tables, agent/tasks.py CRUD, create_task tool, GET /chats/{id}/tasks, Задачи sidebar panel, task_writes on the done frame (TASK-01, TASK-02, TASK-03, TASK-05)
+- [x] 04-01-PLAN.md — Task/TaskTransition tables, agent/tasks.py CRUD, create_task tool, GET /chats/{id}/tasks, Задачи sidebar panel, task_writes on the done frame (TASK-01, TASK-02, TASK-03, TASK-05)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -194,7 +194,7 @@ Plans:
 | 1. Auth Foundation | 5/5 | Complete   | 2026-09-20 |
 | 2. Memory (Day 11) | 5/5 | Complete   | 2026-09-20 |
 | 3. Personalization (Day 12) | 3/3 | Complete   | 2026-09-20 |
-| 4. Task State Machine (Day 13) | 0/4 | Planned | - |
+| 4. Task State Machine (Day 13) | 1/4 | In Progress|  |
 | 5. Invariants (Day 14) | 0/? | Not started | - |
 | 6. Controlled Transitions (Day 15) | 0/? | Not started | - |
 
