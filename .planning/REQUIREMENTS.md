@@ -24,7 +24,7 @@
 
 - [x] **PERS-01**: Each user has a profile with preferences (style, format, constraints)
 - [x] **PERS-02**: The user's profile is attached to every request (injected into context/system prompt)
-- [ ] **PERS-03**: UI lets the user view/edit their profile and preferences
+- [x] **PERS-03**: UI lets the user view/edit their profile and preferences
 - [ ] **PERS-04**: Responses observably differ across different profiles/preferences
 
 ### Task State
@@ -99,7 +99,7 @@ Which phases cover which requirements. Populated during roadmap creation.
 | MEM-05 | Phase 2 | Pending |
 | PERS-01 | Phase 3 | Complete |
 | PERS-02 | Phase 3 | Complete |
-| PERS-03 | Phase 3 | Pending |
+| PERS-03 | Phase 3 | Complete |
 | PERS-04 | Phase 3 | Pending |
 | TASK-01 | Phase 4 | Pending |
 | TASK-02 | Phase 4 | Pending |
