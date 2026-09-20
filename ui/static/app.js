@@ -27,6 +27,23 @@ const state = {
     statsAbortController: null,
     lastMemory: null,
     lastProfile: null,
+    lastTasks: null,
+};
+
+const TASK_STATE_LABELS = {
+    planning: 'планирование',
+    execution: 'выполнение',
+    validation: 'проверка',
+    done: 'готово',
+    cancelled: 'отменено',
+};
+
+const TASK_STATE_BADGE_CLASSES = {
+    planning: 'text-slate-400',
+    execution: 'text-sky-400',
+    validation: 'text-amber-400',
+    done: 'text-emerald-400',
+    cancelled: 'text-red-400',
 };
 
 const $ = (id) => document.getElementById(id);
@@ -304,6 +321,178 @@ function renderMemoryPanel() {
     if (longTermEl) renderMemoryEntries(longTermEl, data.long_term);
 }
 
+async function loadChatTasks(chatId) {
+    try {
+        const data = await apiFetch(`/api/v1/chats/${chatId}/tasks`);
+        state.lastTasks = data;
+        renderTaskPanel();
+    } catch (err) {
+        console.error('Failed to load tasks:', err);
+        showToast('Не удалось загрузить задачи. Проверьте соединение и попробуйте снова.', 'error');
+    }
+}
+
+function formatTaskTimestamp(isoString) {
+    return new Date(isoString).toLocaleString('ru-RU', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+    });
+}
+
+function renderTaskHistory(container, history) {
+    container.replaceChildren();
+    history.forEach((entry) => {
+        const fromLabel = entry.from_state ? TASK_STATE_LABELS[entry.from_state] : 'создана';
+        const line = document.createElement('div');
+        line.className = 'text-slate-500';
+        line.textContent =
+            `${fromLabel} → ${TASK_STATE_LABELS[entry.to_state]} · ${formatTaskTimestamp(entry.created_at)}`;
+        container.appendChild(line);
+
+        if (entry.note) {
+            const noteEl = document.createElement('div');
+            noteEl.className = 'text-slate-600 pl-2';
+            noteEl.textContent = entry.note;
+            container.appendChild(noteEl);
+        }
+    });
+}
+
+function renderTaskPanel() {
+    const tasks = state.lastTasks;
+    if (tasks === null) return;
+    const countEl = $('task-count');
+    const listEl = $('task-list');
+    if (countEl) countEl.textContent = String(tasks.length);
+    if (!listEl) return;
+    listEl.replaceChildren();
+
+    if (!tasks.length) {
+        const empty = document.createElement('div');
+        empty.className = 'text-slate-600';
+        empty.textContent = '—';
+        listEl.appendChild(empty);
+
+        const helper = document.createElement('div');
+        helper.className = 'text-slate-600';
+        helper.textContent = 'Задачи появятся здесь, когда агент создаст новую';
+        listEl.appendChild(helper);
+        return;
+    }
+
+    tasks.forEach((task) => {
+        const card = document.createElement('div');
+        card.className = 'rounded-lg bg-slate-800 px-2 py-1';
+
+        const titleEl = document.createElement('div');
+        titleEl.className = 'text-sm font-semibold text-slate-300';
+        titleEl.textContent = task.title;
+        card.appendChild(titleEl);
+
+        const metaEl = document.createElement('div');
+        metaEl.className = 'flex items-center gap-1';
+
+        const stateChip = document.createElement('span');
+        stateChip.className = `rounded px-1 ${TASK_STATE_BADGE_CLASSES[task.state]}`;
+        stateChip.textContent = TASK_STATE_LABELS[task.state];
+        metaEl.appendChild(stateChip);
+
+        if (task.is_paused) {
+            const pausedChip = document.createElement('span');
+            pausedChip.className = 'text-slate-500';
+            pausedChip.textContent = '⏸';
+            metaEl.appendChild(pausedChip);
+        }
+        card.appendChild(metaEl);
+
+        const goalEl = document.createElement('div');
+        goalEl.className = 'text-slate-400 truncate';
+        goalEl.textContent = task.goal;
+        goalEl.title = task.goal;
+        card.appendChild(goalEl);
+
+        const historyEl = document.createElement('div');
+        historyEl.className = 'mt-1 space-y-0.5';
+        renderTaskHistory(historyEl, task.history || []);
+        card.appendChild(historyEl);
+
+        if (task.state !== 'done' && task.state !== 'cancelled') {
+            const actionsEl = document.createElement('div');
+            actionsEl.className = 'mt-1 flex gap-1';
+
+            if (task.is_paused) {
+                const resumeBtn = document.createElement('button');
+                resumeBtn.type = 'button';
+                resumeBtn.className =
+                    'rounded-lg bg-indigo-600 hover:bg-indigo-500 px-2 py-1 text-xs font-medium transition';
+                resumeBtn.textContent = 'Продолжить';
+                resumeBtn.addEventListener('click', () => {
+                    resumeTask(task.id).catch((err) => showToast(err.message, 'error'));
+                });
+                actionsEl.appendChild(resumeBtn);
+            } else {
+                const pauseBtn = document.createElement('button');
+                pauseBtn.type = 'button';
+                pauseBtn.className =
+                    'rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 px-2 py-1 text-xs font-medium transition';
+                pauseBtn.textContent = 'Пауза';
+                pauseBtn.addEventListener('click', () => {
+                    pauseTask(task.id).catch((err) => showToast(err.message, 'error'));
+                });
+                actionsEl.appendChild(pauseBtn);
+            }
+
+            const cancelBtn = document.createElement('button');
+            cancelBtn.type = 'button';
+            cancelBtn.className =
+                'rounded-lg bg-red-700 hover:bg-red-600 px-2 py-1 text-xs font-medium transition';
+            cancelBtn.textContent = 'Отменить';
+            cancelBtn.addEventListener('click', () => {
+                cancelTask(task.id).catch((err) => showToast(err.message, 'error'));
+            });
+            actionsEl.appendChild(cancelBtn);
+
+            card.appendChild(actionsEl);
+        }
+
+        listEl.appendChild(card);
+    });
+}
+
+async function pauseTask(taskId) {
+    try {
+        await apiFetch(`/api/v1/tasks/${taskId}/pause`, { method: 'POST' });
+        await loadChatTasks(state.currentChatId);
+        showToast('Задача поставлена на паузу', 'success');
+    } catch (err) {
+        showToast('Не удалось поставить задачу на паузу. Проверьте соединение и попробуйте снова.', 'error');
+    }
+}
+
+async function resumeTask(taskId) {
+    try {
+        await apiFetch(`/api/v1/tasks/${taskId}/resume`, { method: 'POST' });
+        await loadChatTasks(state.currentChatId);
+        showToast('Задача возобновлена', 'success');
+    } catch (err) {
+        showToast('Не удалось возобновить задачу. Проверьте соединение и попробуйте снова.', 'error');
+    }
+}
+
+async function cancelTask(taskId) {
+    if (!confirm('Отменить эту задачу? Это действие нельзя отменить.')) return;
+    try {
+        await apiFetch(`/api/v1/tasks/${taskId}/cancel`, { method: 'POST' });
+        await loadChatTasks(state.currentChatId);
+        showToast('Задача отменена', 'success');
+    } catch (err) {
+        showToast('Не удалось отменить задачу. Проверьте соединение и попробуйте снова.', 'error');
+    }
+}
+
 async function loadProfile() {
     try {
         const data = await apiFetch('/api/v1/profile');
@@ -444,6 +633,7 @@ async function selectChat(chatId) {
     await loadChatTree(chatId);
     await loadChatStats(chatId);
     await loadChatMemory(chatId);
+    await loadChatTasks(chatId);
     connectWs(chatId);
 }
 
@@ -629,6 +819,7 @@ function handleWsMessage(data) {
             if (state.currentChatId) {
                 loadChatTree(state.currentChatId);
                 loadChatMemory(state.currentChatId);
+                loadChatTasks(state.currentChatId);
             }
             break;
         case 'error':

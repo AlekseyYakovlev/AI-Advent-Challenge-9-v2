@@ -65,6 +65,8 @@ async def test_init_db_creates_all_tables() -> None:
         "workingmemory",
         "longtermmemory",
         "profile",
+        "task",
+        "tasktransition",
     }
 
 

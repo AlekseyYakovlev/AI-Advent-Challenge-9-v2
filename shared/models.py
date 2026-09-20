@@ -205,6 +205,93 @@ class Profile(SQLModel, table=True):
     )
 
 
+class TaskState(str, Enum):
+    """Lifecycle state of a task (TASK-01)."""
+
+    PLANNING = "planning"
+    EXECUTION = "execution"
+    VALIDATION = "validation"
+    DONE = "done"
+    CANCELLED = "cancelled"
+
+
+class Task(SQLModel, table=True):
+    """A discrete, chat-scoped unit of work created by the LLM (TASK-01/02/03)."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("user.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+    )
+    chat_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("chat.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+    )
+    title: str = Field(max_length=200)
+    description: str = Field(default="", max_length=5_000)
+    goal: str = Field(default="", max_length=2_000)
+    state: TaskState = Field(
+        default=TaskState.PLANNING,
+        sa_column=Column(
+            SAEnum(
+                TaskState,
+                values_callable=lambda enum_cls: [member.value for member in enum_cls],
+            ),
+            nullable=False,
+        ),
+    )
+    is_paused: bool = Field(default=False)
+    delegate_to: Optional[str] = Field(default=None, max_length=200)
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+    )
+
+
+class TaskTransition(SQLModel, table=True):
+    """Append-only state-change history for a Task (D-11)."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    task_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("task.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+    )
+    from_state: Optional[TaskState] = Field(
+        default=None,
+        sa_column=Column(
+            SAEnum(
+                TaskState,
+                values_callable=lambda enum_cls: [member.value for member in enum_cls],
+            ),
+            nullable=True,
+        ),
+    )
+    to_state: TaskState = Field(
+        sa_column=Column(
+            SAEnum(
+                TaskState,
+                values_callable=lambda enum_cls: [member.value for member in enum_cls],
+            ),
+            nullable=False,
+        ),
+    )
+    note: str = Field(default="", max_length=2_000)
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+    )
+
+
 class Session(SQLModel, table=True):
     """A server-side, revocable login session for a user."""
 
