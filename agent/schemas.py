@@ -18,6 +18,7 @@ USERNAME_MAX_LENGTH = 64
 PASSWORD_MAX_LENGTH = 128
 MEMORY_KEY_MAX_LENGTH = 200
 MEMORY_VALUE_MAX_LENGTH = 50_000
+PROFILE_FIELD_MAX_LENGTH = 2000
 
 
 class HealthResponse(BaseModel):
@@ -194,3 +195,21 @@ class SaveLongTermMemoryArgs(BaseModel):
         max_length=MEMORY_VALUE_MAX_LENGTH,
         description="The durable fact, decision, or preference to store",
     )
+
+
+class ProfileUpdate(BaseModel):
+    """Partial profile update (style/format/constraints), always scoped to current_user."""
+
+    style: Optional[str] = Field(default=None, max_length=PROFILE_FIELD_MAX_LENGTH)
+    format: Optional[str] = Field(default=None, max_length=PROFILE_FIELD_MAX_LENGTH)
+    constraints: Optional[str] = Field(default=None, max_length=PROFILE_FIELD_MAX_LENGTH)
+
+
+class ProfileResponse(BaseModel):
+    """Serialized profile returned to the client."""
+
+    id: int
+    style: str = Field(default="", max_length=PROFILE_FIELD_MAX_LENGTH)
+    format: str = Field(default="", max_length=PROFILE_FIELD_MAX_LENGTH)
+    constraints: str = Field(default="", max_length=PROFILE_FIELD_MAX_LENGTH)
+    updated_at: datetime

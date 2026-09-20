@@ -185,6 +185,26 @@ class LongTermMemory(SQLModel, table=True):
     __table_args__ = (UniqueConstraint("user_id", "key", name="uq_long_term_memory_user_key"),)
 
 
+class Profile(SQLModel, table=True):
+    """User-scoped style/format/constraint preferences, injected into every request (D-01)."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("user.id", ondelete="CASCADE"),
+            unique=True,
+            nullable=False,
+        ),
+    )
+    style: str = Field(default="", max_length=2000)
+    format: str = Field(default="", max_length=2000)
+    constraints: str = Field(default="", max_length=2000)
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+    )
+
+
 class Session(SQLModel, table=True):
     """A server-side, revocable login session for a user."""
 

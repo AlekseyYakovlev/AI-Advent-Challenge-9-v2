@@ -8,10 +8,10 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from agent.llm_client import llm_client
-from agent import memory
+from agent import memory, profile
 from shared.database import async_session_factory
 from shared.logger import get_logger
-from shared.models import Chat, ContextStrategy, Message, Settings
+from shared.models import Chat, ContextStrategy, Message, Profile, Settings
 
 logger = get_logger(__name__)
 
@@ -59,10 +59,19 @@ async def get_effective_settings(session: AsyncSession, chat_id: int) -> Setting
 
 
 async def build_system_prompt(session: AsyncSession, chat_id: int) -> str:
-    """Build the system prompt with optional facts and memory layers."""
+    """Build the system prompt with optional profile, facts, and memory layers."""
     settings_row = await get_effective_settings(session, chat_id)
     # PRODUCTION FIX: Protect against None in system_prompt
     parts = [settings_row.system_prompt or "You are a helpful assistant."]
+
+    chat = await session.get(Chat, chat_id)
+    if chat is not None and chat.user_id is not None:
+        profile_row = await profile.get_profile(session, chat.user_id)
+        if profile_row is not None:
+            profile_text = _format_profile(profile_row)
+            if profile_text:
+                parts.append(profile_text)
+
     facts = _parse_facts_json(settings_row.facts_json)
     if facts:
         parts.append(f"Known facts: {json.dumps(facts)}")
@@ -76,7 +85,6 @@ async def build_system_prompt(session: AsyncSession, chat_id: int) -> str:
             + json.dumps({row.key: row.value for row in working}),
         )
 
-    chat = await session.get(Chat, chat_id)
     if chat is not None and chat.user_id is not None:
         long_term = await memory.list_long_term_memory(session, chat.user_id)
         if long_term:
@@ -86,6 +94,20 @@ async def build_system_prompt(session: AsyncSession, chat_id: int) -> str:
             )
 
     return "\n\n".join(parts)
+
+
+def _format_profile(row: Profile) -> str:
+    """Render non-empty profile fields as a system-prompt directive; empty profile -> ''."""
+    fields = []
+    if row.style.strip():
+        fields.append(f"style={row.style.strip()!r}")
+    if row.format.strip():
+        fields.append(f"format={row.format.strip()!r}")
+    if row.constraints.strip():
+        fields.append(f"constraints={row.constraints.strip()!r}")
+    if not fields:
+        return ""
+    return "User's stated preferences (always follow these): " + ", ".join(fields)
 
 
 def _parse_facts_json(raw: str) -> dict[str, Any]:
