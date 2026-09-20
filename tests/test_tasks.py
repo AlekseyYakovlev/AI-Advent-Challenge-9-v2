@@ -7,7 +7,7 @@ from httpx import AsyncClient
 from sqlalchemy import text
 from sqlmodel import select
 
-from agent.tools import dispatch_tool_calls
+from agent.tools import TOOL_REGISTRY, build_tool_schemas, dispatch_tool_calls
 from shared.database import async_session_factory
 from shared.models import Chat, Task, TaskState, TaskTransition
 
@@ -449,6 +449,177 @@ async def test_transition_task_other_users_task_is_rejected(
         )
         rows = list(result.all())
         assert len(rows) == 1
+
+
+async def _count_transitions(task_id: int) -> int:
+    """Return the number of TaskTransition rows for a task."""
+    async with async_session_factory() as session:
+        result = await session.exec(
+            select(TaskTransition).where(TaskTransition.task_id == task_id),
+        )
+        return len(list(result.all()))
+
+
+@pytest.mark.asyncio
+async def test_pause_task_tool_sets_flag_without_changing_state(
+    authenticated_client: AsyncClient,
+) -> None:
+    """pause_task sets is_paused True and leaves state/history untouched (D-04)."""
+    user_id = authenticated_client.seeded_user_id
+    chat_id = await _seed_chat(user_id)
+    task_id = await _create_task_via_tool(user_id, chat_id)
+
+    calls = [
+        _call(
+            "call_transition",
+            "transition_task",
+            json.dumps({"task_id": task_id, "new_state": "execution"}),
+        ),
+    ]
+    async with async_session_factory() as session:
+        results = await dispatch_tool_calls(session, user_id, chat_id, calls)
+    assert results[0]["ok"] is True
+
+    transitions_before = await _count_transitions(task_id)
+
+    calls = [_call("call_pause", "pause_task", json.dumps({"task_id": task_id}))]
+    async with async_session_factory() as session:
+        results = await dispatch_tool_calls(session, user_id, chat_id, calls)
+    assert results[0]["ok"] is True
+
+    async with async_session_factory() as session:
+        task = await session.get(Task, task_id)
+        assert task.is_paused is True
+        assert task.state is TaskState.EXECUTION
+
+    assert await _count_transitions(task_id) == transitions_before
+
+
+@pytest.mark.asyncio
+async def test_resume_task_tool_clears_flag_without_changing_state(
+    authenticated_client: AsyncClient,
+) -> None:
+    """resume_task clears is_paused and leaves state/history untouched (D-04)."""
+    user_id = authenticated_client.seeded_user_id
+    chat_id = await _seed_chat(user_id)
+    task_id = await _create_task_via_tool(user_id, chat_id)
+
+    calls = [_call("call_pause", "pause_task", json.dumps({"task_id": task_id}))]
+    async with async_session_factory() as session:
+        results = await dispatch_tool_calls(session, user_id, chat_id, calls)
+    assert results[0]["ok"] is True
+
+    transitions_before = await _count_transitions(task_id)
+
+    calls = [_call("call_resume", "resume_task", json.dumps({"task_id": task_id}))]
+    async with async_session_factory() as session:
+        results = await dispatch_tool_calls(session, user_id, chat_id, calls)
+    assert results[0]["ok"] is True
+
+    async with async_session_factory() as session:
+        task = await session.get(Task, task_id)
+        assert task.is_paused is False
+        assert task.state is TaskState.PLANNING
+
+    assert await _count_transitions(task_id) == transitions_before
+
+
+@pytest.mark.asyncio
+async def test_pause_task_bumps_updated_at(authenticated_client: AsyncClient) -> None:
+    """A pause strictly increases the task's updated_at timestamp."""
+    user_id = authenticated_client.seeded_user_id
+    chat_id = await _seed_chat(user_id)
+    task_id = await _create_task_via_tool(user_id, chat_id)
+
+    async with async_session_factory() as session:
+        task_before = await session.get(Task, task_id)
+        updated_at_before = task_before.updated_at
+
+    calls = [_call("call_pause", "pause_task", json.dumps({"task_id": task_id}))]
+    async with async_session_factory() as session:
+        results = await dispatch_tool_calls(session, user_id, chat_id, calls)
+    assert results[0]["ok"] is True
+
+    async with async_session_factory() as session:
+        task_after = await session.get(Task, task_id)
+        assert task_after.updated_at > updated_at_before
+
+
+@pytest.mark.asyncio
+async def test_pause_task_other_users_task_is_rejected(
+    authenticated_client: AsyncClient,
+    second_authenticated_client: AsyncClient,
+) -> None:
+    """A task_id belonging to a different user is rejected without mutation (IDOR)."""
+    owner_id = authenticated_client.seeded_user_id
+    other_user_id = second_authenticated_client.seeded_user_id
+    chat_id = await _seed_chat(owner_id)
+    task_id = await _create_task_via_tool(owner_id, chat_id)
+
+    other_chat_id = await _seed_chat(other_user_id)
+
+    calls = [_call("call_pause", "pause_task", json.dumps({"task_id": task_id}))]
+    async with async_session_factory() as session:
+        results = await dispatch_tool_calls(session, other_user_id, other_chat_id, calls)
+
+    result_payload = json.loads(results[0]["content"])
+    assert result_payload.get("status") == "error" or "error" in result_payload
+
+    async with async_session_factory() as session:
+        task = await session.get(Task, task_id)
+        assert task.is_paused is False
+
+
+@pytest.mark.asyncio
+async def test_resume_task_other_chats_task_is_rejected(
+    authenticated_client: AsyncClient,
+) -> None:
+    """A task_id belonging to a different chat (same user) is rejected without mutation (IDOR)."""
+    user_id = authenticated_client.seeded_user_id
+    chat_a = await _seed_chat(user_id, "Chat A")
+    chat_b = await _seed_chat(user_id, "Chat B")
+    task_id = await _create_task_via_tool(user_id, chat_a)
+
+    calls = [_call("call_pause", "pause_task", json.dumps({"task_id": task_id}))]
+    async with async_session_factory() as session:
+        results = await dispatch_tool_calls(session, user_id, chat_a, calls)
+    assert results[0]["ok"] is True
+
+    calls = [_call("call_resume", "resume_task", json.dumps({"task_id": task_id}))]
+    async with async_session_factory() as session:
+        results = await dispatch_tool_calls(session, user_id, chat_b, calls)
+
+    result_payload = json.loads(results[0]["content"])
+    assert result_payload.get("status") == "error" or "error" in result_payload
+
+    async with async_session_factory() as session:
+        task = await session.get(Task, task_id)
+        assert task.is_paused is True
+
+
+@pytest.mark.asyncio
+async def test_pause_and_resume_are_not_llm_state_changes(
+    authenticated_client: AsyncClient,
+) -> None:
+    """pause_task/resume_task are registered tools with no new_state/state/delegate_to field."""
+    schemas = build_tool_schemas()
+    by_name = {s["function"]["name"]: s for s in schemas}
+    assert "pause_task" in by_name
+    assert "resume_task" in by_name
+    for name in ("pause_task", "resume_task"):
+        properties = by_name[name]["function"]["parameters"].get("properties", {})
+        assert "new_state" not in properties
+        assert "state" not in properties
+        assert "delegate_to" not in properties
+
+
+@pytest.mark.asyncio
+async def test_cancel_is_not_an_llm_tool(authenticated_client: AsyncClient) -> None:
+    """cancel_task is never a registered LLM tool and no tool schema exposes 'cancelled' (D-07/D-12)."""
+    assert "cancel_task" not in TOOL_REGISTRY
+    for schema in build_tool_schemas():
+        for prop in schema["function"]["parameters"].get("properties", {}).values():
+            assert "cancelled" not in prop.get("enum", [])
 
 
 @pytest.mark.asyncio
