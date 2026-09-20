@@ -567,17 +567,19 @@ Not applicable in the "old vs. new library" sense — this phase adds a wholly n
 
 **If this table is empty:** N/A — see entries above; none of these are compliance-critical claims (no retention policy, no security standard, no external API contract), all are internal architecture calls the planner can revise with low blast radius.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Should pause/resume be visible in the task's history timeline, distinct from state transitions?**
    - What we know: D-11 says history renders "state → state, timestamp" (state-transition-shaped). D-04 says pause is explicitly orthogonal to state.
    - What's unclear: Whether the graded demo/UI reviewer expects to *see* "paused" and "resumed" as timeline events even though they're not state changes.
    - Recommendation: Default to NOT logging pause/resume in `TaskTransition` (Pattern 4, Assumption A1). If the planner or a later `/bm:discuss-phase` pass on UI polish wants it, the cheapest addition is a nullable `TaskTransition.event_type: str = Field(default="transition")` column with values `"transition"`/`"pause"`/`"resume"`, added additively without touching the creation/transition code paths already built.
+   - **RESOLVED:** Plan 04-03 follows the recommendation — pause/resume do not write `TaskTransition` rows; only real state changes and creation appear in the history timeline.
 
 2. **Does `Task.updated_at` need to be bumped on every transition/pause/resume, or only left as the row's own last-write timestamp?**
    - What we know: Every other timestamped table in this codebase (`WorkingMemory`, `LongTermMemory`, `Profile`) updates `updated_at` on every write.
    - What's unclear: Nothing genuinely open here — this is a straightforward "match existing convention" call, listed only so the planner explicitly sets `task.updated_at = datetime.now(timezone.utc)` inside `transition_task`/`set_paused`/`cancel_task`, not just at creation.
    - Recommendation: Bump `updated_at` on every write to `Task`, matching every other table's convention. Not risky either way, just easy to forget.
+   - **RESOLVED:** Plans 04-02 and 04-03 bump `Task.updated_at` on every write (transition, pause, resume, cancel), matching the existing convention.
 
 ## Security Domain
 
