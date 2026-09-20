@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="ru" class="h-full">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Вход — AI Agent</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="h-full bg-slate-950 text-slate-100 antialiased flex items-center justify-center">
+    <div class="w-full max-w-sm mx-4">
+        <div id="expired-banner" class="hidden mb-4 bg-yellow-900/90 border border-yellow-700 rounded-lg px-4 py-3 text-sm">
+            Сессия истекла. Пожалуйста, войдите снова.
+        </div>
+        <div class="bg-slate-900 border border-slate-700 rounded-xl shadow-xl">
+            <div class="px-5 py-4 border-b border-slate-700">
+                <h1 class="text-xl font-semibold">Вход в AI Agent</h1>
+            </div>
+            <form id="login-form" class="p-5 space-y-4">
+                <div>
+                    <label for="login-username" class="block text-sm text-slate-400 mb-1">Имя пользователя</label>
+                    <input type="text" id="login-username" autocomplete="username" required
+                        class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm
+                               focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                </div>
+                <div>
+                    <label for="login-password" class="block text-sm text-slate-400 mb-1">Пароль</label>
+                    <input type="password" id="login-password" autocomplete="current-password" required
+                        class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm
+                               focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                </div>
+                <button type="submit"
+                    class="w-full rounded-lg bg-indigo-600 hover:bg-indigo-500 px-4 py-2 text-sm font-medium transition">
+                    Войти
+                </button>
+                <div id="login-error" class="text-sm text-red-400"></div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        const AGENT_PORT = 8001;
+        const AGENT_BASE = `http://${window.location.hostname}:${AGENT_PORT}`;
+
+        if (new URLSearchParams(location.search).get('expired')) {
+            document.getElementById('expired-banner').classList.remove('hidden');
+        }
+
+        document.getElementById('login-form').addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const errorEl = document.getElementById('login-error');
+            errorEl.textContent = '';
+
+            const username = document.getElementById('login-username').value;
+            const password = document.getElementById('login-password').value;
+
+            let resp;
+            try {
+                resp = await fetch(`${AGENT_BASE}/api/v1/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({ username, password }),
+                });
+            } catch (err) {
+                errorEl.textContent = 'Agent недоступен. Попробуйте позже.';
+                return;
+            }
+
+            if (resp.status === 200) {
+                window.location.href = '/static/index.html';
+                return;
+            }
+
+            const body = await resp.json().catch(() => ({}));
+            errorEl.textContent = body.detail || 'Ошибка входа';
+        });
+    </script>
+</body>
+</html>

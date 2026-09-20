@@ -25,6 +25,7 @@ const state = {
     contextWindow: null,
     isStatsLocal: false,
     statsAbortController: null,
+    lastMemory: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -47,8 +48,13 @@ function showToast(message, type = 'error') {
 async function apiFetch(path, options = {}) {
     const resp = await fetch(`${AGENT_BASE}${path}`, {
         headers: { 'Content-Type': 'application/json', ...options.headers },
+        credentials: 'include',
         ...options,
     });
+    if (resp.status === 401) {
+        window.location.href = '/static/login.html?expired=1';
+        return;
+    }
     if (!resp.ok) {
         const body = await resp.json().catch(() => ({}));
         const detail = body.detail || resp.statusText;
@@ -56,6 +62,11 @@ async function apiFetch(path, options = {}) {
     }
     if (resp.status === 204) return null;
     return resp.json();
+}
+
+async function logout() {
+    await apiFetch('/api/v1/auth/logout', { method: 'POST' });
+    window.location.href = '/static/login.html';
 }
 
 function renderMarkdown(text) {
@@ -237,6 +248,61 @@ async function loadChatStats(chatId) {
     }
 }
 
+async function loadChatMemory(chatId) {
+    try {
+        const data = await apiFetch(`/api/v1/chats/${chatId}/memory`);
+        state.lastMemory = data;
+        renderMemoryPanel();
+    } catch (err) {
+        console.error('Failed to load memory:', err);
+    }
+}
+
+function renderMemoryEntries(container, entries) {
+    container.replaceChildren();
+    if (!entries.length) {
+        const empty = document.createElement('div');
+        empty.className = 'text-slate-600';
+        empty.textContent = '—';
+        container.appendChild(empty);
+        return;
+    }
+    entries.forEach((entry) => {
+        const row = document.createElement('div');
+        row.className = 'rounded-lg bg-slate-800 px-2 py-1';
+
+        const keyEl = document.createElement('div');
+        keyEl.className = 'text-slate-300 font-semibold';
+        keyEl.textContent = entry.key;
+
+        const valueEl = document.createElement('div');
+        valueEl.className = 'text-slate-400 truncate';
+        const truncated = entry.value.length > 160 ? `${entry.value.slice(0, 160)}…` : entry.value;
+        valueEl.textContent = truncated;
+        valueEl.title = entry.value;
+
+        row.appendChild(keyEl);
+        row.appendChild(valueEl);
+        container.appendChild(row);
+    });
+}
+
+function renderMemoryPanel() {
+    const data = state.lastMemory;
+    const shortTermEl = $('memory-short-term-count');
+    const workingCountEl = $('memory-working-count');
+    const longTermCountEl = $('memory-long-term-count');
+    const workingEl = $('memory-working');
+    const longTermEl = $('memory-long-term');
+    if (!data) return;
+
+    if (shortTermEl) shortTermEl.textContent = String(data.short_term_message_count);
+    if (workingCountEl) workingCountEl.textContent = String(data.working.length);
+    if (longTermCountEl) longTermCountEl.textContent = String(data.long_term.length);
+    if (workingEl) renderMemoryEntries(workingEl, data.working);
+    if (longTermEl) renderMemoryEntries(longTermEl, data.long_term);
+}
+
 function appendLoadingBubble() {
     const container = $('messages');
     const existing = container.querySelector('[data-streaming="true"]');
@@ -298,7 +364,10 @@ function renderChatList() {
 
 async function checkAgentHealth() {
     try {
-        const resp = await fetch(`${AGENT_BASE}/health`, { signal: AbortSignal.timeout(2000) });
+        const resp = await fetch(`${AGENT_BASE}/health`, {
+            signal: AbortSignal.timeout(2000),
+            credentials: 'include',
+        });
         const ok = resp.ok;
         $('agent-status-text').textContent = ok ? 'online' : 'offline';
         $('agent-status-text').className = ok ? 'text-emerald-400' : 'text-red-400';
@@ -339,6 +408,7 @@ async function selectChat(chatId) {
     renderChatList();
     await loadChatTree(chatId);
     await loadChatStats(chatId);
+    await loadChatMemory(chatId);
     connectWs(chatId);
 }
 
@@ -521,7 +591,10 @@ function handleWsMessage(data) {
             unblockInput();
             state.lastFailedMessage = null;
             if (data.stats) updateStats(data.stats);
-            if (state.currentChatId) loadChatTree(state.currentChatId);
+            if (state.currentChatId) {
+                loadChatTree(state.currentChatId);
+                loadChatMemory(state.currentChatId);
+            }
             break;
         case 'error':
             setStreaming(false);
@@ -725,6 +798,35 @@ function closeSettingsModal() {
     $('settings-modal').classList.add('hidden');
 }
 
+function openAddUserModal() {
+    $('add-user-username').value = '';
+    $('add-user-password').value = '';
+    $('add-user-error').textContent = '';
+    $('add-user-modal').classList.remove('hidden');
+    $('add-user-username').focus();
+}
+
+function closeAddUserModal() {
+    $('add-user-modal').classList.add('hidden');
+}
+
+async function createUser(event) {
+    event.preventDefault();
+    const username = $('add-user-username').value;
+    const password = $('add-user-password').value;
+    $('add-user-error').textContent = '';
+    try {
+        await apiFetch('/api/v1/auth/users', {
+            method: 'POST',
+            body: JSON.stringify({ username, password }),
+        });
+        closeAddUserModal();
+        showToast(`Пользователь ${username} создан`, 'success');
+    } catch (err) {
+        $('add-user-error').textContent = err.message;
+    }
+}
+
 async function saveSettings(event) {
     event.preventDefault();
     const perChat = $('settings-per-chat').checked;
@@ -753,6 +855,7 @@ async function saveSettings(event) {
 
 function bindEvents() {
     $('btn-new-chat').addEventListener('click', () => createChat().catch((e) => showToast(e.message)));
+    $('btn-logout').addEventListener('click', () => logout().catch((e) => showToast(e.message, 'error')));
     $('chat-form').addEventListener('submit', (e) => {
         e.preventDefault();
         const text = $('message-input').value;
@@ -775,6 +878,15 @@ function bindEvents() {
     $('btn-cancel-settings').addEventListener('click', closeSettingsModal);
     $('settings-form').addEventListener('submit', (e) => {
         saveSettings(e).catch((err) => showToast(err.message, 'error'));
+    });
+    $('btn-users').addEventListener('click', openAddUserModal);
+    $('btn-close-add-user').addEventListener('click', closeAddUserModal);
+    $('btn-cancel-add-user').addEventListener('click', closeAddUserModal);
+    $('add-user-form').addEventListener('submit', (e) => {
+        createUser(e).catch((err) => showToast(err.message, 'error'));
+    });
+    $('add-user-modal').addEventListener('click', (e) => {
+        if (e.target === $('add-user-modal')) closeAddUserModal();
     });
     $('settings-temperature').addEventListener('input', (e) => {
         $('temperature-value').textContent = e.target.value;
@@ -811,7 +923,10 @@ function bindEvents() {
         if (e.target === $('settings-modal')) closeSettingsModal();
     });
     document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') closeSettingsModal();
+        if (e.key === 'Escape') {
+            closeSettingsModal();
+            closeAddUserModal();
+        }
     });
     $('chat-list').addEventListener('contextmenu', (e) => {
         const btn = e.target.closest('[data-chat-id]');

@@ -8,6 +8,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from agent.llm_client import llm_client
+from agent import memory
 from shared.database import async_session_factory
 from shared.logger import get_logger
 from shared.models import Chat, ContextStrategy, Message, Settings
@@ -34,15 +35,23 @@ def _message_tokens(messages: list[dict[str, str]]) -> int:
 
 
 async def get_effective_settings(session: AsyncSession, chat_id: int) -> Settings:
-    """Return per-chat settings or fall back to global defaults."""
+    """Return per-chat settings or fall back to the chat owner's global defaults."""
     result = await session.exec(select(Settings).where(Settings.chat_id == chat_id))
     settings = result.first()
     if settings is not None:
         return settings
-    result = await session.exec(select(Settings).where(Settings.chat_id.is_(None)))
+
+    chat = await session.get(Chat, chat_id)
+    owner_id = chat.user_id if chat is not None else None
+    conditions = [Settings.chat_id.is_(None)]
+    if owner_id is None:
+        conditions.append(Settings.user_id.is_(None))
+    else:
+        conditions.append(Settings.user_id == owner_id)
+    result = await session.exec(select(Settings).where(*conditions))
     settings = result.first()
     if settings is None:
-        settings = Settings(chat_id=None)
+        settings = Settings(chat_id=None, user_id=owner_id)
         session.add(settings)
         await session.commit()
         await session.refresh(settings)
@@ -50,7 +59,7 @@ async def get_effective_settings(session: AsyncSession, chat_id: int) -> Setting
 
 
 async def build_system_prompt(session: AsyncSession, chat_id: int) -> str:
-    """Build the system prompt with optional facts."""
+    """Build the system prompt with optional facts and memory layers."""
     settings_row = await get_effective_settings(session, chat_id)
     # PRODUCTION FIX: Protect against None in system_prompt
     parts = [settings_row.system_prompt or "You are a helpful assistant."]
@@ -59,6 +68,23 @@ async def build_system_prompt(session: AsyncSession, chat_id: int) -> str:
         parts.append(f"Known facts: {json.dumps(facts)}")
     if settings_row.summary_text.strip():
         parts.append(f"Conversation summary: {settings_row.summary_text.strip()}")
+
+    working = await memory.list_working_memory(session, chat_id)
+    if working:
+        parts.append(
+            "Working memory (this chat's current task data): "
+            + json.dumps({row.key: row.value for row in working}),
+        )
+
+    chat = await session.get(Chat, chat_id)
+    if chat is not None and chat.user_id is not None:
+        long_term = await memory.list_long_term_memory(session, chat.user_id)
+        if long_term:
+            parts.append(
+                "Long-term memory (persists across all your chats): "
+                + json.dumps({row.key: row.value for row in long_term}),
+            )
+
     return "\n\n".join(parts)
 
 
@@ -85,7 +111,8 @@ async def _facts_target_row(
     row = result.first()
     if row is not None:
         return row
-    new_settings = Settings(chat_id=chat_id)
+    chat = await session.get(Chat, chat_id)
+    new_settings = Settings(chat_id=chat_id, user_id=chat.user_id if chat is not None else None)
     session.add(new_settings)
     await session.commit()
     await session.refresh(new_settings)

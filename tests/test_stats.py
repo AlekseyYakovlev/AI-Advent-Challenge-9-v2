@@ -3,6 +3,7 @@
 import httpx
 import pytest
 import respx
+from httpx import AsyncClient
 from sqlmodel import select
 
 from agent.context_engine import RECENT_MESSAGE_COUNT, build_llm_context
@@ -34,9 +35,9 @@ async def _append_user_message(session, chat: Chat, content: str) -> Message:
 
 
 @pytest.mark.asyncio
-async def test_stats_endpoint_returns_correct_context_size(client) -> None:
+async def test_stats_endpoint_returns_correct_context_size(authenticated_client: AsyncClient) -> None:
     """Stats endpoint should reflect system prompt plus stored message tokens."""
-    chat_resp = await client.post("/api/v1/chats", json={"title": "Stats chat"})
+    chat_resp = await authenticated_client.post("/api/v1/chats", json={"title": "Stats chat"})
     chat_id = chat_resp.json()["id"]
 
     async with async_session_factory() as session:
@@ -44,7 +45,7 @@ async def test_stats_endpoint_returns_correct_context_size(client) -> None:
         assert chat is not None
         await _append_user_message(session, chat, "Hello world")
 
-    stats_resp = await client.get(f"/api/v1/chats/{chat_id}/stats")
+    stats_resp = await authenticated_client.get(f"/api/v1/chats/{chat_id}/stats")
     assert stats_resp.status_code == 200
     stats = stats_resp.json()
     assert stats["current_context_size"] > 0
@@ -54,12 +55,12 @@ async def test_stats_endpoint_returns_correct_context_size(client) -> None:
 
 
 @pytest.mark.asyncio
-async def test_stats_handles_empty_chat(client) -> None:
+async def test_stats_handles_empty_chat(authenticated_client: AsyncClient) -> None:
     """Empty chat stats should return defaults without HTTP 500."""
-    chat_resp = await client.post("/api/v1/chats", json={"title": "Empty"})
+    chat_resp = await authenticated_client.post("/api/v1/chats", json={"title": "Empty"})
     chat_id = chat_resp.json()["id"]
 
-    stats_resp = await client.get(f"/api/v1/chats/{chat_id}/stats")
+    stats_resp = await authenticated_client.get(f"/api/v1/chats/{chat_id}/stats")
     assert stats_resp.status_code == 200
     stats = stats_resp.json()
     assert stats["current_context_size"] >= 0
@@ -69,7 +70,7 @@ async def test_stats_handles_empty_chat(client) -> None:
 
 @respx.mock
 @pytest.mark.asyncio
-async def test_stats_does_not_call_llm(client) -> None:
+async def test_stats_does_not_call_llm(authenticated_client: AsyncClient) -> None:
     """REST stats must not trigger LLM summarization calls."""
     respx.post(f"{BASE_URL}/v1/chat/completions").mock(
         return_value=httpx.Response(
@@ -78,7 +79,7 @@ async def test_stats_does_not_call_llm(client) -> None:
         ),
     )
 
-    chat_resp = await client.post("/api/v1/chats", json={"title": "No LLM"})
+    chat_resp = await authenticated_client.post("/api/v1/chats", json={"title": "No LLM"})
     chat_id = chat_resp.json()["id"]
 
     async with async_session_factory() as session:
@@ -86,18 +87,18 @@ async def test_stats_does_not_call_llm(client) -> None:
         assert chat is not None
         await _append_user_message(session, chat, "Test message for stats")
 
-    stats_resp = await client.get(f"/api/v1/chats/{chat_id}/stats")
+    stats_resp = await authenticated_client.get(f"/api/v1/chats/{chat_id}/stats")
     assert stats_resp.status_code == 200
     assert len(respx.calls) == 0
 
 
 @pytest.mark.asyncio
-async def test_stats_reflects_compression_strategy(client) -> None:
+async def test_stats_reflects_compression_strategy(authenticated_client: AsyncClient) -> None:
     """Sliding window stats should not include more than window + system."""
-    chat_resp = await client.post("/api/v1/chats", json={"title": "Sliding stats"})
+    chat_resp = await authenticated_client.post("/api/v1/chats", json={"title": "Sliding stats"})
     chat_id = chat_resp.json()["id"]
 
-    await client.put(
+    await authenticated_client.put(
         "/api/v1/settings",
         json={
             "chat_id": chat_id,
@@ -125,7 +126,7 @@ async def test_stats_reflects_compression_strategy(client) -> None:
         session.add(chat)
         await session.commit()
 
-    stats_resp = await client.get(f"/api/v1/chats/{chat_id}/stats")
+    stats_resp = await authenticated_client.get(f"/api/v1/chats/{chat_id}/stats")
     assert stats_resp.status_code == 200
     stats = stats_resp.json()
     assert stats["message_count"] <= RECENT_MESSAGE_COUNT + 1

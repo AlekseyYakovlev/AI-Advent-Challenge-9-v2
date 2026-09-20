@@ -123,9 +123,10 @@ async def test_extract_and_update_facts_debounce_and_merge() -> None:
     async with async_session_factory() as session:
         chat = Chat(title="Facts chat")
         session.add(chat)
-        session.add(Settings(chat_id=chat.id, facts_json='{"name": "Bob"}'))
         await session.commit()
         await session.refresh(chat)
+        session.add(Settings(chat_id=chat.id, facts_json='{"name": "Bob"}'))
+        await session.commit()
 
         extract_and_update_facts(session, chat.id, "I love Python", MODEL)
         extract_and_update_facts(session, chat.id, "I love Python again", MODEL)

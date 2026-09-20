@@ -45,8 +45,36 @@
                 </button>
             </div>
             <nav id="chat-list" class="flex-1 overflow-y-auto p-2 space-y-1"></nav>
-            <div id="agent-status" class="p-3 border-t border-slate-800 text-xs text-slate-400">
-                Agent: <span id="agent-status-text">подключение…</span>
+            <div id="memory-panel" class="border-t border-slate-800 p-3 text-xs text-slate-400 overflow-y-auto max-h-72">
+                <h3 class="text-slate-300 font-semibold mb-2">Память</h3>
+                <div class="mb-2">
+                    <div class="flex items-center justify-between">
+                        <span class="text-slate-500">Кратковременная (диалог)</span>
+                        <span id="memory-short-term-count" class="text-white font-semibold">0</span>
+                    </div>
+                </div>
+                <div class="mb-2">
+                    <div class="flex items-center justify-between mb-1">
+                        <span class="text-slate-500">Рабочая (этот чат)</span>
+                        <span id="memory-working-count" class="text-white font-semibold">0</span>
+                    </div>
+                    <div id="memory-working" class="space-y-1"></div>
+                </div>
+                <div>
+                    <div class="flex items-center justify-between mb-1">
+                        <span class="text-slate-500">Долговременная (все чаты)</span>
+                        <span id="memory-long-term-count" class="text-white font-semibold">0</span>
+                    </div>
+                    <div id="memory-long-term" class="space-y-1"></div>
+                </div>
+            </div>
+            <div id="agent-status" class="p-3 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
+                <span>Agent: <span id="agent-status-text">подключение…</span></span>
+                <button id="btn-logout"
+                    class="rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 px-3 py-2 text-sm transition"
+                    title="Выйти">
+                    Выйти
+                </button>
             </div>
         </aside>
 
@@ -60,6 +88,11 @@
                     class="rounded-lg bg-slate-800 border border-slate-700 px-3 py-1.5 text-sm max-w-xs truncate">
                     <option value="">Загрузка моделей…</option>
                 </select>
+                <button id="btn-users"
+                    class="rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 px-3 py-2 text-sm transition"
+                    title="Пользователи" aria-haspopup="dialog" aria-controls="add-user-modal">
+                    👥
+                </button>
                 <button id="btn-settings"
                     class="rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 px-3 py-1.5 text-sm transition"
                     title="Настройки">
@@ -182,6 +215,39 @@
                     <button type="submit"
                         class="rounded-lg bg-indigo-600 hover:bg-indigo-500 px-4 py-2 text-sm font-medium transition">
                         Сохранить
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Add user modal -->
+    <div id="add-user-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+        <div class="bg-slate-900 border border-slate-700 rounded-xl shadow-xl w-full max-w-sm mx-4">
+            <div class="flex items-center justify-between px-5 py-4 border-b border-slate-700">
+                <h2 class="text-lg font-semibold">Добавить пользователя</h2>
+                <button id="btn-close-add-user" aria-label="Закрыть" class="text-slate-400 hover:text-white text-xl leading-none">&times;</button>
+            </div>
+            <form id="add-user-form" class="p-5 space-y-4">
+                <div>
+                    <label for="add-user-username" class="block text-sm text-slate-400 mb-1">Имя пользователя</label>
+                    <input type="text" id="add-user-username"
+                        class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500">
+                </div>
+                <div>
+                    <label for="add-user-password" class="block text-sm text-slate-400 mb-1">Пароль</label>
+                    <input type="password" id="add-user-password"
+                        class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500">
+                </div>
+                <p id="add-user-error" class="text-xs text-red-400"></p>
+                <div class="flex justify-end gap-2 pt-2">
+                    <button type="button" id="btn-cancel-add-user"
+                        class="rounded-lg px-4 py-2 text-sm text-slate-400 hover:text-white transition">
+                        Отмена
+                    </button>
+                    <button type="submit"
+                        class="rounded-lg bg-indigo-600 hover:bg-indigo-500 px-4 py-2 text-sm font-medium transition">
+                        Создать пользователя
                     </button>
                 </div>
             </form>

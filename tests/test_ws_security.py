@@ -12,6 +12,7 @@ import agent.ws as ws_module
 from agent.main import app
 from agent.state import ws_rate_limiter
 from shared.config import settings
+from tests.conftest import login_test_client
 
 BASE_URL = settings.LM_STUDIO_BASE_URL
 MODEL = "test-model"
@@ -31,6 +32,7 @@ def _stream_response(text: str) -> httpx.Response:
 def test_ws_rejects_invalid_origin() -> None:
     """WebSocket connections from unknown origins should be rejected."""
     with TestClient(app) as client:
+        login_test_client(client)
         chat_resp = client.post("/api/v1/chats", json={"title": "Secure"})
         chat_id = chat_resp.json()["id"]
 
@@ -50,6 +52,7 @@ def test_ws_rate_limiting() -> None:
     )
 
     with TestClient(app) as client:
+        login_test_client(client)
         chat_resp = client.post("/api/v1/chats", json={"title": "Rate limit"})
         chat_id = chat_resp.json()["id"]
         ws_rate_limiter.pop(chat_id, None)
@@ -77,6 +80,7 @@ def test_ws_idle_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(ws_module, "IDLE_TIMEOUT_SECONDS", 0.1)
 
     with TestClient(app) as client:
+        login_test_client(client)
         chat_resp = client.post("/api/v1/chats", json={"title": "Idle"})
         chat_id = chat_resp.json()["id"]
 

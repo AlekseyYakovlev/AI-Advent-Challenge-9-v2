@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
-from sqlalchemy import Column, Enum as SAEnum, ForeignKey, Integer
+from sqlalchemy import Column, Enum as SAEnum, ForeignKey, Integer, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 
@@ -32,6 +32,14 @@ class Chat(SQLModel, table=True):
     )
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
+    )
+    user_id: Optional[int] = Field(
+        default=None,
+        sa_column=Column(
+            Integer,
+            ForeignKey("user.id", ondelete="CASCADE"),
+            nullable=True,
+        ),
     )
 
 
@@ -90,6 +98,14 @@ class Settings(SQLModel, table=True):
     )
     facts_json: str = Field(default="{}")
     summary_text: str = Field(default="")
+    user_id: Optional[int] = Field(
+        default=None,
+        sa_column=Column(
+            Integer,
+            ForeignKey("user.id", ondelete="CASCADE"),
+            nullable=True,
+        ),
+    )
 
 
 class TokenUsage(SQLModel, table=True):
@@ -106,3 +122,82 @@ class TokenUsage(SQLModel, table=True):
     date: datetime
     prompt_tokens: int = Field(default=0)
     completion_tokens: int = Field(default=0)
+
+
+class User(SQLModel, table=True):
+    """A registered account (every account has equal "admin" capability)."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    username: str = Field(unique=True, index=True)
+    password_hash: str
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+    )
+
+
+class WorkingMemory(SQLModel, table=True):
+    """Key-value scratchpad for a chat's current task data (D-03)."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("user.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+    )
+    chat_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("chat.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+    )
+    key: str = Field(max_length=200)
+    value: str = Field(max_length=50_000)
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+    )
+
+    __table_args__ = (UniqueConstraint("chat_id", "key", name="uq_working_memory_chat_key"),)
+
+
+class LongTermMemory(SQLModel, table=True):
+    """User-scoped, cross-chat memory for profile/decisions/knowledge (D-02)."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("user.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+    )
+    key: str = Field(max_length=200)
+    value: str = Field(max_length=50_000)
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+    )
+
+    __table_args__ = (UniqueConstraint("user_id", "key", name="uq_long_term_memory_user_key"),)
+
+
+class Session(SQLModel, table=True):
+    """A server-side, revocable login session for a user."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    token_hash: str = Field(unique=True, index=True)
+    user_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("user.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+    )
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+    )
+    expires_at: datetime

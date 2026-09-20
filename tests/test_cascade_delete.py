@@ -10,27 +10,27 @@ from shared.models import Chat, Message, Settings, TokenUsage
 
 
 @pytest.mark.asyncio
-async def test_delete_chat_cleans_in_memory_caches(client: AsyncClient) -> None:
+async def test_delete_chat_cleans_in_memory_caches(authenticated_client: AsyncClient) -> None:
     """DELETE should remove ws_rate_limiter and chat_locks entries."""
-    chat_resp = await client.post("/api/v1/chats", json={"title": "Delete me"})
+    chat_resp = await authenticated_client.post("/api/v1/chats", json={"title": "Delete me"})
     chat_id = chat_resp.json()["id"]
 
     ws_rate_limiter[chat_id] = [1.0, 2.0]
     chat_locks[chat_id] = asyncio.Lock()
 
-    resp = await client.delete(f"/api/v1/chats/{chat_id}")
+    resp = await authenticated_client.delete(f"/api/v1/chats/{chat_id}")
     assert resp.status_code == 204
     assert chat_id not in ws_rate_limiter
     assert chat_id not in chat_locks
 
 
 @pytest.mark.asyncio
-async def test_delete_chat_cascades_db_records(client: AsyncClient) -> None:
+async def test_delete_chat_cascades_db_records(authenticated_client: AsyncClient) -> None:
     """DELETE should CASCADE-remove messages, settings, and token usage."""
     from datetime import datetime, timezone
 
     async with async_session_factory() as session:
-        chat = Chat(title="Cascade API")
+        chat = Chat(title="Cascade API", user_id=authenticated_client.seeded_user_id)
         session.add(chat)
         await session.commit()
         await session.refresh(chat)
@@ -53,7 +53,7 @@ async def test_delete_chat_cascades_db_records(client: AsyncClient) -> None:
         settings_id = settings_row.id
         usage_id = usage.id
 
-    resp = await client.delete(f"/api/v1/chats/{chat_id}")
+    resp = await authenticated_client.delete(f"/api/v1/chats/{chat_id}")
     assert resp.status_code == 204
 
     async with async_session_factory() as session:

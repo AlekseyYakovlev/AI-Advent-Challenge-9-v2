@@ -37,10 +37,10 @@ async def test_parallel_loads_execute_sequentially(lm_client: LMStudioClient) ->
             call_order.append("end-b")
         return httpx.Response(200, json={"success": True})
 
-    respx.post(f"{BASE_URL}/api/v0/models/unload").mock(
+    respx.post(f"{BASE_URL}/api/v1/models/unload").mock(
         return_value=httpx.Response(200, json={"success": True}),
     )
-    respx.post(f"{BASE_URL}/api/v0/models/load").mock(side_effect=slow_load)
+    respx.post(f"{BASE_URL}/api/v1/models/load").mock(side_effect=slow_load)
 
     task_a = asyncio.create_task(
         lm_client.load_model("model-a", gpu_offload=0, context_length=None),

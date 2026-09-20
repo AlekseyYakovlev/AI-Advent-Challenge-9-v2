@@ -5,6 +5,7 @@ from httpx import AsyncClient
 from starlette.testclient import TestClient
 
 from agent.main import app
+from tests.conftest import login_test_client
 
 
 def _create_chat(client: TestClient) -> int:
@@ -15,6 +16,7 @@ def _create_chat(client: TestClient) -> int:
 def test_websocket_connect_with_origin() -> None:
     """WebSocket with UI Origin header should connect successfully."""
     with TestClient(app) as client:
+        login_test_client(client)
         chat_id = _create_chat(client)
         with client.websocket_connect(
             f"/ws/chat/{chat_id}",
@@ -26,6 +28,7 @@ def test_websocket_connect_with_origin() -> None:
 def test_websocket_connect_without_origin() -> None:
     """WebSocket without Origin header should connect successfully."""
     with TestClient(app) as client:
+        login_test_client(client)
         chat_id = _create_chat(client)
         with client.websocket_connect(f"/ws/chat/{chat_id}") as ws:
             assert ws is not None
@@ -34,6 +37,7 @@ def test_websocket_connect_without_origin() -> None:
 def test_websocket_connect_with_null_origin() -> None:
     """WebSocket with Origin: null should connect successfully."""
     with TestClient(app) as client:
+        login_test_client(client)
         chat_id = _create_chat(client)
         with client.websocket_connect(
             f"/ws/chat/{chat_id}",
@@ -43,9 +47,9 @@ def test_websocket_connect_with_null_origin() -> None:
 
 
 @pytest.mark.asyncio
-async def test_rest_api_still_works(client: AsyncClient) -> None:
+async def test_rest_api_still_works(authenticated_client: AsyncClient) -> None:
     """REST API should respond with CORS headers after middleware change."""
-    resp = await client.get(
+    resp = await authenticated_client.get(
         "/api/v1/chats",
         headers={"Origin": "http://localhost:8000"},
     )

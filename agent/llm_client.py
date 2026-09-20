@@ -69,19 +69,29 @@ class LLMClient:
         temperature: float,
         max_tokens: int,
         context_length: int | None = None,
-    ) -> AsyncGenerator[str, None]:
-        """Stream chat completion tokens via SSE."""
+        tools: list[dict[str, Any]] | None = None,
+    ) -> AsyncGenerator[str | dict[str, Any], None]:
+        """Stream chat completion tokens via SSE.
+
+        Yields plain `str` content tokens when `tools` is falsy (the contract
+        every existing caller relies on). When `tools` is non-empty, yields
+        discriminated dicts instead: `{"type": "content", "content": ...}` and
+        `{"type": "tool_calls", "tool_calls": [...]}`, with fragmented
+        `function.arguments` deltas reassembled by index.
+        """
         url = f"{self._base_url}/v1/chat/completions"
         headers = {"Content-Type": "application/json"}
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
-        payload = {
+        payload: dict[str, Any] = {
             "model": model,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": True,
         }
+        if tools:
+            payload["tools"] = tools
         logger.debug(
             "stream_chat_start",
             context_length=context_length,
@@ -97,8 +107,12 @@ class LLMClient:
                 ) as response:
                     response.raise_for_status()
                     try:
-                        async for token in self._parse_sse_stream(response):
-                            yield token
+                        if tools:
+                            async for event in self._parse_sse_stream_with_tools(response):
+                                yield event
+                        else:
+                            async for token in self._parse_sse_stream(response):
+                                yield token
                     except asyncio.CancelledError:
                         await response.aclose()
                         raise
@@ -123,6 +137,40 @@ class LLMClient:
             if content:
                 yield content
 
+    async def _parse_sse_stream_with_tools(
+        self,
+        response: httpx.Response,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """Parse SSE, accumulating tool_calls deltas by index across chunks."""
+        tool_calls_acc: dict[int, dict[str, Any]] = {}
+        async for line in response.aiter_lines():
+            if not line.startswith("data: "):
+                continue
+            data = line[6:].strip()
+            if data == "[DONE]":
+                break
+            chunk = json.loads(data)
+            choice = chunk.get("choices", [{}])[0]
+            delta = choice.get("delta", {})
+            content = delta.get("content")
+            if content:
+                yield {"type": "content", "content": content}
+            for tc_delta in delta.get("tool_calls", []) or []:
+                idx = tc_delta["index"]
+                acc = tool_calls_acc.setdefault(
+                    idx,
+                    {"id": None, "type": "function", "function": {"name": None, "arguments": ""}},
+                )
+                if tc_delta.get("id"):
+                    acc["id"] = tc_delta["id"]
+                if fn := tc_delta.get("function"):
+                    if fn.get("name"):
+                        acc["function"]["name"] = fn["name"]
+                    if fn.get("arguments"):
+                        acc["function"]["arguments"] += fn["arguments"]
+            if choice.get("finish_reason") == "tool_calls":
+                yield {"type": "tool_calls", "tool_calls": list(tool_calls_acc.values())}
+
 
 class LMStudioClient:
     """LM Studio control and OpenAI-compatible model listing."""
@@ -133,6 +181,7 @@ class LMStudioClient:
         self._control_base = self._base_url
         self._model_switch_lock = asyncio.Lock()
         self._current_loaded_model: str | None = None
+        self._instance_ids: dict[str, str] = {}
 
     async def list_models(self) -> list[dict[str, Any]]:
         """Return available models from the OpenAI-compatible endpoint."""
@@ -178,18 +227,21 @@ class LMStudioClient:
         ):
             await self._unload_model_http(self._current_loaded_model)
 
-        url = f"{self._control_base}/api/v0/models/load"
-        body: dict[str, Any] = {
-            "model": model_id,
-            "gpu_offload": gpu_offload,
-        }
-        if context_length is not None:
-            body["context_length"] = context_length
+        url = f"{self._control_base}/api/v1/models/load"
+        body: dict[str, Any] = {"model": model_id}
+        if gpu_offload or context_length is not None:
+            logger.info(
+                "lm_studio_load_params_ignored",
+                model_id=model_id,
+                gpu_offload=gpu_offload,
+                context_length=context_length,
+            )
 
         try:
             async with httpx.AsyncClient(timeout=LOAD_TIMEOUT) as client:
                 response = await client.post(url, json=body)
                 response.raise_for_status()
+                response_body = response.json()
         except httpx.TimeoutException:
             logger.error("lm_studio_load_timeout", model_id=model_id)
             await self._emergency_unload(model_id)
@@ -205,7 +257,7 @@ class LMStudioClient:
                 message="LM Studio is not running",
                 model_id=model_id,
             )
-        except httpx.HTTPError as exc:
+        except (httpx.HTTPError, json.JSONDecodeError) as exc:
             logger.error("lm_studio_load_error", model_id=model_id, error=str(exc))
             return ModelLoadResult(
                 status=ModelLoadStatus.ERROR,
@@ -213,6 +265,9 @@ class LMStudioClient:
                 model_id=model_id,
             )
 
+        instance_id = response_body.get("instance_id")
+        if instance_id is not None:
+            self._instance_ids[model_id] = instance_id
         self._current_loaded_model = model_id
         return ModelLoadResult(
             status=ModelLoadStatus.LOADED,
@@ -246,6 +301,7 @@ class LMStudioClient:
 
         if self._current_loaded_model == model_id:
             self._current_loaded_model = None
+        self._instance_ids.pop(model_id, None)
         return ModelLoadResult(
             status=ModelLoadStatus.IDLE,
             message=f"Model {model_id} unloaded",
@@ -254,9 +310,10 @@ class LMStudioClient:
 
     async def _unload_model_http(self, model_id: str) -> None:
         """Send an unload request to LM Studio."""
-        url = f"{self._control_base}/api/v0/models/unload"
+        url = f"{self._control_base}/api/v1/models/unload"
+        instance_id = self._instance_ids.get(model_id, model_id)
         async with httpx.AsyncClient(timeout=UNLOAD_TIMEOUT) as client:
-            response = await client.post(url, json={"model": model_id})
+            response = await client.post(url, json={"instance_id": instance_id})
             response.raise_for_status()
 
     async def _emergency_unload(self, model_id: str) -> None:
@@ -274,6 +331,7 @@ class LMStudioClient:
             )
         if self._current_loaded_model == model_id:
             self._current_loaded_model = None
+        self._instance_ids.pop(model_id, None)
 
 
 llm_client = LLMClient(

@@ -18,13 +18,13 @@ The agent must demonstrably separate and manage distinct kinds of state — shor
 - ✓ Context compression strategies (sliding/sticky/truncate_middle/no_compression) — existing
 - ✓ DeepSeek (cloud) and LM Studio (local) LLM backends — existing
 - ✓ Live context/token usage stats via WebSocket `done` message and REST polling — existing
+- ✓ **AUTH-01**: User can log in with username/password (simple auth, no external identity provider) — Phase 1
+- ✓ **AUTH-02**: Every user has the same "admin" role and can create additional user accounts — Phase 1
+- ✓ **AUTH-03**: Session is maintained via an HTTP-only session cookie, valid for both REST and WebSocket — Phase 1
+- ✓ **AUTH-04**: All existing chats/settings/memory become scoped to the owning user (`user_id`) — Phase 1
 
 ### Active
 
-- [ ] **Auth-01**: User can log in with username/password (simple auth, no external identity provider)
-- [ ] **Auth-02**: Every user has the same "admin" role and can create additional user accounts
-- [ ] **Auth-03**: Session is maintained via an HTTP-only session cookie, valid for both REST and WebSocket
-- [ ] **Auth-04**: All existing chats/settings/memory become scoped to the owning user (`user_id`)
 - [ ] **MEM-01**: Agent has 3 explicitly separated memory layers — short-term (current dialog), working (current task data), long-term (profile, decisions, knowledge)
 - [ ] **MEM-02**: Long-term and working memory are stored in dedicated SQLite tables, not folded into the message tree
 - [ ] **MEM-03**: The LLM explicitly chooses what to save and to which layer, via tool calls (not implicit/automatic classification)
@@ -56,6 +56,10 @@ The agent must demonstrably separate and manage distinct kinds of state — shor
 - Multi-tenant data isolation beyond user_id scoping (no orgs/teams) — single flat user table is sufficient
 - Long-term memory sharing across users — per-user by design; only global project invariants are shared
 
+## Current State
+
+Phase 1 (Auth Foundation) complete on branch `Auth` — login/session, bootstrap admin + ownership backfill, REST/WebSocket scoping, and multi-user account creation are all merged and verified (123/123 tests pass). Next: Phase 2 (Memory, Day 11).
+
 ## Context
 
 - This extends the existing `AiAdventAgentV2` app (see `.planning/codebase/` for full architecture, stack, conventions, testing, and known concerns — notably CONCERNS.md flags stubbed summarization, context-overflow message deletion, and missing DB indexes, which are pre-existing and out of scope here unless a Week-3 phase touches that code directly).
@@ -79,9 +83,9 @@ The agent must demonstrably separate and manage distinct kinds of state — shor
 | Memory layers as new SQLite tables, reusing existing DB | Keeps consistency with existing Chat/Message/Settings persistence rather than introducing a second storage mechanism | — Pending |
 | LLM chooses what/when to save via tool calls | Day 11 explicitly requires "you explicitly choose what and where is saved" — tool calls make that choice legible and demonstrate agentic behavior | — Pending |
 | Tasks are granular within a chat, auto-created by the LLM | Matches real task decomposition; leaves room for future subagent delegation per task | — Pending |
-| Drop single-user constraint, add simple multi-user auth (all users = admin) | Personalization needs distinct profiles; user explicitly chose to move off single-user mode | — Pending |
-| Auth as its own foundation phase/branch (`Auth`), before Day 11 | All later phases (memory, profile, tasks, invariants) need `user_id` scoping from day one; avoids retrofitting | — Pending |
-| HTTP-only session cookie for auth | Simple, works uniformly across REST and WebSocket, fits local-first single-deployment model, no extra frontend library needed | — Pending |
+| Drop single-user constraint, add simple multi-user auth (all users = admin) | Personalization needs distinct profiles; user explicitly chose to move off single-user mode | Validated in Phase 1 |
+| Auth as its own foundation phase/branch (`Auth`), before Day 11 | All later phases (memory, profile, tasks, invariants) need `user_id` scoping from day one; avoids retrofitting | Validated in Phase 1 |
+| HTTP-only session cookie for auth | Simple, works uniformly across REST and WebSocket, fits local-first single-deployment model, no extra frontend library needed | Validated in Phase 1 |
 | Invariants enforced via prompt-injection + explicit response-conflict check | Balances realism (LLM can still err) with a real guardrail (dedicated conflict check), appropriate for course scope | — Pending |
 
 ## Evolution
@@ -102,4 +106,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-09-19 after initialization*
+*Last updated: 2026-09-20 after Phase 1 (Auth Foundation) completion*

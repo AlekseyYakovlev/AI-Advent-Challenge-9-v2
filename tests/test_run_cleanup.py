@@ -6,7 +6,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import psutil
 
@@ -84,12 +84,16 @@ def test_cleanup_port_ignores_non_python() -> None:
 
 
 def test_run_py_no_asyncio_run_error() -> None:
-    """run.main must not wrap uvicorn in asyncio.run()."""
+    """run.main must not wrap uvicorn.run itself in asyncio.run()."""
     source = (REPO_ROOT / "run.py").read_text(encoding="utf-8")
-    assert "asyncio.run(" not in source
+    assert "asyncio.run(uvicorn.run" not in source
     assert not inspect.iscoroutinefunction(main)
 
-    with patch("run.cleanup_port"), patch("run.uvicorn.run") as mock_run:
+    with patch("run.cleanup_port"), patch(
+        "run.bootstrap_admin_if_needed",
+        new_callable=AsyncMock,
+        return_value=None,
+    ), patch("run.uvicorn.run") as mock_run:
         main()
     mock_run.assert_called_once()
 
