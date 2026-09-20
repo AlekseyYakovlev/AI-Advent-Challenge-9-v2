@@ -133,7 +133,24 @@ Plans:
   4. A task can be paused at any state and resumed later without the user re-explaining context
   5. UI shows the current task, its state, and the history of its state changes
 
-**Plans**: TBD
+**Plans**: 4 plans (4 waves)
+Plans:
+**Wave 1**
+
+- [ ] 04-01-PLAN.md — Task/TaskTransition tables, agent/tasks.py CRUD, create_task tool, GET /chats/{id}/tasks, Задачи sidebar panel, task_writes on the done frame (TASK-01, TASK-02, TASK-03, TASK-05)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 04-02-PLAN.md — LlmTaskState + transition_task tool with the task_id ownership guard, per-task history timeline in the panel, Task/TaskTransition cascade coverage (TASK-01, TASK-05)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 04-03-PLAN.md — pause_task/resume_task tools plus lock-protected POST /tasks/{id}/pause|resume|cancel and the Пауза/Продолжить/Отменить controls (TASK-04, TASK-05)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 04-04-PLAN.md — list_open_tasks injection into build_system_prompt (resume without re-explaining) and the Day 13 acceptance demo (TASK-01..TASK-05)
+
 **UI hint**: yes
 
 ### Phase 5: Invariants (Day 14)
@@ -177,10 +194,10 @@ Plans:
 | 1. Auth Foundation | 5/5 | Complete   | 2026-09-20 |
 | 2. Memory (Day 11) | 5/5 | Complete   | 2026-09-20 |
 | 3. Personalization (Day 12) | 3/3 | Complete   | 2026-09-20 |
-| 4. Task State Machine (Day 13) | 0/? | Not started | - |
+| 4. Task State Machine (Day 13) | 0/4 | Planned | - |
 | 5. Invariants (Day 14) | 0/? | Not started | - |
 | 6. Controlled Transitions (Day 15) | 0/? | Not started | - |
 
 ---
 *Roadmap created: 2026-09-19*
-*Last updated: 2026-09-20 — Phase 3 planned (3 plans, 3 waves)*
+*Last updated: 2026-09-20 — Phase 4 planned (4 plans, 4 waves)*
