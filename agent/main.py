@@ -16,6 +16,9 @@ from agent.dependencies import get_current_user
 from agent.schemas import (
     BranchRequest,
     ChatCreate,
+    ChatInvariantCreate,
+    ChatInvariantResponse,
+    ChatInvariantUpdate,
     ChatMemoryResponse,
     ChatResponse,
     CreateUserRequest,
@@ -53,6 +56,7 @@ from shared.database import engine, get_session, init_db
 from shared.logger import get_logger
 from shared.models import (
     Chat,
+    ChatInvariant,
     ContextStrategy,
     GlobalInvariant,
     Message,
@@ -119,6 +123,24 @@ async def _get_task_or_404(
     return task
 
 
+async def _get_chat_invariant_or_404(
+    session: AsyncSession,
+    chat_id: int,
+    invariant_id: int,
+) -> ChatInvariant:
+    """Load a per-chat invariant belonging to chat_id or raise HTTP 404 (never 403)."""
+    invariant = await invariants.get_chat_invariant(session, invariant_id)
+    if invariant is None or invariant.chat_id != chat_id:
+        logger.warning(
+            "invariant_access_denied", chat_id=chat_id, invariant_id=invariant_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Invariant {invariant_id} not found",
+        )
+    return invariant
+
+
 async def _resolve_settings(
     session: AsyncSession,
     chat_id: int | None,
@@ -178,6 +200,27 @@ def _global_invariant_to_response(row: GlobalInvariant) -> GlobalInvariantRespon
         id=row.id,
         title=row.title,
         rule_text=row.rule_text,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+async def _chat_invariant_to_response(
+    session: AsyncSession,
+    row: ChatInvariant,
+) -> ChatInvariantResponse:
+    """Map a ChatInvariant ORM row to the API response schema, resolving overrides_title."""
+    overrides_title: str | None = None
+    if row.overrides_id is not None:
+        overridden = await invariants.get_global(session, row.overrides_id)
+        overrides_title = overridden.title if overridden is not None else None
+    return ChatInvariantResponse(
+        id=row.id,
+        chat_id=row.chat_id,
+        title=row.title,
+        rule_text=row.rule_text,
+        overrides_id=row.overrides_id,
+        overrides_title=overrides_title,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -520,6 +563,89 @@ async def get_chat_tasks(
     return [
         _task_to_response(row, await tasks.list_transitions(session, row.id)) for row in rows
     ]
+
+
+@app.get(
+    "/api/v1/chats/{chat_id}/invariants",
+    response_model=list[ChatInvariantResponse],
+)
+async def get_chat_invariants(
+    chat_id: int,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> list[ChatInvariantResponse]:
+    """Return this chat's per-chat invariants (ownership-checked, D-05)."""
+    await _get_chat_or_404(session, chat_id, current_user.id)
+    rows = await invariants.list_chat_invariants(session, chat_id)
+    return [await _chat_invariant_to_response(session, row) for row in rows]
+
+
+@app.post(
+    "/api/v1/chats/{chat_id}/invariants",
+    response_model=ChatInvariantResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_chat_invariant_endpoint(
+    chat_id: int,
+    body: ChatInvariantCreate,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> ChatInvariantResponse:
+    """Create a per-chat invariant, optionally overriding an existing global one (D-05)."""
+    await _get_chat_or_404(session, chat_id, current_user.id)
+    if body.overrides_id is not None:
+        global_row = await invariants.get_global(session, body.overrides_id)
+        if global_row is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Invariant {body.overrides_id} not found",
+            )
+    row = await invariants.create_chat_invariant(
+        session, current_user.id, chat_id, body.title, body.rule_text, body.overrides_id,
+    )
+    return await _chat_invariant_to_response(session, row)
+
+
+@app.put(
+    "/api/v1/chats/{chat_id}/invariants/{invariant_id}",
+    response_model=ChatInvariantResponse,
+)
+async def update_chat_invariant_endpoint(
+    chat_id: int,
+    invariant_id: int,
+    body: ChatInvariantUpdate,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> ChatInvariantResponse:
+    """Update a per-chat invariant (ownership-checked, D-05)."""
+    await _get_chat_or_404(session, chat_id, current_user.id)
+    await _get_chat_invariant_or_404(session, chat_id, invariant_id)
+    updates = body.model_dump(exclude_unset=True)
+    if updates.get("overrides_id") is not None:
+        global_row = await invariants.get_global(session, updates["overrides_id"])
+        if global_row is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Invariant {updates['overrides_id']} not found",
+            )
+    row = await invariants.update_chat_invariant(session, invariant_id, **updates)
+    return await _chat_invariant_to_response(session, row)
+
+
+@app.delete(
+    "/api/v1/chats/{chat_id}/invariants/{invariant_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_chat_invariant_endpoint(
+    chat_id: int,
+    invariant_id: int,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    """Delete a per-chat invariant (ownership-checked, D-05)."""
+    await _get_chat_or_404(session, chat_id, current_user.id)
+    await _get_chat_invariant_or_404(session, chat_id, invariant_id)
+    await invariants.delete_chat_invariant(session, invariant_id)
 
 
 @app.post("/api/v1/tasks/{task_id}/pause", response_model=TaskResponse)

@@ -339,3 +339,36 @@ class GlobalInvariantResponse(BaseModel):
     rule_text: str = Field(max_length=INVARIANT_RULE_MAX_LENGTH)
     created_at: datetime
     updated_at: datetime
+
+
+class ChatInvariantCreate(BaseModel):
+    """Request body for creating a per-chat invariant (D-01, D-05)."""
+
+    title: str = Field(min_length=1, max_length=INVARIANT_TITLE_MAX_LENGTH)
+    rule_text: str = Field(min_length=1, max_length=INVARIANT_RULE_MAX_LENGTH)
+    overrides_id: Optional[int] = None
+
+
+class ChatInvariantUpdate(BaseModel):
+    """Partial update for a per-chat invariant (D-04, full CRUD)."""
+
+    title: Optional[str] = Field(
+        default=None, min_length=1, max_length=INVARIANT_TITLE_MAX_LENGTH,
+    )
+    rule_text: Optional[str] = Field(
+        default=None, min_length=1, max_length=INVARIANT_RULE_MAX_LENGTH,
+    )
+    overrides_id: Optional[int] = None
+
+
+class ChatInvariantResponse(BaseModel):
+    """Serialized per-chat invariant, including the resolved title of its overridden global."""
+
+    id: int
+    chat_id: int
+    title: str = Field(max_length=INVARIANT_TITLE_MAX_LENGTH)
+    rule_text: str = Field(max_length=INVARIANT_RULE_MAX_LENGTH)
+    overrides_id: Optional[int] = None
+    overrides_title: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
