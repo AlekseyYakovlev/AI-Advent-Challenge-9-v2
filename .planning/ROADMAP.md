@@ -141,7 +141,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 04-02-PLAN.md — LlmTaskState + transition_task tool with the task_id ownership guard, per-task history timeline in the panel, Task/TaskTransition cascade coverage (TASK-01, TASK-05)
+- [x] 04-02-PLAN.md — LlmTaskState + transition_task tool with the task_id ownership guard, per-task history timeline in the panel, Task/TaskTransition cascade coverage (TASK-01, TASK-05)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -194,7 +194,7 @@ Plans:
 | 1. Auth Foundation | 5/5 | Complete   | 2026-09-20 |
 | 2. Memory (Day 11) | 5/5 | Complete   | 2026-09-20 |
 | 3. Personalization (Day 12) | 3/3 | Complete   | 2026-09-20 |
-| 4. Task State Machine (Day 13) | 1/4 | In Progress|  |
+| 4. Task State Machine (Day 13) | 2/4 | In Progress|  |
 | 5. Invariants (Day 14) | 0/? | Not started | - |
 | 6. Controlled Transitions (Day 15) | 0/? | Not started | - |
 
