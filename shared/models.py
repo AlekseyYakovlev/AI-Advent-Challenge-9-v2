@@ -205,6 +205,20 @@ class Profile(SQLModel, table=True):
     )
 
 
+class GlobalInvariant(SQLModel, table=True):
+    """App-wide ground rule shared by every account (D-02 — deliberately NOT user_id-scoped)."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    title: str = Field(max_length=200)
+    rule_text: str = Field(max_length=2000)
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+    )
+
+
 class TaskState(str, Enum):
     """Lifecycle state of a task (TASK-01)."""
 
