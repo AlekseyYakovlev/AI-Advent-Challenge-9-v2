@@ -76,3 +76,4 @@ None — `transition_task` is wired end to end from LLM tool call through to the
 - FOUND commit `353ad89` (test: RED phase — failing transition/cascade tests)
 - FOUND commit `3925ecf` (feat: GREEN phase — transition_task implementation)
 - FOUND commit `f53290f` (feat: Task 3 — history timeline rendering)
+- FOUND commit `128e0ad` (docs: this SUMMARY.md)
