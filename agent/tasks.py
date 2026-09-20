@@ -1,5 +1,7 @@
 """Thin CRUD layer owning all reads and writes to the task tables."""
 
+from datetime import datetime, timezone
+
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -7,6 +9,10 @@ from shared.logger import get_logger
 from shared.models import Task, TaskState, TaskTransition
 
 logger = get_logger(__name__)
+
+
+class TaskNotFoundError(Exception):
+    """Raised when a task_id does not resolve to a row owned by the calling chat/user."""
 
 
 async def create_task(
@@ -57,3 +63,59 @@ async def list_transitions(session: AsyncSession, task_id: int) -> list[TaskTran
         .order_by(TaskTransition.created_at, TaskTransition.id),
     )
     return list(result.all())
+
+
+async def _get_owned_task(
+    session: AsyncSession,
+    user_id: int,
+    chat_id: int,
+    task_id: int,
+) -> Task:
+    """Load a task owned by user_id/chat_id or raise TaskNotFoundError.
+
+    Mitigates the task_id IDOR gap: agent/tools.py::_SCOPE_KEYS only guards
+    chat_id/user_id keys in the raw tool arguments and does nothing for a
+    legitimate-looking task_id pointing at another chat's row.
+    """
+    task = await session.get(Task, task_id)
+    if task is None or task.chat_id != chat_id or task.user_id != user_id:
+        logger.warning("task_access_denied", task_id=task_id, chat_id=chat_id, user_id=user_id)
+        raise TaskNotFoundError(f"Task {task_id} not found")
+    return task
+
+
+async def transition_task(
+    session: AsyncSession,
+    user_id: int,
+    chat_id: int,
+    task_id: int,
+    new_state: TaskState,
+    note: str = "",
+) -> Task:
+    """Move an owned task to a new lifecycle state and append one history row.
+
+    Does not validate that previous_state -> new_state is a legal edge --
+    transition-graph legality enforcement is Phase 6's job (TRANS-01).
+    """
+    task = await _get_owned_task(session, user_id, chat_id, task_id)
+    previous_state = task.state
+    task.state = new_state
+    task.updated_at = datetime.now(timezone.utc)
+    session.add(task)
+    session.add(
+        TaskTransition(task_id=task.id, from_state=previous_state, to_state=new_state, note=note),
+    )
+    try:
+        await session.commit()
+        await session.refresh(task)
+    except Exception:
+        await session.rollback()
+        raise
+    logger.info(
+        "task_transitioned",
+        task_id=task.id,
+        chat_id=chat_id,
+        from_state=previous_state.value,
+        to_state=new_state.value,
+    )
+    return task

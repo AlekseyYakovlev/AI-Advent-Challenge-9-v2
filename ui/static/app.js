@@ -332,6 +332,35 @@ async function loadChatTasks(chatId) {
     }
 }
 
+function formatTaskTimestamp(isoString) {
+    return new Date(isoString).toLocaleString('ru-RU', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+    });
+}
+
+function renderTaskHistory(container, history) {
+    container.replaceChildren();
+    history.forEach((entry) => {
+        const fromLabel = entry.from_state ? TASK_STATE_LABELS[entry.from_state] : 'создана';
+        const line = document.createElement('div');
+        line.className = 'text-slate-500';
+        line.textContent =
+            `${fromLabel} → ${TASK_STATE_LABELS[entry.to_state]} · ${formatTaskTimestamp(entry.created_at)}`;
+        container.appendChild(line);
+
+        if (entry.note) {
+            const noteEl = document.createElement('div');
+            noteEl.className = 'text-slate-600 pl-2';
+            noteEl.textContent = entry.note;
+            container.appendChild(noteEl);
+        }
+    });
+}
+
 function renderTaskPanel() {
     const tasks = state.lastTasks;
     if (tasks === null) return;
@@ -384,6 +413,11 @@ function renderTaskPanel() {
         goalEl.textContent = task.goal;
         goalEl.title = task.goal;
         card.appendChild(goalEl);
+
+        const historyEl = document.createElement('div');
+        historyEl.className = 'mt-1 space-y-0.5';
+        renderTaskHistory(historyEl, task.history || []);
+        card.appendChild(historyEl);
 
         listEl.appendChild(card);
     });
