@@ -2,11 +2,13 @@
 
 import pytest
 from httpx import AsyncClient
+from sqlmodel import select
 
 from agent import profile
-from agent.context_engine import build_system_prompt
+from agent.context_engine import RECENT_MESSAGE_COUNT, build_llm_context, build_system_prompt
+from agent.llm_client import llm_client
 from shared.database import async_session_factory
-from shared.models import Chat, Settings
+from shared.models import Chat, ContextStrategy, Message, Settings
 
 BASE_PROMPT = "Base prompt"
 
@@ -21,6 +23,29 @@ async def _create_chat(user_id: int | None, title: str = "Profile chat") -> int:
         session.add(Settings(chat_id=chat.id, system_prompt=BASE_PROMPT))
         await session.commit()
         return chat.id
+
+
+async def _seed_alternating_messages(session, chat_id: int, count: int) -> None:
+    """Append `count` alternating user/assistant messages, advancing the chat's active branch."""
+    chat = await session.get(Chat, chat_id)
+    assert chat is not None
+    parent_id = chat.current_leaf_message_id
+    for i in range(count):
+        role = "user" if i % 2 == 0 else "assistant"
+        content = f"message {i}" + " word" * 50
+        msg = Message(
+            chat_id=chat_id,
+            parent_id=parent_id,
+            role=role,
+            content=content,
+            token_count=llm_client.count_tokens(content),
+        )
+        session.add(msg)
+        await session.flush()
+        parent_id = msg.id
+    chat.current_leaf_message_id = parent_id
+    session.add(chat)
+    await session.commit()
 
 
 @pytest.mark.asyncio
@@ -130,3 +155,65 @@ async def test_unowned_chat_does_not_crash() -> None:
         prompt = await build_system_prompt(session, chat_id)
         assert "User's stated preferences" not in prompt
         assert prompt == BASE_PROMPT
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("strategy", list(ContextStrategy))
+async def test_profile_present_under_every_strategy(
+    authenticated_client: AsyncClient,
+    strategy: ContextStrategy,
+) -> None:
+    """build_llm_context's outbound system message carries the profile under every ContextStrategy."""
+    user_id = authenticated_client.seeded_user_id
+    marker = f"MARKER_{strategy.value.upper()}"
+    chat_id = await _create_chat(user_id)
+
+    async with async_session_factory() as session:
+        result = await session.exec(select(Settings).where(Settings.chat_id == chat_id))
+        settings_row = result.one()
+        settings_row.strategy = strategy
+        settings_row.context_length = 131072
+        session.add(settings_row)
+        await session.commit()
+
+        await profile.update_profile(session, user_id, style=marker)
+        await _seed_alternating_messages(session, chat_id, 25)
+
+        context = await build_llm_context(session, chat_id, "test-model")
+
+    assert context[0]["role"] == "system"
+    assert "User's stated preferences" in context[0]["content"]
+    assert marker in context[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_profile_present_on_first_and_late_turns(
+    authenticated_client: AsyncClient,
+) -> None:
+    """The profile survives an empty chat and a chat compressed well past RECENT_MESSAGE_COUNT."""
+    user_id = authenticated_client.seeded_user_id
+    marker = "MARKER_TURN_COVERAGE"
+    chat_id = await _create_chat(user_id)
+
+    async with async_session_factory() as session:
+        result = await session.exec(select(Settings).where(Settings.chat_id == chat_id))
+        settings_row = result.one()
+        settings_row.strategy = ContextStrategy.SLIDING_WINDOW
+        settings_row.context_length = 512
+        session.add(settings_row)
+        await session.commit()
+
+        await profile.update_profile(session, user_id, style=marker)
+
+        empty_context = await build_llm_context(session, chat_id, "test-model")
+        assert empty_context[0]["role"] == "system"
+        assert marker in empty_context[0]["content"]
+
+        await _seed_alternating_messages(session, chat_id, 30)
+
+        late_context = await build_llm_context(session, chat_id, "test-model")
+
+    assert late_context[0]["role"] == "system"
+    assert "User's stated preferences" in late_context[0]["content"]
+    assert marker in late_context[0]["content"]
+    assert len(late_context) - 1 == RECENT_MESSAGE_COUNT
