@@ -8,8 +8,14 @@ from pydantic import BaseModel, ValidationError
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from agent import memory, tasks
-from agent.schemas import CreateTaskArgs, SaveLongTermMemoryArgs, SaveWorkingMemoryArgs
+from agent.schemas import (
+    CreateTaskArgs,
+    SaveLongTermMemoryArgs,
+    SaveWorkingMemoryArgs,
+    TransitionTaskArgs,
+)
 from shared.logger import get_logger
+from shared.models import TaskState
 
 logger = get_logger(__name__)
 
@@ -207,3 +213,32 @@ async def _create_task(
         session, user_id, chat_id, args["title"], args["description"], args["goal"],
     )
     return {"status": "created", "id": row.id, "title": row.title, "state": row.state.value}
+
+
+@register_tool(
+    "transition_task",
+    TransitionTaskArgs,
+    "Move an EXISTING task to a new lifecycle state. Requires the explicit numeric task_id "
+    "of a task in this chat -- there is no implicit 'current task'. Valid states are "
+    "planning, execution, validation, done. Cannot be used to cancel a task -- cancellation "
+    "is a manual user action.",
+)
+async def _transition_task(
+    session: AsyncSession,
+    user_id: int,
+    chat_id: int,
+    args: dict[str, Any],
+) -> dict[str, Any]:
+    """Transition a task owned by this chat/user; returns an error dict otherwise."""
+    try:
+        row = await tasks.transition_task(
+            session,
+            user_id,
+            chat_id,
+            args["task_id"],
+            TaskState(args["new_state"]),
+            args.get("note", ""),
+        )
+    except tasks.TaskNotFoundError:
+        return {"status": "error", "error": f"task {args['task_id']} not found in this chat"}
+    return {"status": "transitioned", "id": row.id, "title": row.title, "state": row.state.value}

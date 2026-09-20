@@ -239,6 +239,36 @@ class CreateTaskArgs(BaseModel):
     )
 
 
+class LlmTaskState(str, Enum):
+    """States the LLM may transition a task into via transition_task.
+
+    Deliberately omits CANCELLED (D-07): cancellation is a manual-UI-only
+    action, never an LLM tool.
+    """
+
+    PLANNING = "planning"
+    EXECUTION = "execution"
+    VALIDATION = "validation"
+    DONE = "done"
+
+
+class TransitionTaskArgs(BaseModel):
+    """Tool-call arguments for transition_task."""
+
+    task_id: int = Field(
+        gt=0,
+        description="The numeric id of an existing task in this chat",
+    )
+    new_state: LlmTaskState = Field(
+        description="The lifecycle state to move the task into",
+    )
+    note: str = Field(
+        default="",
+        max_length=TASK_NOTE_MAX_LENGTH,
+        description="Optional justification or context for this transition",
+    )
+
+
 class TaskTransitionResponse(BaseModel):
     """Serialized task state-change history entry."""
 
