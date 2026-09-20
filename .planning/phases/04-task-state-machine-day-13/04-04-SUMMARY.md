@@ -76,7 +76,15 @@ None — Tasks 1-2 followed the plan's `<action>` verbatim (query shape, injecti
 
 ## Deviations from Plan
 
-None — plan executed exactly as written for Tasks 1 and 2. No auto-fixes, no architectural questions, no scope changes.
+None for Tasks 1-2 — executed exactly as written. One deviation surfaced during the Task 3 acceptance demo (see below).
+
+### Bug found and fixed during Task 3's acceptance demo
+
+The developer's first pass through the checklist found: after the LLM created a task via `create_task`, the chat UI hung on the typing indicator forever; only a page reload (F5) revealed the completed reply and the new task card.
+
+Root cause (confirmed via `logs/agent.log`, which is where the Agent subprocess's structlog output actually goes — `ui/supervisor.py` redirects its stdout/stderr there, not to the `python run.py` console): `agent/ws.py::_handle_chat_message` reused the function's `payload: MessagePayload` parameter as the loop variable while building `task_writes` (`payload = json.loads(result["content"])`), shadowing it for the rest of the function. The later `extract_and_update_facts(session, chat_id, payload.content, payload.model)` call then read `.content`/`.model` off that plain `dict` and raised `AttributeError: 'dict' object has no attribute 'content'` — after the task and assistant message were already committed to the DB, but before the WS `done` frame was sent. The dead ASGI connection was invisible to the user; the frontend's auto-reconnect opened a fresh socket ~12s later with no way to recover the orphaned turn. This fired on every `create_task`/`transition_task`/`pause_task`/`resume_task` call, deterministically, not intermittently — confirmed by both task-creation turns in the session hitting the identical traceback.
+
+Fix: renamed the shadowing loop variable to `task_result` (commit `413b805`). Added `tests/test_task_ws.py::test_create_task_turn_completes_with_done_frame`, a WS-level regression test (mirroring `test_memory_ws.py`'s respx-mocked pattern) asserting a `create_task` turn always ends in exactly one `done` frame; verified it fails against the pre-fix code (`AttributeError` surfaces, no `done` frame sent) and passes against the fix. Full suite: 232 passed after the fix.
 
 ## Verification Evidence (Tasks 1-2 only)
 
