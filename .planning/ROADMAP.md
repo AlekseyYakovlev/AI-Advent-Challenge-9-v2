@@ -110,7 +110,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 03-02-PLAN.md — #profile-panel sidebar block and loadProfile/renderProfilePanel/saveProfile wiring (PERS-03)
+- [x] 03-02-PLAN.md — #profile-panel sidebar block and loadProfile/renderProfilePanel/saveProfile wiring (PERS-03)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -176,7 +176,7 @@ Plans:
 |-------|----------------|--------|-----------|
 | 1. Auth Foundation | 5/5 | Complete   | 2026-09-20 |
 | 2. Memory (Day 11) | 5/5 | Complete   | 2026-09-20 |
-| 3. Personalization (Day 12) | 1/3 | In Progress|  |
+| 3. Personalization (Day 12) | 2/3 | In Progress|  |
 | 4. Task State Machine (Day 13) | 0/? | Not started | - |
 | 5. Invariants (Day 14) | 0/? | Not started | - |
 | 6. Controlled Transitions (Day 15) | 0/? | Not started | - |
