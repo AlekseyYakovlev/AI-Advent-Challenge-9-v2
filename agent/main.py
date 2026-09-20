@@ -8,6 +8,7 @@ from typing import Any
 import httpx
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Response, WebSocket, status
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -16,6 +17,7 @@ from agent.schemas import (
     BranchRequest,
     ChatCreate,
     ChatResponse,
+    CreateUserRequest,
     HealthResponse,
     LoginRequest,
     MessageResponse,
@@ -33,6 +35,7 @@ from shared.auth import (
     SESSION_COOKIE_NAME,
     SESSION_TTL_DAYS,
     generate_session_token,
+    hash_password,
     hash_session_token,
     verify_password,
 )
@@ -272,6 +275,43 @@ async def logout(
 async def get_me(current_user: User = Depends(get_current_user)) -> UserResponse:
     """Return the currently authenticated user."""
     return UserResponse(id=current_user.id, username=current_user.username)
+
+
+@app.post(
+    "/api/v1/auth/users",
+    response_model=UserResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_user(
+    body: CreateUserRequest,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> UserResponse:
+    """Create an additional equal-privilege account (AUTH-02); no public signup route exists (D-06)."""
+    result = await session.exec(select(User).where(User.username == body.username))
+    if result.first() is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Пользователь с таким именем уже существует",
+        )
+
+    row = User(username=body.username, password_hash=hash_password(body.password))
+    session.add(row)
+    try:
+        await session.commit()
+        await session.refresh(row)
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Пользователь с таким именем уже существует",
+        ) from None
+    except Exception:
+        await session.rollback()
+        raise
+
+    logger.info("user_created", username=body.username, created_by=current_user.id)
+    return UserResponse(id=row.id, username=row.username)
 
 
 @app.get("/api/v1/chats", response_model=list[ChatResponse])

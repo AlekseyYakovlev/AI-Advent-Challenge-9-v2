@@ -738,6 +738,35 @@ function closeSettingsModal() {
     $('settings-modal').classList.add('hidden');
 }
 
+function openAddUserModal() {
+    $('add-user-username').value = '';
+    $('add-user-password').value = '';
+    $('add-user-error').textContent = '';
+    $('add-user-modal').classList.remove('hidden');
+    $('add-user-username').focus();
+}
+
+function closeAddUserModal() {
+    $('add-user-modal').classList.add('hidden');
+}
+
+async function createUser(event) {
+    event.preventDefault();
+    const username = $('add-user-username').value;
+    const password = $('add-user-password').value;
+    $('add-user-error').textContent = '';
+    try {
+        await apiFetch('/api/v1/auth/users', {
+            method: 'POST',
+            body: JSON.stringify({ username, password }),
+        });
+        closeAddUserModal();
+        showToast(`Пользователь ${username} создан`, 'success');
+    } catch (err) {
+        $('add-user-error').textContent = err.message;
+    }
+}
+
 async function saveSettings(event) {
     event.preventDefault();
     const perChat = $('settings-per-chat').checked;
@@ -790,6 +819,15 @@ function bindEvents() {
     $('settings-form').addEventListener('submit', (e) => {
         saveSettings(e).catch((err) => showToast(err.message, 'error'));
     });
+    $('btn-users').addEventListener('click', openAddUserModal);
+    $('btn-close-add-user').addEventListener('click', closeAddUserModal);
+    $('btn-cancel-add-user').addEventListener('click', closeAddUserModal);
+    $('add-user-form').addEventListener('submit', (e) => {
+        createUser(e).catch((err) => showToast(err.message, 'error'));
+    });
+    $('add-user-modal').addEventListener('click', (e) => {
+        if (e.target === $('add-user-modal')) closeAddUserModal();
+    });
     $('settings-temperature').addEventListener('input', (e) => {
         $('temperature-value').textContent = e.target.value;
     });
@@ -825,7 +863,10 @@ function bindEvents() {
         if (e.target === $('settings-modal')) closeSettingsModal();
     });
     document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') closeSettingsModal();
+        if (e.key === 'Escape') {
+            closeSettingsModal();
+            closeAddUserModal();
+        }
     });
     $('chat-list').addEventListener('contextmenu', (e) => {
         const btn = e.target.closest('[data-chat-id]');

@@ -137,3 +137,10 @@ class UserResponse(BaseModel):
 
     id: int
     username: str = Field(max_length=USERNAME_MAX_LENGTH)
+
+
+class CreateUserRequest(BaseModel):
+    """Request body for creating an additional user account (D-06)."""
+
+    username: str = Field(min_length=1, max_length=USERNAME_MAX_LENGTH)
+    password: str = Field(min_length=1, max_length=PASSWORD_MAX_LENGTH)
