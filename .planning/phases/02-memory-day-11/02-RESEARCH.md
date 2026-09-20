@@ -548,17 +548,21 @@ This is the empirical basis for treating LM Studio + `qwen/qwen3.5-9b` as reliab
 | A2 | No `category` column is needed on `LongTermMemory` for this phase (deferred to Phase 3 if needed) | User Constraints / Claude's Discretion | Low — adding a nullable column later via `ALTER TABLE` (same idiom as `migrate_add_context_length`) is a trivial, additive migration; only risk is minor rework of Phase 3's injection code if Phase 3 assumed the column already existed |
 | A3 | Read-injection of working/long-term memory into the system prompt (vs. display-only) is the right call for this phase | User Constraints / Claude's Discretion, Architecture Patterns / Pattern 3 | Low-medium — if wrong, easy to revert (remove the two injection blocks from `build_system_prompt`); the two-tool discrimination test's own prompt shows the model reasoning correctly without needing memory injected back yet, so injection is additive value, not a correctness dependency for MEM-03 itself |
 
-## Open Questions
+## Open Questions (RESOLVED)
+
+> Both questions below were settled during phase planning. Each carries an inline **RESOLVED** note naming the plan that settled it; the question text is kept verbatim as the record of what was unknown at research time.
 
 1. **How does `ui/static/app.js`'s model selector route a chosen DeepSeek model name to DeepSeek's actual base URL, given `llm_client` is a single module-level instance constructed with LM Studio's base URL?**
    - What we know: `agent/llm_client.py` instantiates one global `llm_client = LLMClient(base_url=settings.LM_STUDIO_BASE_URL, api_key=settings.DEEPSEEK_API_KEY)`. `payload.model` only changes the `"model"` field in the JSON body, not the HTTP target.
    - What's unclear: Whether there's a second `LLMClient` instance somewhere for DeepSeek that this research pass didn't locate (only `ws.py`, `main.py`, `context_engine.py`, `llm_client.py` were read in full), or whether backend-switching is in fact not yet implemented and both "backends" currently only work if you point `LM_STUDIO_BASE_URL` at whichever service you want.
    - Recommendation: The planner should grep the full `agent/` package for any second `LLMClient(...)` construction or a `DEEPSEEK_BASE_URL`-style config key before writing tasks that assume "switch to DeepSeek" is a one-line model-name change. This directly affects how confidently the demo can rely on the "default to DeepSeek if unreliable" fallback CONTEXT.md calls for.
+   - **RESOLVED (Plan 02-05):** Backend switching is in fact not implemented — `agent/` contains exactly one `LLMClient(...)` construction, built with `LM_STUDIO_BASE_URL`, so a chosen model name only changes the `"model"` body field and never the HTTP target. Plan 02-05 Task 2 verifies this with `grep -rn "LLMClient(" agent/` (expect exactly one match) and records the DeepSeek-routing limitation in `02-05-SUMMARY.md` as a measured fact. The MEM-03 demo therefore runs on LM Studio only; wiring a real DeepSeek base URL is explicitly out of scope for Phase 2.
 
 2. **Should `agent/llm_client.py::LMStudioClient`'s v0-vs-v1 endpoint bug (Pitfall 5) be fixed inside this phase, or tracked separately?**
    - What we know: It's real, verified, and currently blocks the app's own "Load Model" UI button from working against the installed LM Studio version.
    - What's unclear: Whether fixing it is in MEM-01..05's scope or belongs to a maintenance/bugfix task outside Week 3's phase structure.
    - Recommendation: Given the phase's own acceptance criteria implicitly require a loaded, tool-capable local model for a demo, recommend fixing it as a small, isolated task within this phase (2-line change: URL path + body field name) rather than deferring — but flag this explicitly for user/planner sign-off since it's outside the literal MEM-01..05 text.
+   - **RESOLVED (Plan 02-02):** Fixed in-phase, as recommended. Plan 02-02 is a dedicated Wave 1 plan that migrates `_load_model_locked`/`_unload_model_http` to `POST /api/v1/models/load` and `POST /api/v1/models/unload`, captures the returned `instance_id` at load and sends it at unload, and repoints the `respx` mocks in `tests/test_lm_studio_client.py` and `tests/test_model_switch_lock.py` to the v1 contract with a negative assertion that v0 is no longer called. Scoped under MEM-03 because the acceptance demo requires a loaded, `tool_use`-capable local model.
 
 ## Environment Availability
 
