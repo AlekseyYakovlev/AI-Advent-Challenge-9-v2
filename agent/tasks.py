@@ -55,6 +55,17 @@ async def list_tasks_for_chat(session: AsyncSession, chat_id: int) -> list[Task]
     return list(result.all())
 
 
+async def list_open_tasks(session: AsyncSession, chat_id: int) -> list[Task]:
+    """Return this chat's non-terminal tasks (paused ones included), oldest first."""
+    result = await session.exec(
+        select(Task)
+        .where(Task.chat_id == chat_id)
+        .where(Task.state.not_in([TaskState.DONE, TaskState.CANCELLED]))
+        .order_by(Task.created_at, Task.id),
+    )
+    return list(result.all())
+
+
 async def list_transitions(session: AsyncSession, task_id: int) -> list[TaskTransition]:
     """Return a task's state-change history, oldest first (D-11)."""
     result = await session.exec(

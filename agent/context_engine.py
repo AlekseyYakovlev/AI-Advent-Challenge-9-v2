@@ -8,7 +8,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from agent.llm_client import llm_client
-from agent import memory, profile
+from agent import memory, profile, tasks
 from shared.database import async_session_factory
 from shared.logger import get_logger
 from shared.models import Chat, ContextStrategy, Message, Profile, Settings
@@ -92,6 +92,17 @@ async def build_system_prompt(session: AsyncSession, chat_id: int) -> str:
                 "Long-term memory (persists across all your chats): "
                 + json.dumps({row.key: row.value for row in long_term}),
             )
+
+    open_tasks = await tasks.list_open_tasks(session, chat_id)
+    if open_tasks:
+        lines = []
+        for task in open_tasks:
+            pause_marker = " [ON PAUSE]" if task.is_paused else ""
+            lines.append(
+                f'- #{task.id} "{task.title}" (state={task.state.value}{pause_marker}): '
+                f"goal={task.goal!r}",
+            )
+        parts.append("Open tasks in this chat:\n" + "\n".join(lines))
 
     return "\n\n".join(parts)
 
