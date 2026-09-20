@@ -1,6 +1,7 @@
 """WebSocket chat endpoint and multi-tab broadcasting."""
 
 import asyncio
+import json
 import time
 from typing import Any
 
@@ -25,6 +26,7 @@ from agent.state import (
     ws_rate_limiter,
 )
 from agent.schemas import MessagePayload
+from agent.tools import build_tool_schemas, dispatch_tool_calls
 from shared.auth import SESSION_COOKIE_NAME
 from shared.database import async_session_factory
 from shared.logger import get_logger
@@ -194,21 +196,44 @@ async def _handle_chat_message(
             temperature = effective.temperature
             max_tokens = effective.max_tokens
 
+            if chat.user_id is not None:
+                tool_schemas = build_tool_schemas()
+            else:
+                tool_schemas = None
+                logger.warning("tools_disabled_unowned_chat", chat_id=chat_id)
+
             assistant_text = ""
+            pending_tool_calls: list[dict[str, Any]] = []
             stream_task = asyncio.current_task()
             active_streams[chat_id] = stream_task
 
             try:
-                async for token in llm_client.stream_chat(
-                    llm_messages,
-                    payload.model,
-                    temperature,
-                    max_tokens,
-                ):
-                    assistant_text += token
-                    await websocket.send_json(
-                        {"type": "token", "content": token},
-                    )
+                if tool_schemas:
+                    async for event in llm_client.stream_chat(
+                        llm_messages,
+                        payload.model,
+                        temperature,
+                        max_tokens,
+                        tools=tool_schemas,
+                    ):
+                        if event["type"] == "content":
+                            assistant_text += event["content"]
+                            await websocket.send_json(
+                                {"type": "token", "content": event["content"]},
+                            )
+                        elif event["type"] == "tool_calls":
+                            pending_tool_calls = event["tool_calls"]
+                else:
+                    async for token in llm_client.stream_chat(
+                        llm_messages,
+                        payload.model,
+                        temperature,
+                        max_tokens,
+                    ):
+                        assistant_text += token
+                        await websocket.send_json(
+                            {"type": "token", "content": token},
+                        )
             except Exception as exc:
                 logger.error(
                     "llm_stream_failed",
@@ -228,6 +253,79 @@ async def _handle_chat_message(
             finally:
                 active_streams.pop(chat_id, None)
 
+            memory_writes: list[dict[str, Any]] = []
+            if pending_tool_calls:
+                tool_results = await dispatch_tool_calls(
+                    session,
+                    chat.user_id,
+                    chat_id,
+                    pending_tool_calls,
+                )
+
+                llm_messages.append(
+                    {
+                        "role": "assistant",
+                        "content": assistant_text,
+                        "tool_calls": pending_tool_calls,
+                    },
+                )
+                for result in tool_results:
+                    llm_messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": result["tool_call_id"],
+                            "content": result["content"],
+                        },
+                    )
+
+                try:
+                    async for token in llm_client.stream_chat(
+                        llm_messages,
+                        payload.model,
+                        temperature,
+                        max_tokens,
+                    ):
+                        assistant_text += token
+                        await websocket.send_json(
+                            {"type": "token", "content": token},
+                        )
+                except Exception as exc:
+                    logger.error(
+                        "llm_stream_failed",
+                        chat_id=chat_id,
+                        error=str(exc),
+                    )
+                    await websocket.send_json(
+                        {
+                            "type": "error",
+                            "detail": f"LLM error: {str(exc)}",
+                            "code": "LLM_ERROR",
+                        },
+                    )
+                    await session.delete(user_msg)
+                    await session.commit()
+                    return
+
+                memory_writes = [
+                    r["write"] for r in tool_results if r["ok"] and r["write"] is not None
+                ]
+
+                for result in tool_results:
+                    if not result["ok"]:
+                        try:
+                            error_detail = json.loads(result["content"]).get(
+                                "error", result["content"],
+                            )
+                        except json.JSONDecodeError:
+                            error_detail = result["content"]
+                        await websocket.send_json(
+                            {
+                                "type": "error",
+                                "detail": error_detail,
+                                "code": "TOOL_ERROR",
+                            },
+                        )
+
             assistant_msg = await _persist_assistant_message(
                 session,
                 chat,
@@ -246,6 +344,7 @@ async def _handle_chat_message(
                     "type": "done",
                     "message_id": assistant_msg.id,
                     "stats": stats,
+                    "memory_writes": memory_writes,
                 },
             )
 
