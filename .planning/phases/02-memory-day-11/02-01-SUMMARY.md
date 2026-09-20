@@ -133,6 +133,16 @@ None - no external service configuration required. No new packages installed (pe
 - The storage substrate (`WorkingMemory`, `LongTermMemory`, `agent/memory.py`) is in place and tested for Plan 03/04's tool-call dispatcher (`agent/tools.py`) to write into via the same session/lock pattern already established in `agent/ws.py`.
 - No blockers. The GET endpoint and UI panel are read-only for now — Plan 03 wires the LLM tool calls (`save_working_memory`, `save_long_term_memory`) that will populate these tables during a real chat turn.
 
+## Self-Check: PASSED
+
+- FOUND: `agent/memory.py`
+- FOUND: `tests/test_memory.py`
+- FOUND: `tests/test_memory_api.py`
+- FOUND: `.planning/phases/02-memory-day-11/02-01-SUMMARY.md`
+- FOUND commit: `00d189d`
+- FOUND commit: `c62203e`
+- FOUND commit: `42dd32d`
+
 ---
 *Phase: 02-memory-day-11*
 *Completed: 2026-09-20*
