@@ -419,8 +419,78 @@ function renderTaskPanel() {
         renderTaskHistory(historyEl, task.history || []);
         card.appendChild(historyEl);
 
+        if (task.state !== 'done' && task.state !== 'cancelled') {
+            const actionsEl = document.createElement('div');
+            actionsEl.className = 'mt-1 flex gap-1';
+
+            if (task.is_paused) {
+                const resumeBtn = document.createElement('button');
+                resumeBtn.type = 'button';
+                resumeBtn.className =
+                    'rounded-lg bg-indigo-600 hover:bg-indigo-500 px-2 py-1 text-xs font-medium transition';
+                resumeBtn.textContent = 'Продолжить';
+                resumeBtn.addEventListener('click', () => {
+                    resumeTask(task.id).catch((err) => showToast(err.message, 'error'));
+                });
+                actionsEl.appendChild(resumeBtn);
+            } else {
+                const pauseBtn = document.createElement('button');
+                pauseBtn.type = 'button';
+                pauseBtn.className =
+                    'rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 px-2 py-1 text-xs font-medium transition';
+                pauseBtn.textContent = 'Пауза';
+                pauseBtn.addEventListener('click', () => {
+                    pauseTask(task.id).catch((err) => showToast(err.message, 'error'));
+                });
+                actionsEl.appendChild(pauseBtn);
+            }
+
+            const cancelBtn = document.createElement('button');
+            cancelBtn.type = 'button';
+            cancelBtn.className =
+                'rounded-lg bg-red-700 hover:bg-red-600 px-2 py-1 text-xs font-medium transition';
+            cancelBtn.textContent = 'Отменить';
+            cancelBtn.addEventListener('click', () => {
+                cancelTask(task.id).catch((err) => showToast(err.message, 'error'));
+            });
+            actionsEl.appendChild(cancelBtn);
+
+            card.appendChild(actionsEl);
+        }
+
         listEl.appendChild(card);
     });
+}
+
+async function pauseTask(taskId) {
+    try {
+        await apiFetch(`/api/v1/tasks/${taskId}/pause`, { method: 'POST' });
+        await loadChatTasks(state.currentChatId);
+        showToast('Задача поставлена на паузу', 'success');
+    } catch (err) {
+        showToast('Не удалось поставить задачу на паузу. Проверьте соединение и попробуйте снова.', 'error');
+    }
+}
+
+async function resumeTask(taskId) {
+    try {
+        await apiFetch(`/api/v1/tasks/${taskId}/resume`, { method: 'POST' });
+        await loadChatTasks(state.currentChatId);
+        showToast('Задача возобновлена', 'success');
+    } catch (err) {
+        showToast('Не удалось возобновить задачу. Проверьте соединение и попробуйте снова.', 'error');
+    }
+}
+
+async function cancelTask(taskId) {
+    if (!confirm('Отменить эту задачу? Это действие нельзя отменить.')) return;
+    try {
+        await apiFetch(`/api/v1/tasks/${taskId}/cancel`, { method: 'POST' });
+        await loadChatTasks(state.currentChatId);
+        showToast('Задача отменена', 'success');
+    } catch (err) {
+        showToast('Не удалось отменить задачу. Проверьте соединение и попробуйте снова.', 'error');
+    }
 }
 
 async function loadProfile() {
