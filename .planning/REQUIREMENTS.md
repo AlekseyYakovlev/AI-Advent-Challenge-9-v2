@@ -8,9 +8,9 @@
 ### Auth
 
 - [x] **AUTH-01**: User can log in with username/password (simple auth, no external identity provider)
-- [ ] **AUTH-02**: Every user has the same "admin" role and can create additional user accounts
+- [x] **AUTH-02**: Every user has the same "admin" role and can create additional user accounts
 - [x] **AUTH-03**: Session is maintained via an HTTP-only session cookie, valid for both REST and WebSocket
-- [ ] **AUTH-04**: All existing chats/settings/memory become scoped to the owning user (`user_id`)
+- [x] **AUTH-04**: All existing chats/settings/memory become scoped to the owning user (`user_id`)
 
 ### Memory
 
@@ -89,9 +89,9 @@ Which phases cover which requirements. Populated during roadmap creation.
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | AUTH-01 | Phase 1 | Complete |
-| AUTH-02 | Phase 1 | Pending |
+| AUTH-02 | Phase 1 | Complete |
 | AUTH-03 | Phase 1 | Complete |
-| AUTH-04 | Phase 1 | Pending |
+| AUTH-04 | Phase 1 | Complete |
 | MEM-01 | Phase 2 | Pending |
 | MEM-02 | Phase 2 | Pending |
 | MEM-03 | Phase 2 | Pending |

@@ -8,7 +8,7 @@
 
 ## Phases
 
-- [ ] **Phase 1: Auth Foundation** — Users can log in, all accounts are equal "admin," and all data becomes scoped to the owning user
+- [x] **Phase 1: Auth Foundation** — Users can log in, all accounts are equal "admin," and all data becomes scoped to the owning user (completed 2026-09-20)
 - [ ] **Phase 2: Memory (Day 11)** — Agent has three explicit, inspectable memory layers populated only via deliberate LLM tool calls
 - [ ] **Phase 3: Personalization (Day 12)** — Each user's profile is injected into every request and observably shapes responses
 - [ ] **Phase 4: Task State Machine (Day 13)** — Chats can contain multiple LLM-created tasks tracked through an explicit lifecycle
@@ -51,7 +51,7 @@ Plans:
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
-- [ ] 01-05-PLAN.md — POST /api/v1/auth/users and the "Add user" modal (AUTH-02)
+- [x] 01-05-PLAN.md — POST /api/v1/auth/users and the "Add user" modal (AUTH-02)
 
 ### Phase 2: Memory (Day 11)
 
@@ -143,7 +143,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Auth Foundation | 4/5 | In Progress|  |
+| 1. Auth Foundation | 5/5 | Complete   | 2026-09-20 |
 | 2. Memory (Day 11) | 0/? | Not started | - |
 | 3. Personalization (Day 12) | 0/? | Not started | - |
 | 4. Task State Machine (Day 13) | 0/? | Not started | - |
