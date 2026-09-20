@@ -71,8 +71,8 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 02-01-PLAN.md — WorkingMemory/LongTermMemory tables, agent/memory.py CRUD, GET /chats/{id}/memory, sidebar Память panel (MEM-01, MEM-02, MEM-04, MEM-05)
-- [ ] 02-02-PLAN.md — LM Studio model load/unload migrated to the working v1 control endpoints, unblocking the tool-capable-model demo path (MEM-03)
+- [x] 02-01-PLAN.md — WorkingMemory/LongTermMemory tables, agent/memory.py CRUD, GET /chats/{id}/memory, sidebar Память panel (MEM-01, MEM-02, MEM-04, MEM-05)
+- [x] 02-02-PLAN.md — LM Studio model load/unload migrated to the working v1 control endpoints, unblocking the tool-capable-model demo path (MEM-03)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -162,7 +162,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Auth Foundation | 5/5 | Complete   | 2026-09-20 |
-| 2. Memory (Day 11) | 0/5 | Planned | - |
+| 2. Memory (Day 11) | 2/5 | In Progress|  |
 | 3. Personalization (Day 12) | 0/? | Not started | - |
 | 4. Task State Machine (Day 13) | 0/? | Not started | - |
 | 5. Invariants (Day 14) | 0/? | Not started | - |
