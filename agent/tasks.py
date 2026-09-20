@@ -119,3 +119,68 @@ async def transition_task(
         to_state=new_state.value,
     )
     return task
+
+
+async def set_paused(
+    session: AsyncSession,
+    user_id: int,
+    chat_id: int,
+    task_id: int,
+    is_paused: bool,
+) -> Task:
+    """Toggle an owned task's is_paused flag without touching its lifecycle state.
+
+    Writes no TaskTransition row: is_paused is orthogonal to state (D-04),
+    not a fifth enum value, so pausing/resuming is not a history event.
+    """
+    task = await _get_owned_task(session, user_id, chat_id, task_id)
+    task.is_paused = is_paused
+    task.updated_at = datetime.now(timezone.utc)
+    session.add(task)
+    try:
+        await session.commit()
+        await session.refresh(task)
+    except Exception:
+        await session.rollback()
+        raise
+    logger.info("task_pause_toggled", task_id=task.id, chat_id=chat_id, is_paused=is_paused)
+    return task
+
+
+async def cancel_task(
+    session: AsyncSession,
+    user_id: int,
+    chat_id: int,
+    task_id: int,
+) -> Task:
+    """Move an owned task to the terminal cancelled state and append one history row.
+
+    There is deliberately no legality check on the previous state -- transition-
+    graph legality enforcement is Phase 6's job (TRANS-01).
+    """
+    task = await _get_owned_task(session, user_id, chat_id, task_id)
+    previous_state = task.state
+    task.state = TaskState.CANCELLED
+    task.updated_at = datetime.now(timezone.utc)
+    session.add(task)
+    session.add(
+        TaskTransition(
+            task_id=task.id,
+            from_state=previous_state,
+            to_state=TaskState.CANCELLED,
+            note="",
+        ),
+    )
+    try:
+        await session.commit()
+        await session.refresh(task)
+    except Exception:
+        await session.rollback()
+        raise
+    logger.info(
+        "task_cancelled",
+        task_id=task.id,
+        chat_id=chat_id,
+        from_state=previous_state.value,
+    )
+    return task

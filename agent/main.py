@@ -34,7 +34,7 @@ from agent.schemas import (
     UserResponse,
 )
 from agent.llm_client import LMStudioClient
-from agent.state import CORS_ORIGINS, cleanup_chat_caches
+from agent.state import CORS_ORIGINS, chat_locks, cleanup_chat_caches
 from agent.context_engine import compute_chat_stats
 from agent import memory, profile, tasks
 from agent.ws import ws_chat
@@ -97,6 +97,22 @@ async def _get_chat_or_404(
             detail=f"Chat {chat_id} not found",
         )
     return chat
+
+
+async def _get_task_or_404(
+    session: AsyncSession,
+    task_id: int,
+    user_id: int,
+) -> Task:
+    """Load a task owned by user_id or raise HTTP 404 (never 403, to avoid an IDOR oracle)."""
+    task = await session.get(Task, task_id)
+    if task is None or task.user_id != user_id:
+        logger.warning("task_access_denied", task_id=task_id, user_id=user_id)
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Task {task_id} not found",
+        )
+    return task
 
 
 async def _resolve_settings(
@@ -174,6 +190,12 @@ def _task_to_response(row: Task, history: list[TaskTransition]) -> TaskResponse:
             for h in history
         ],
     )
+
+
+async def _task_response_with_history(session: AsyncSession, row: Task) -> TaskResponse:
+    """Map a Task ORM row to its response shape, embedding freshly loaded history."""
+    history = await tasks.list_transitions(session, row.id)
+    return _task_to_response(row, history)
 
 
 def _chat_to_response(chat: Chat) -> ChatResponse:
@@ -483,6 +505,51 @@ async def get_chat_tasks(
     return [
         _task_to_response(row, await tasks.list_transitions(session, row.id)) for row in rows
     ]
+
+
+@app.post("/api/v1/tasks/{task_id}/pause", response_model=TaskResponse)
+async def pause_task_endpoint(
+    task_id: int,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> TaskResponse:
+    """Pause a task directly, bypassing the tool dispatcher (D-12, manual UI control)."""
+    task = await _get_task_or_404(session, task_id, current_user.id)
+    if task.chat_id not in chat_locks:
+        chat_locks[task.chat_id] = asyncio.Lock()
+    async with chat_locks[task.chat_id]:
+        row = await tasks.set_paused(session, current_user.id, task.chat_id, task_id, True)
+        return await _task_response_with_history(session, row)
+
+
+@app.post("/api/v1/tasks/{task_id}/resume", response_model=TaskResponse)
+async def resume_task_endpoint(
+    task_id: int,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> TaskResponse:
+    """Resume a task directly, bypassing the tool dispatcher (D-12, manual UI control)."""
+    task = await _get_task_or_404(session, task_id, current_user.id)
+    if task.chat_id not in chat_locks:
+        chat_locks[task.chat_id] = asyncio.Lock()
+    async with chat_locks[task.chat_id]:
+        row = await tasks.set_paused(session, current_user.id, task.chat_id, task_id, False)
+        return await _task_response_with_history(session, row)
+
+
+@app.post("/api/v1/tasks/{task_id}/cancel", response_model=TaskResponse)
+async def cancel_task_endpoint(
+    task_id: int,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> TaskResponse:
+    """Cancel a task directly, bypassing the tool dispatcher (D-07/D-12: manual-only)."""
+    task = await _get_task_or_404(session, task_id, current_user.id)
+    if task.chat_id not in chat_locks:
+        chat_locks[task.chat_id] = asyncio.Lock()
+    async with chat_locks[task.chat_id]:
+        row = await tasks.cancel_task(session, current_user.id, task.chat_id, task_id)
+        return await _task_response_with_history(session, row)
 
 
 @app.post(

@@ -10,6 +10,8 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from agent import memory, tasks
 from agent.schemas import (
     CreateTaskArgs,
+    PauseTaskArgs,
+    ResumeTaskArgs,
     SaveLongTermMemoryArgs,
     SaveWorkingMemoryArgs,
     TransitionTaskArgs,
@@ -242,3 +244,56 @@ async def _transition_task(
     except tasks.TaskNotFoundError:
         return {"status": "error", "error": f"task {args['task_id']} not found in this chat"}
     return {"status": "transitioned", "id": row.id, "title": row.title, "state": row.state.value}
+
+
+@register_tool(
+    "pause_task",
+    PauseTaskArgs,
+    "Pause an existing task in this chat so it can be resumed later. Requires the explicit "
+    "numeric task_id of a task in this chat -- there is no implicit 'current task'. Pausing "
+    "does NOT change the task's lifecycle state.",
+)
+async def _pause_task(
+    session: AsyncSession,
+    user_id: int,
+    chat_id: int,
+    args: dict[str, Any],
+) -> dict[str, Any]:
+    """Pause a task owned by this chat/user; returns an error dict otherwise."""
+    try:
+        row = await tasks.set_paused(session, user_id, chat_id, args["task_id"], True)
+    except tasks.TaskNotFoundError:
+        return {"status": "error", "error": f"task {args['task_id']} not found in this chat"}
+    return {
+        "status": "paused",
+        "id": row.id,
+        "title": row.title,
+        "state": row.state.value,
+        "is_paused": row.is_paused,
+    }
+
+
+@register_tool(
+    "resume_task",
+    ResumeTaskArgs,
+    "Resume a previously paused task in this chat. Requires the explicit numeric task_id "
+    "of a task in this chat -- there is no implicit 'current task'.",
+)
+async def _resume_task(
+    session: AsyncSession,
+    user_id: int,
+    chat_id: int,
+    args: dict[str, Any],
+) -> dict[str, Any]:
+    """Resume a task owned by this chat/user; returns an error dict otherwise."""
+    try:
+        row = await tasks.set_paused(session, user_id, chat_id, args["task_id"], False)
+    except tasks.TaskNotFoundError:
+        return {"status": "error", "error": f"task {args['task_id']} not found in this chat"}
+    return {
+        "status": "resumed",
+        "id": row.id,
+        "title": row.title,
+        "state": row.state.value,
+        "is_paused": row.is_paused,
+    }

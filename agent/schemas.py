@@ -269,6 +269,24 @@ class TransitionTaskArgs(BaseModel):
     )
 
 
+class PauseTaskArgs(BaseModel):
+    """Tool-call arguments for pause_task."""
+
+    task_id: int = Field(
+        gt=0,
+        description="The numeric id of an existing task in this chat to pause",
+    )
+
+
+class ResumeTaskArgs(BaseModel):
+    """Tool-call arguments for resume_task."""
+
+    task_id: int = Field(
+        gt=0,
+        description="The numeric id of an existing task in this chat to resume",
+    )
+
+
 class TaskTransitionResponse(BaseModel):
     """Serialized task state-change history entry."""
 
