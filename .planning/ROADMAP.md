@@ -176,7 +176,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 05-02-PLAN.md — ChatInvariant table with the overrides_id FK, resolve_active_invariants, per-chat REST routes, D-06 override labelling in build_system_prompt, overrides dropdown (INV-02, INV-03)
+- [x] 05-02-PLAN.md — ChatInvariant table with the overrides_id FK, resolve_active_invariants, per-chat REST routes, D-06 override labelling in build_system_prompt, overrides dropdown (INV-02, INV-03)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -212,7 +212,7 @@ Plans:
 | 2. Memory (Day 11) | 5/5 | Complete   | 2026-09-20 |
 | 3. Personalization (Day 12) | 3/3 | Complete   | 2026-09-20 |
 | 4. Task State Machine (Day 13) | 4/4 | Complete   | 2026-09-20 |
-| 5. Invariants (Day 14) | 1/4 | In Progress|  |
+| 5. Invariants (Day 14) | 2/4 | In Progress|  |
 | 6. Controlled Transitions (Day 15) | 0/? | Not started | - |
 
 ---
