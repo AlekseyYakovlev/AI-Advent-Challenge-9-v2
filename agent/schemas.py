@@ -164,3 +164,33 @@ class ChatMemoryResponse(BaseModel):
     short_term_message_count: int
     working: list[MemoryEntryResponse]
     long_term: list[MemoryEntryResponse]
+
+
+class SaveWorkingMemoryArgs(BaseModel):
+    """Tool-call arguments for save_working_memory."""
+
+    key: str = Field(
+        min_length=1,
+        max_length=MEMORY_KEY_MAX_LENGTH,
+        description="Short stable identifier for this scratchpad entry, e.g. current_task_step",
+    )
+    content: str = Field(
+        min_length=1,
+        max_length=MEMORY_VALUE_MAX_LENGTH,
+        description="The value to store",
+    )
+
+
+class SaveLongTermMemoryArgs(BaseModel):
+    """Tool-call arguments for save_long_term_memory."""
+
+    key: str = Field(
+        min_length=1,
+        max_length=MEMORY_KEY_MAX_LENGTH,
+        description="Short stable identifier for this durable fact, e.g. user_name",
+    )
+    content: str = Field(
+        min_length=1,
+        max_length=MEMORY_VALUE_MAX_LENGTH,
+        description="The durable fact, decision, or preference to store",
+    )
