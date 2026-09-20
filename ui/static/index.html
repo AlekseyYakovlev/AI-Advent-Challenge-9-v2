@@ -132,6 +132,24 @@
                         class="mt-1 w-full rounded-lg bg-indigo-600 hover:bg-indigo-500 px-4 py-2 text-sm font-medium transition">
                         Добавить инвариант
                     </button>
+
+                    <div class="flex items-center justify-between mb-1 mt-3">
+                        <span class="text-slate-500">Этого чата</span>
+                        <span id="invariant-chat-count" class="text-white font-semibold">0</span>
+                    </div>
+                    <div id="invariant-chat-list" class="space-y-2"></div>
+                    <input id="invariant-chat-title" type="text" maxlength="200" placeholder="Название правила"
+                        class="mt-2 w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    <textarea id="invariant-chat-rule" rows="2" maxlength="2000" placeholder="Текст правила"
+                        class="mt-1 w-full resize-none rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
+                    <select id="invariant-chat-overrides"
+                        class="mt-1 w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-1.5 text-sm">
+                        <option value="">Не переопределяет</option>
+                    </select>
+                    <button id="btn-save-chat-invariant" type="button"
+                        class="mt-1 w-full rounded-lg bg-indigo-600 hover:bg-indigo-500 px-4 py-2 text-sm font-medium transition">
+                        Добавить инвариант чата
+                    </button>
                 </div>
             </div>
             <div id="agent-status" class="p-3 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">

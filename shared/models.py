@@ -219,6 +219,42 @@ class GlobalInvariant(SQLModel, table=True):
     )
 
 
+class ChatInvariant(SQLModel, table=True):
+    """Per-chat ground rule layered on top of (and optionally overriding) a global invariant (D-05)."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("user.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+    )
+    chat_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("chat.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+    )
+    title: str = Field(max_length=200)
+    rule_text: str = Field(max_length=2000)
+    overrides_id: Optional[int] = Field(
+        default=None,
+        sa_column=Column(
+            Integer,
+            ForeignKey("globalinvariant.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
+    )
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+    )
+
+
 class TaskState(str, Enum):
     """Lifecycle state of a task (TASK-01)."""
 

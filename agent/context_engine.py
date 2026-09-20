@@ -8,7 +8,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from agent.llm_client import llm_client
-from agent import memory, profile, tasks
+from agent import invariants, memory, profile, tasks
 from shared.database import async_session_factory
 from shared.logger import get_logger
 from shared.models import Chat, ContextStrategy, Message, Profile, Settings
@@ -103,6 +103,25 @@ async def build_system_prompt(session: AsyncSession, chat_id: int) -> str:
                 f"goal={task.goal!r}",
             )
         parts.append("Open tasks in this chat:\n" + "\n".join(lines))
+
+    active = await invariants.resolve_active_invariants(session, chat_id)
+    if active:
+        lines = []
+        for item in active:
+            if item["overridden_by"] is not None:
+                lines.append(
+                    f'[GLOBAL] {item["rule_text"]} (overridden for this chat — see below)',
+                )
+                lines.append(
+                    f'[CHAT] {item["overridden_by"]["rule_text"]} (overrides the above)',
+                )
+            elif item["scope"] == "chat":
+                lines.append(f'[CHAT] {item["rule_text"]}')
+            else:
+                lines.append(f'[GLOBAL] {item["rule_text"]}')
+        parts.append(
+            "Active invariants (always follow these; flag if you cannot):\n" + "\n".join(lines),
+        )
 
     return "\n\n".join(parts)
 
