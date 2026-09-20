@@ -16,10 +16,12 @@ from agent.dependencies import get_current_user
 from agent.schemas import (
     BranchRequest,
     ChatCreate,
+    ChatMemoryResponse,
     ChatResponse,
     CreateUserRequest,
     HealthResponse,
     LoginRequest,
+    MemoryEntryResponse,
     MessageResponse,
     ModelLoadRequest,
     ModelLoadResult,
@@ -30,6 +32,7 @@ from agent.schemas import (
 from agent.llm_client import LMStudioClient
 from agent.state import CORS_ORIGINS, cleanup_chat_caches
 from agent.context_engine import compute_chat_stats
+from agent import memory
 from agent.ws import ws_chat
 from shared.auth import (
     SESSION_COOKIE_NAME,
@@ -391,6 +394,32 @@ async def get_chat_stats(
     """Get real-time statistics for a chat."""
     await _get_chat_or_404(session, chat_id, current_user.id)
     return await compute_chat_stats(session, chat_id, model=model)
+
+
+@app.get("/api/v1/chats/{chat_id}/memory", response_model=ChatMemoryResponse)
+async def get_chat_memory(
+    chat_id: int,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> ChatMemoryResponse:
+    """Return this chat's working memory and the caller's full long-term memory (D-02)."""
+    chat = await _get_chat_or_404(session, chat_id, current_user.id)
+    working = await memory.list_working_memory(session, chat_id)
+    # user-scoped by design (D-02): long-term memory is cross-chat
+    long_term = await memory.list_long_term_memory(session, current_user.id)
+    path = await _build_tree_path(session, chat)
+    return ChatMemoryResponse(
+        chat_id=chat_id,
+        short_term_message_count=len(path),
+        working=[
+            MemoryEntryResponse(id=row.id, key=row.key, value=row.value, updated_at=row.updated_at)
+            for row in working
+        ],
+        long_term=[
+            MemoryEntryResponse(id=row.id, key=row.key, value=row.value, updated_at=row.updated_at)
+            for row in long_term
+        ],
+    )
 
 
 @app.post(
