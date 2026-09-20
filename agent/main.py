@@ -29,12 +29,14 @@ from agent.schemas import (
     ProfileUpdate,
     SettingsResponse,
     SettingsUpdate,
+    TaskResponse,
+    TaskTransitionResponse,
     UserResponse,
 )
 from agent.llm_client import LMStudioClient
 from agent.state import CORS_ORIGINS, cleanup_chat_caches
 from agent.context_engine import compute_chat_stats
-from agent import memory, profile
+from agent import memory, profile, tasks
 from agent.ws import ws_chat
 from shared.auth import (
     SESSION_COOKIE_NAME,
@@ -53,6 +55,8 @@ from shared.models import (
     Profile,
     Session as SessionRow,
     Settings,
+    Task,
+    TaskTransition,
     User,
 )
 
@@ -145,6 +149,30 @@ def _profile_to_response(row: Profile) -> ProfileResponse:
         format=row.format,
         constraints=row.constraints,
         updated_at=row.updated_at,
+    )
+
+
+def _task_to_response(row: Task, history: list[TaskTransition]) -> TaskResponse:
+    """Map a Task ORM row and its transition history to the API response schema."""
+    return TaskResponse(
+        id=row.id,
+        title=row.title,
+        description=row.description,
+        goal=row.goal,
+        state=row.state.value,
+        is_paused=row.is_paused,
+        delegate_to=row.delegate_to,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+        history=[
+            TaskTransitionResponse(
+                from_state=(h.from_state.value if h.from_state is not None else None),
+                to_state=h.to_state.value,
+                note=h.note,
+                created_at=h.created_at,
+            )
+            for h in history
+        ],
     )
 
 
@@ -441,6 +469,20 @@ async def get_chat_memory(
             for row in long_term
         ],
     )
+
+
+@app.get("/api/v1/chats/{chat_id}/tasks", response_model=list[TaskResponse])
+async def get_chat_tasks(
+    chat_id: int,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> list[TaskResponse]:
+    """Return this chat's tasks with embedded, oldest-first transition history."""
+    await _get_chat_or_404(session, chat_id, current_user.id)
+    rows = await tasks.list_tasks_for_chat(session, chat_id)
+    return [
+        _task_to_response(row, await tasks.list_transitions(session, row.id)) for row in rows
+    ]
 
 
 @app.post(
