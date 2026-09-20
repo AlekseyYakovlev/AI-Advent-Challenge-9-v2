@@ -19,6 +19,9 @@ from agent.schemas import (
     ChatMemoryResponse,
     ChatResponse,
     CreateUserRequest,
+    GlobalInvariantCreate,
+    GlobalInvariantResponse,
+    GlobalInvariantUpdate,
     HealthResponse,
     LoginRequest,
     MemoryEntryResponse,
@@ -36,7 +39,7 @@ from agent.schemas import (
 from agent.llm_client import LMStudioClient
 from agent.state import CORS_ORIGINS, chat_locks, cleanup_chat_caches
 from agent.context_engine import compute_chat_stats
-from agent import memory, profile, tasks
+from agent import invariants, memory, profile, tasks
 from agent.ws import ws_chat
 from shared.auth import (
     SESSION_COOKIE_NAME,
@@ -51,6 +54,7 @@ from shared.logger import get_logger
 from shared.models import (
     Chat,
     ContextStrategy,
+    GlobalInvariant,
     Message,
     Profile,
     Session as SessionRow,
@@ -164,6 +168,17 @@ def _profile_to_response(row: Profile) -> ProfileResponse:
         style=row.style,
         format=row.format,
         constraints=row.constraints,
+        updated_at=row.updated_at,
+    )
+
+
+def _global_invariant_to_response(row: GlobalInvariant) -> GlobalInvariantResponse:
+    """Map a GlobalInvariant ORM row to the API response schema."""
+    return GlobalInvariantResponse(
+        id=row.id,
+        title=row.title,
+        rule_text=row.rule_text,
+        created_at=row.created_at,
         updated_at=row.updated_at,
     )
 
@@ -639,6 +654,68 @@ async def update_profile(
     updates = body.model_dump(exclude_unset=True)
     row = await profile.update_profile(session, current_user.id, **updates)
     return _profile_to_response(row)
+
+
+@app.get("/api/v1/invariants", response_model=list[GlobalInvariantResponse])
+async def list_global_invariants(
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> list[GlobalInvariantResponse]:
+    """Return every global invariant. Auth required, but NOT ownership-filtered (D-02) —
+    global invariants are a genuinely app-wide shared set, not a per-user resource.
+    """
+    rows = await invariants.list_global(session)
+    return [_global_invariant_to_response(row) for row in rows]
+
+
+@app.post(
+    "/api/v1/invariants",
+    response_model=GlobalInvariantResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_global_invariant(
+    body: GlobalInvariantCreate,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> GlobalInvariantResponse:
+    """Create a global invariant. Any logged-in user may do this (D-02) — every account
+    has equal "admin" capability, so no ownership check exists by design.
+    """
+    row = await invariants.create_global(session, body.title, body.rule_text)
+    return _global_invariant_to_response(row)
+
+
+@app.put("/api/v1/invariants/{invariant_id}", response_model=GlobalInvariantResponse)
+async def update_global_invariant(
+    invariant_id: int,
+    body: GlobalInvariantUpdate,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> GlobalInvariantResponse:
+    """Update a global invariant. No ownership filter (D-02) — shared by every account."""
+    updates = body.model_dump(exclude_unset=True)
+    row = await invariants.update_global(session, invariant_id, **updates)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Invariant {invariant_id} not found",
+        )
+    return _global_invariant_to_response(row)
+
+
+@app.delete("/api/v1/invariants/{invariant_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_global_invariant(
+    invariant_id: int,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    """Delete a global invariant. No ownership filter (D-02) — shared by every account."""
+    deleted = await invariants.delete_global(session, invariant_id)
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Invariant {invariant_id} not found",
+        )
 
 
 @app.get("/api/v1/lm-studio/models")

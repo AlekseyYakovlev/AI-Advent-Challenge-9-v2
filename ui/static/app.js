@@ -28,6 +28,8 @@ const state = {
     lastMemory: null,
     lastProfile: null,
     lastTasks: null,
+    lastGlobalInvariants: null,
+    editingGlobalInvariantId: null,
 };
 
 const TASK_STATE_LABELS = {
@@ -524,6 +526,134 @@ async function saveProfile() {
         showToast('Профиль сохранён', 'success');
     } catch (err) {
         showToast('Не удалось сохранить профиль. Проверьте соединение и попробуйте снова.', 'error');
+    }
+}
+
+function setupFoldablePanels() {
+    document.querySelectorAll('[data-fold-toggle]').forEach((btn) => {
+        const targetId = btn.dataset.foldToggle;
+        const body = document.getElementById(targetId);
+        if (!body) return;
+        btn.addEventListener('click', () => {
+            const collapsed = body.classList.toggle('hidden');
+            btn.textContent = collapsed ? '▸' : '▾';
+            btn.setAttribute('aria-expanded', String(!collapsed));
+        });
+    });
+}
+
+async function loadInvariants() {
+    try {
+        const data = await apiFetch('/api/v1/invariants');
+        state.lastGlobalInvariants = data;
+        renderInvariantsPanel();
+    } catch (err) {
+        console.error('Failed to load invariants:', err);
+        showToast('Не удалось загрузить инварианты. Проверьте соединение и попробуйте снова.', 'error');
+    }
+}
+
+function renderInvariantsPanel() {
+    const items = state.lastGlobalInvariants;
+    if (items === null) return;
+    const countEl = $('invariant-global-count');
+    const listEl = $('invariant-global-list');
+    if (countEl) countEl.textContent = String(items.length);
+    if (!listEl) return;
+    listEl.replaceChildren();
+
+    if (!items.length) {
+        const empty = document.createElement('div');
+        empty.className = 'text-slate-600';
+        empty.textContent = 'Глобальных инвариантов пока нет';
+        listEl.appendChild(empty);
+
+        const helper = document.createElement('div');
+        helper.className = 'text-slate-600';
+        helper.textContent = 'Добавьте первое правило — оно будет действовать во всех чатах';
+        listEl.appendChild(helper);
+        return;
+    }
+
+    items.forEach((item) => {
+        const card = document.createElement('div');
+        card.className = 'rounded-lg bg-slate-800 px-2 py-1';
+
+        const titleEl = document.createElement('div');
+        titleEl.className = 'text-sm font-semibold text-slate-300';
+        titleEl.textContent = item.title;
+        card.appendChild(titleEl);
+
+        const ruleEl = document.createElement('div');
+        ruleEl.className = 'text-slate-400';
+        ruleEl.textContent = item.rule_text;
+        card.appendChild(ruleEl);
+
+        const actionsEl = document.createElement('div');
+        actionsEl.className = 'flex items-center gap-2 mt-1';
+
+        const editBtn = document.createElement('button');
+        editBtn.type = 'button';
+        editBtn.className = 'text-slate-400 hover:text-white';
+        editBtn.textContent = 'Изменить';
+        editBtn.addEventListener('click', () => {
+            state.editingGlobalInvariantId = item.id;
+            $('invariant-global-title').value = item.title;
+            $('invariant-global-rule').value = item.rule_text;
+            $('btn-save-global-invariant').textContent = 'Сохранить инвариант';
+        });
+        actionsEl.appendChild(editBtn);
+
+        const deleteBtn = document.createElement('button');
+        deleteBtn.type = 'button';
+        deleteBtn.className = 'text-red-400 hover:text-red-300';
+        deleteBtn.textContent = 'Удалить';
+        deleteBtn.addEventListener('click', () => {
+            deleteGlobalInvariant(item.id).catch((err) => showToast(err.message, 'error'));
+        });
+        actionsEl.appendChild(deleteBtn);
+
+        card.appendChild(actionsEl);
+        listEl.appendChild(card);
+    });
+}
+
+async function deleteGlobalInvariant(invariantId) {
+    if (!confirm('Удалить этот инвариант? Это действие нельзя отменить.')) return;
+    try {
+        await apiFetch(`/api/v1/invariants/${invariantId}`, { method: 'DELETE' });
+        showToast('Инвариант удалён', 'success');
+        await loadInvariants();
+    } catch (err) {
+        showToast('Не удалось удалить инвариант. Проверьте соединение и попробуйте снова.', 'error');
+    }
+}
+
+async function saveGlobalInvariant() {
+    const title = $('invariant-global-title').value.trim();
+    const ruleText = $('invariant-global-rule').value.trim();
+    if (!title || !ruleText) {
+        showToast('Заполните название и текст правила', 'error');
+        return;
+    }
+    const body = { title, rule_text: ruleText };
+    try {
+        if (state.editingGlobalInvariantId === null) {
+            await apiFetch('/api/v1/invariants', { method: 'POST', body: JSON.stringify(body) });
+        } else {
+            await apiFetch(`/api/v1/invariants/${state.editingGlobalInvariantId}`, {
+                method: 'PUT',
+                body: JSON.stringify(body),
+            });
+        }
+        $('invariant-global-title').value = '';
+        $('invariant-global-rule').value = '';
+        state.editingGlobalInvariantId = null;
+        $('btn-save-global-invariant').textContent = 'Добавить инвариант';
+        showToast('Инвариант сохранён', 'success');
+        await loadInvariants();
+    } catch (err) {
+        showToast('Не удалось сохранить инвариант. Проверьте соединение и попробуйте снова.', 'error');
     }
 }
 
@@ -1166,6 +1296,10 @@ function bindEvents() {
     $('btn-save-profile').addEventListener('click', () => {
         saveProfile().catch((err) => showToast(err.message, 'error'));
     });
+    $('btn-save-global-invariant').addEventListener('click', () => {
+        saveGlobalInvariant().catch((err) => showToast(err.message, 'error'));
+    });
+    setupFoldablePanels();
 }
 
 async function init() {
@@ -1174,6 +1308,7 @@ async function init() {
     setInterval(checkAgentHealth, 5000);
     await loadModels();
     await loadProfile();
+    await loadInvariants();
     try {
         await loadChats();
         if (state.chats.length) {

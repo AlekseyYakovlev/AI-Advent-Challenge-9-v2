@@ -23,6 +23,8 @@ TASK_TITLE_MAX_LENGTH = 200
 TASK_DESCRIPTION_MAX_LENGTH = 5_000
 TASK_GOAL_MAX_LENGTH = 2_000
 TASK_NOTE_MAX_LENGTH = 2_000
+INVARIANT_TITLE_MAX_LENGTH = 200
+INVARIANT_RULE_MAX_LENGTH = 2000
 
 
 class HealthResponse(BaseModel):
@@ -309,3 +311,31 @@ class TaskResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     history: list[TaskTransitionResponse]
+
+
+class GlobalInvariantCreate(BaseModel):
+    """Request body for creating a global invariant (D-01, D-02)."""
+
+    title: str = Field(min_length=1, max_length=INVARIANT_TITLE_MAX_LENGTH)
+    rule_text: str = Field(min_length=1, max_length=INVARIANT_RULE_MAX_LENGTH)
+
+
+class GlobalInvariantUpdate(BaseModel):
+    """Partial update for a global invariant (D-04, full CRUD)."""
+
+    title: Optional[str] = Field(
+        default=None, min_length=1, max_length=INVARIANT_TITLE_MAX_LENGTH,
+    )
+    rule_text: Optional[str] = Field(
+        default=None, min_length=1, max_length=INVARIANT_RULE_MAX_LENGTH,
+    )
+
+
+class GlobalInvariantResponse(BaseModel):
+    """Serialized global invariant returned to the client."""
+
+    id: int
+    title: str = Field(max_length=INVARIANT_TITLE_MAX_LENGTH)
+    rule_text: str = Field(max_length=INVARIANT_RULE_MAX_LENGTH)
+    created_at: datetime
+    updated_at: datetime
