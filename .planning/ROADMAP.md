@@ -76,7 +76,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 02-03-PLAN.md — Tool argument schemas, agent/tools.py registry + strictly sequential dispatcher, stream_chat tools param and tool_calls delta accumulation (MEM-03)
+- [x] 02-03-PLAN.md — Tool argument schemas, agent/tools.py registry + strictly sequential dispatcher, stream_chat tools param and tool_calls delta accumulation (MEM-03)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -162,7 +162,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Auth Foundation | 5/5 | Complete   | 2026-09-20 |
-| 2. Memory (Day 11) | 2/5 | In Progress|  |
+| 2. Memory (Day 11) | 3/5 | In Progress|  |
 | 3. Personalization (Day 12) | 0/? | Not started | - |
 | 4. Task State Machine (Day 13) | 0/? | Not started | - |
 | 5. Invariants (Day 14) | 0/? | Not started | - |
