@@ -7,8 +7,8 @@ from typing import Any
 from pydantic import BaseModel, ValidationError
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from agent import memory
-from agent.schemas import SaveLongTermMemoryArgs, SaveWorkingMemoryArgs
+from agent import memory, tasks
+from agent.schemas import CreateTaskArgs, SaveLongTermMemoryArgs, SaveWorkingMemoryArgs
 from shared.logger import get_logger
 
 logger = get_logger(__name__)
@@ -187,3 +187,23 @@ async def _save_long_term_memory(
     """Write a long-term-memory row scoped to the user (cross-chat, D-02)."""
     row = await memory.save_long_term_memory(session, user_id, args["key"], args["content"])
     return {"status": "saved", "layer": "long_term", "key": row.key, "id": row.id}
+
+
+@register_tool(
+    "create_task",
+    CreateTaskArgs,
+    "Create a new task when you recognize a distinct, trackable unit of work in this chat. "
+    "The task starts in the 'planning' state. Do NOT use this tool for state changes on an "
+    "existing task.",
+)
+async def _create_task(
+    session: AsyncSession,
+    user_id: int,
+    chat_id: int,
+    args: dict[str, Any],
+) -> dict[str, Any]:
+    """Create a task scoped to the current chat and user."""
+    row = await tasks.create_task(
+        session, user_id, chat_id, args["title"], args["description"], args["goal"],
+    )
+    return {"status": "created", "id": row.id, "title": row.title, "state": row.state.value}

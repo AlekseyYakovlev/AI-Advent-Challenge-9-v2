@@ -37,6 +37,7 @@ logger = get_logger(__name__)
 IDLE_TIMEOUT_SECONDS = 300.0
 RATE_LIMIT_MAX = 10
 RATE_LIMIT_WINDOW = 60.0
+TASK_TOOL_NAMES = ("create_task", "transition_task", "pause_task", "resume_task")
 
 active_connections: set[WebSocket] = set()
 
@@ -254,6 +255,7 @@ async def _handle_chat_message(
                 active_streams.pop(chat_id, None)
 
             memory_writes: list[dict[str, Any]] = []
+            task_writes: list[dict[str, Any]] = []
             if pending_tool_calls:
                 tool_results = await dispatch_tool_calls(
                     session,
@@ -307,8 +309,24 @@ async def _handle_chat_message(
                     return
 
                 memory_writes = [
-                    r["write"] for r in tool_results if r["ok"] and r["write"] is not None
+                    r["write"]
+                    for r in tool_results
+                    if r["ok"] and r["write"] is not None and r["name"] not in TASK_TOOL_NAMES
                 ]
+
+                for result in tool_results:
+                    if result["ok"] and result["name"] in TASK_TOOL_NAMES:
+                        try:
+                            payload = json.loads(result["content"])
+                        except json.JSONDecodeError:
+                            continue
+                        task_writes.append(
+                            {
+                                "id": payload.get("id"),
+                                "title": payload.get("title"),
+                                "state": payload.get("state"),
+                            },
+                        )
 
                 for result in tool_results:
                     if not result["ok"]:
@@ -345,6 +363,7 @@ async def _handle_chat_message(
                     "message_id": assistant_msg.id,
                     "stats": stats,
                     "memory_writes": memory_writes,
+                    "task_writes": task_writes,
                 },
             )
 

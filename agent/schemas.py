@@ -19,6 +19,10 @@ PASSWORD_MAX_LENGTH = 128
 MEMORY_KEY_MAX_LENGTH = 200
 MEMORY_VALUE_MAX_LENGTH = 50_000
 PROFILE_FIELD_MAX_LENGTH = 2000
+TASK_TITLE_MAX_LENGTH = 200
+TASK_DESCRIPTION_MAX_LENGTH = 5_000
+TASK_GOAL_MAX_LENGTH = 2_000
+TASK_NOTE_MAX_LENGTH = 2_000
 
 
 class HealthResponse(BaseModel):
@@ -213,3 +217,47 @@ class ProfileResponse(BaseModel):
     format: str = Field(default="", max_length=PROFILE_FIELD_MAX_LENGTH)
     constraints: str = Field(default="", max_length=PROFILE_FIELD_MAX_LENGTH)
     updated_at: datetime
+
+
+class CreateTaskArgs(BaseModel):
+    """Tool-call arguments for create_task."""
+
+    title: str = Field(
+        min_length=1,
+        max_length=TASK_TITLE_MAX_LENGTH,
+        description="Short, specific title for this unit of work",
+    )
+    description: str = Field(
+        min_length=1,
+        max_length=TASK_DESCRIPTION_MAX_LENGTH,
+        description="What this task involves",
+    )
+    goal: str = Field(
+        min_length=1,
+        max_length=TASK_GOAL_MAX_LENGTH,
+        description="Concrete, checkable definition of done for this task",
+    )
+
+
+class TaskTransitionResponse(BaseModel):
+    """Serialized task state-change history entry."""
+
+    from_state: Optional[str] = None
+    to_state: str
+    note: str = ""
+    created_at: datetime
+
+
+class TaskResponse(BaseModel):
+    """Serialized task, including its full transition history (D-11)."""
+
+    id: int
+    title: str
+    description: str
+    goal: str
+    state: str
+    is_paused: bool
+    delegate_to: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    history: list[TaskTransitionResponse]
