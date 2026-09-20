@@ -12,7 +12,7 @@
 - [x] **Phase 2: Memory (Day 11)** — Agent has three explicit, inspectable memory layers populated only via deliberate LLM tool calls (completed 2026-09-20)
 - [x] **Phase 3: Personalization (Day 12)** — Each user's profile is injected into every request and observably shapes responses (completed 2026-09-20)
 - [x] **Phase 4: Task State Machine (Day 13)** — Chats can contain multiple LLM-created tasks tracked through an explicit lifecycle (completed 2026-09-20)
-- [ ] **Phase 5: Invariants (Day 14)** — Global and per-chat ground rules are injected into context and checked against agent behavior
+- [x] **Phase 5: Invariants (Day 14)** — Global and per-chat ground rules are injected into context and checked against agent behavior (completed 2026-09-20)
 - [ ] **Phase 6: Controlled Transitions (Day 15)** — Illegal task-state transitions are hard-rejected with a clear explanation, and pause/resume is verified correct
 
 ## Phase Details
@@ -184,7 +184,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 05-04-PLAN.md — Strategy-matrix and long-history injection guards plus the Day 14 acceptance demo (INV-01..INV-05)
+- [x] 05-04-PLAN.md — Strategy-matrix and long-history injection guards plus the Day 14 acceptance demo (INV-01..INV-05)
 
 **UI hint**: yes
 
@@ -212,7 +212,7 @@ Plans:
 | 2. Memory (Day 11) | 5/5 | Complete   | 2026-09-20 |
 | 3. Personalization (Day 12) | 3/3 | Complete   | 2026-09-20 |
 | 4. Task State Machine (Day 13) | 4/4 | Complete   | 2026-09-20 |
-| 5. Invariants (Day 14) | 3/4 | In Progress|  |
+| 5. Invariants (Day 14) | 4/4 | Complete   | 2026-09-20 |
 | 6. Controlled Transitions (Day 15) | 0/? | Not started | - |
 
 ---
