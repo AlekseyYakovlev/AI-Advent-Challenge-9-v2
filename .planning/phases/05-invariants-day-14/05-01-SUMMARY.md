@@ -140,3 +140,13 @@ None - no external service configuration required.
 ---
 *Phase: 05-invariants-day-14*
 *Completed: 2026-09-21*
+
+## Self-Check: PASSED
+
+- FOUND: agent/invariants.py
+- FOUND: tests/test_invariants.py
+- FOUND: tests/test_invariants_api.py
+- FOUND: .planning/phases/05-invariants-day-14/05-01-SUMMARY.md
+- FOUND commit: bd68a4b (test)
+- FOUND commit: 66668b6 (feat)
+- FOUND commit: 6797f40 (feat)
