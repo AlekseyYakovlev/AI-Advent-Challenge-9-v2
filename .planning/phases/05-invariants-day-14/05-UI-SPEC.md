@@ -1,10 +1,11 @@
 ---
 phase: 5
 slug: invariants-day-14
-status: draft
+status: approved
 shadcn_initialized: false
 preset: none
 created: 2026-09-20
+reviewed_at: 2026-09-20
 ---
 
 # Phase 5 — UI Design Contract
