@@ -69,19 +69,29 @@ class LLMClient:
         temperature: float,
         max_tokens: int,
         context_length: int | None = None,
-    ) -> AsyncGenerator[str, None]:
-        """Stream chat completion tokens via SSE."""
+        tools: list[dict[str, Any]] | None = None,
+    ) -> AsyncGenerator[str | dict[str, Any], None]:
+        """Stream chat completion tokens via SSE.
+
+        Yields plain `str` content tokens when `tools` is falsy (the contract
+        every existing caller relies on). When `tools` is non-empty, yields
+        discriminated dicts instead: `{"type": "content", "content": ...}` and
+        `{"type": "tool_calls", "tool_calls": [...]}`, with fragmented
+        `function.arguments` deltas reassembled by index.
+        """
         url = f"{self._base_url}/v1/chat/completions"
         headers = {"Content-Type": "application/json"}
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
-        payload = {
+        payload: dict[str, Any] = {
             "model": model,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": True,
         }
+        if tools:
+            payload["tools"] = tools
         logger.debug(
             "stream_chat_start",
             context_length=context_length,
@@ -97,8 +107,12 @@ class LLMClient:
                 ) as response:
                     response.raise_for_status()
                     try:
-                        async for token in self._parse_sse_stream(response):
-                            yield token
+                        if tools:
+                            async for event in self._parse_sse_stream_with_tools(response):
+                                yield event
+                        else:
+                            async for token in self._parse_sse_stream(response):
+                                yield token
                     except asyncio.CancelledError:
                         await response.aclose()
                         raise
@@ -122,6 +136,40 @@ class LLMClient:
             content = delta.get("content")
             if content:
                 yield content
+
+    async def _parse_sse_stream_with_tools(
+        self,
+        response: httpx.Response,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """Parse SSE, accumulating tool_calls deltas by index across chunks."""
+        tool_calls_acc: dict[int, dict[str, Any]] = {}
+        async for line in response.aiter_lines():
+            if not line.startswith("data: "):
+                continue
+            data = line[6:].strip()
+            if data == "[DONE]":
+                break
+            chunk = json.loads(data)
+            choice = chunk.get("choices", [{}])[0]
+            delta = choice.get("delta", {})
+            content = delta.get("content")
+            if content:
+                yield {"type": "content", "content": content}
+            for tc_delta in delta.get("tool_calls", []) or []:
+                idx = tc_delta["index"]
+                acc = tool_calls_acc.setdefault(
+                    idx,
+                    {"id": None, "type": "function", "function": {"name": None, "arguments": ""}},
+                )
+                if tc_delta.get("id"):
+                    acc["id"] = tc_delta["id"]
+                if fn := tc_delta.get("function"):
+                    if fn.get("name"):
+                        acc["function"]["name"] = fn["name"]
+                    if fn.get("arguments"):
+                        acc["function"]["arguments"] += fn["arguments"]
+            if choice.get("finish_reason") == "tool_calls":
+                yield {"type": "tool_calls", "tool_calls": list(tool_calls_acc.values())}
 
 
 class LMStudioClient:

@@ -1,0 +1,189 @@
+"""Tool-call registry and strictly sequential dispatcher."""
+
+import json
+from collections.abc import Awaitable, Callable
+from typing import Any
+
+from pydantic import BaseModel, ValidationError
+from sqlmodel.ext.asyncio.session import AsyncSession
+
+from agent import memory
+from agent.schemas import SaveLongTermMemoryArgs, SaveWorkingMemoryArgs
+from shared.logger import get_logger
+
+logger = get_logger(__name__)
+
+ToolHandler = Callable[[AsyncSession, int, int, dict[str, Any]], Awaitable[dict[str, Any]]]
+
+TOOL_REGISTRY: dict[str, ToolHandler] = {}
+TOOL_SCHEMAS: dict[str, type[BaseModel]] = {}
+TOOL_DESCRIPTIONS: dict[str, str] = {}
+
+_SCOPE_KEYS = ("chat_id", "user_id")
+
+
+def register_tool(
+    name: str,
+    args_model: type[BaseModel],
+    description: str,
+) -> Callable[[ToolHandler], ToolHandler]:
+    """Decorator that records a handler, its Pydantic argument model, and its description."""
+
+    def _wrap(fn: ToolHandler) -> ToolHandler:
+        TOOL_REGISTRY[name] = fn
+        TOOL_SCHEMAS[name] = args_model
+        TOOL_DESCRIPTIONS[name] = description
+        return fn
+
+    return _wrap
+
+
+def _clean_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Strip Pydantic's `title` keys so the model sees a clean JSON Schema."""
+    schema.pop("title", None)
+    for prop in schema.get("properties", {}).values():
+        if isinstance(prop, dict):
+            prop.pop("title", None)
+    return schema
+
+
+def build_tool_schemas() -> list[dict[str, Any]]:
+    """Build the OpenAI `tools=[...]` schema list from the registered Pydantic models."""
+    schemas: list[dict[str, Any]] = []
+    for name, args_model in TOOL_SCHEMAS.items():
+        parameters = _clean_schema(args_model.model_json_schema())
+        schemas.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": TOOL_DESCRIPTIONS[name],
+                    "parameters": parameters,
+                },
+            },
+        )
+    return schemas
+
+
+async def dispatch_tool_calls(
+    session: AsyncSession,
+    user_id: int,
+    chat_id: int,
+    tool_calls: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Execute tool calls strictly sequentially, in the order returned by the LLM.
+
+    Never gather these concurrently and never open a new session or lock: the
+    caller already holds the per-chat lock and the open session, and a later
+    call in a turn may depend on an earlier one.
+    """
+    results: list[dict[str, Any]] = []
+    for call in tool_calls:
+        name = call.get("function", {}).get("name")
+        tool_call_id = call.get("id")
+
+        try:
+            raw_args = json.loads(call.get("function", {}).get("arguments") or "")
+        except json.JSONDecodeError:
+            results.append(
+                {
+                    "tool_call_id": tool_call_id,
+                    "name": name,
+                    "ok": False,
+                    "content": json.dumps({"error": "malformed arguments"}),
+                    "write": None,
+                },
+            )
+            continue
+
+        if name not in TOOL_REGISTRY:
+            results.append(
+                {
+                    "tool_call_id": tool_call_id,
+                    "name": name,
+                    "ok": False,
+                    "content": json.dumps({"error": f"unknown tool {name}"}),
+                    "write": None,
+                },
+            )
+            continue
+
+        args_model = TOOL_SCHEMAS[name]
+        try:
+            validated = args_model.model_validate(raw_args)
+        except ValidationError as exc:
+            results.append(
+                {
+                    "tool_call_id": tool_call_id,
+                    "name": name,
+                    "ok": False,
+                    "content": json.dumps({"error": str(exc)}),
+                    "write": None,
+                },
+            )
+            continue
+
+        validated_args = validated.model_dump()
+        for scope_key in _SCOPE_KEYS:
+            if scope_key in raw_args:
+                logger.warning(
+                    "tool_args_scope_override_ignored",
+                    tool=name,
+                    tool_call_id=tool_call_id,
+                )
+
+        result = await TOOL_REGISTRY[name](session, user_id, chat_id, validated_args)
+        logger.info(
+            "tool_call_dispatched",
+            tool=name,
+            tool_call_id=tool_call_id,
+            chat_id=chat_id,
+        )
+        results.append(
+            {
+                "tool_call_id": tool_call_id,
+                "name": name,
+                "ok": True,
+                "content": json.dumps(result),
+                "write": {
+                    "id": result.get("id"),
+                    "key": result.get("key"),
+                    "layer": result.get("layer"),
+                },
+            },
+        )
+    return results
+
+
+@register_tool(
+    "save_working_memory",
+    SaveWorkingMemoryArgs,
+    "Save a value to the temporary scratchpad for the CURRENT chat's task data. "
+    "Overwritten per key; does not persist to other chats.",
+)
+async def _save_working_memory(
+    session: AsyncSession,
+    user_id: int,
+    chat_id: int,
+    args: dict[str, Any],
+) -> dict[str, Any]:
+    """Write a working-memory row scoped to the current chat."""
+    row = await memory.save_working_memory(session, user_id, chat_id, args["key"], args["content"])
+    return {"status": "saved", "layer": "working", "key": row.key, "id": row.id}
+
+
+@register_tool(
+    "save_long_term_memory",
+    SaveLongTermMemoryArgs,
+    "Save a durable fact, decision, or preference about the user that should "
+    "persist across ALL of the user's chats.",
+)
+async def _save_long_term_memory(
+    session: AsyncSession,
+    user_id: int,
+    chat_id: int,
+    args: dict[str, Any],
+) -> dict[str, Any]:
+    """Write a long-term-memory row scoped to the user (cross-chat, D-02)."""
+    row = await memory.save_long_term_memory(session, user_id, args["key"], args["content"])
+    return {"status": "saved", "layer": "long_term", "key": row.key, "id": row.id}
