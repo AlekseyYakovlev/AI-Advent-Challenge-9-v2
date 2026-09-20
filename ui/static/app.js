@@ -26,6 +26,7 @@ const state = {
     isStatsLocal: false,
     statsAbortController: null,
     lastMemory: null,
+    lastProfile: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -301,6 +302,40 @@ function renderMemoryPanel() {
     if (longTermCountEl) longTermCountEl.textContent = String(data.long_term.length);
     if (workingEl) renderMemoryEntries(workingEl, data.working);
     if (longTermEl) renderMemoryEntries(longTermEl, data.long_term);
+}
+
+async function loadProfile() {
+    try {
+        const data = await apiFetch('/api/v1/profile');
+        if (!data) return;
+        state.lastProfile = data;
+        renderProfilePanel();
+    } catch (err) {
+        console.error('Failed to load profile:', err);
+    }
+}
+
+function renderProfilePanel() {
+    const data = state.lastProfile;
+    if (!data) return;
+    $('profile-style').value = data.style;
+    $('profile-format').value = data.format;
+    $('profile-constraints').value = data.constraints;
+}
+
+async function saveProfile() {
+    const body = {
+        style: $('profile-style').value,
+        format: $('profile-format').value,
+        constraints: $('profile-constraints').value,
+    };
+    try {
+        const data = await apiFetch('/api/v1/profile', { method: 'PUT', body: JSON.stringify(body) });
+        state.lastProfile = data;
+        showToast('Профиль сохранён', 'success');
+    } catch (err) {
+        showToast('Не удалось сохранить профиль. Проверьте соединение и попробуйте снова.', 'error');
+    }
 }
 
 function appendLoadingBubble() {
@@ -937,6 +972,9 @@ function bindEvents() {
             deleteChat(chatId).catch((err) => showToast(err.message, 'error'));
         }
     });
+    $('btn-save-profile').addEventListener('click', () => {
+        saveProfile().catch((err) => showToast(err.message, 'error'));
+    });
 }
 
 async function init() {
@@ -944,6 +982,7 @@ async function init() {
     await checkAgentHealth();
     setInterval(checkAgentHealth, 5000);
     await loadModels();
+    await loadProfile();
     try {
         await loadChats();
         if (state.chats.length) {

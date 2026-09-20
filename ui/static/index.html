@@ -68,6 +68,28 @@
                     <div id="memory-long-term" class="space-y-1"></div>
                 </div>
             </div>
+            <div id="profile-panel" class="border-t border-slate-800 p-3 text-xs text-slate-400">
+                <h3 class="text-slate-300 font-medium mb-2">Профиль</h3>
+                <div class="mb-2">
+                    <label for="profile-style" class="block text-sm text-slate-400 mb-1">Стиль общения</label>
+                    <textarea id="profile-style" rows="2" placeholder="Например: коротко и по делу, без длинных вступлений"
+                        class="w-full resize-none rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
+                </div>
+                <div class="mb-2">
+                    <label for="profile-format" class="block text-sm text-slate-400 mb-1">Формат ответа</label>
+                    <textarea id="profile-format" rows="2" placeholder="Например: списком, с примерами кода"
+                        class="w-full resize-none rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
+                </div>
+                <div class="mb-2">
+                    <label for="profile-constraints" class="block text-sm text-slate-400 mb-1">Ограничения</label>
+                    <textarea id="profile-constraints" rows="2" placeholder="Например: не используй жаргон, всегда указывай источники"
+                        class="w-full resize-none rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
+                </div>
+                <button id="btn-save-profile" type="button"
+                    class="w-full rounded-lg bg-indigo-600 hover:bg-indigo-500 px-4 py-2 text-sm font-medium transition">
+                    Сохранить профиль
+                </button>
+            </div>
             <div id="agent-status" class="p-3 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
                 <span>Agent: <span id="agent-status-text">подключение…</span></span>
                 <button id="btn-logout"
