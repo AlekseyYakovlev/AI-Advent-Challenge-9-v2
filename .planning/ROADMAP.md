@@ -8,7 +8,7 @@
 
 ## Phases
 
-- [x] **Phase 1: Auth Foundation** — Users can log in, all accounts are equal "admin," and all data becomes scoped to the owning user (completed 2026-09-20)
+- [x] **Phase 1: Auth Foundation** — Users can log in, all accounts are equal "admin," and all data becomes scoped to the owning user (completed 2026-09-20)
 - [ ] **Phase 2: Memory (Day 11)** — Agent has three explicit, inspectable memory layers populated only via deliberate LLM tool calls
 - [ ] **Phase 3: Personalization (Day 12)** — Each user's profile is injected into every request and observably shapes responses
 - [ ] **Phase 4: Task State Machine (Day 13)** — Chats can contain multiple LLM-created tasks tracked through an explicit lifecycle
@@ -67,7 +67,25 @@ Plans:
   3. Content only lands in working/long-term memory as the result of a visible, explicit LLM tool call — never an automatic/background classification step
   4. User can inspect exactly what data landed in each memory layer for a given chat via a UI panel
 
-**Plans**: TBD
+**Plans**: 5 plans (4 waves)
+Plans:
+**Wave 1**
+
+- [ ] 02-01-PLAN.md — WorkingMemory/LongTermMemory tables, agent/memory.py CRUD, GET /chats/{id}/memory, sidebar Память panel (MEM-01, MEM-02, MEM-04, MEM-05)
+- [ ] 02-02-PLAN.md — LM Studio model load/unload migrated to the working v1 control endpoints, unblocking the tool-capable-model demo path (MEM-03)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 02-03-PLAN.md — Tool argument schemas, agent/tools.py registry + strictly sequential dispatcher, stream_chat tools param and tool_calls delta accumulation (MEM-03)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 02-04-PLAN.md — Read-only memory injection in build_system_prompt, tool-call round-trip inside the per-chat-locked WS turn, memory_writes on the done frame (MEM-01, MEM-03)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 02-05-PLAN.md — Day 11 acceptance demo against a real tool-capable model; records the resolved LM Studio and DeepSeek-routing open questions (MEM-01, MEM-03, MEM-04, MEM-05)
+
 **UI hint**: yes
 
 ### Phase 3: Personalization (Day 12)
@@ -144,7 +162,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Auth Foundation | 5/5 | Complete   | 2026-09-20 |
-| 2. Memory (Day 11) | 0/? | Not started | - |
+| 2. Memory (Day 11) | 0/5 | Planned | - |
 | 3. Personalization (Day 12) | 0/? | Not started | - |
 | 4. Task State Machine (Day 13) | 0/? | Not started | - |
 | 5. Invariants (Day 14) | 0/? | Not started | - |
@@ -152,3 +170,4 @@ Plans:
 
 ---
 *Roadmap created: 2026-09-19*
+*Last updated: 2026-09-20 — Phase 2 planned (5 plans, 4 waves)*
