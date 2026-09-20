@@ -16,6 +16,7 @@ from agent.context_engine import (
     extract_and_update_facts,
     get_effective_settings,
 )
+from agent.dependencies import get_current_user_ws
 from agent.llm_client import llm_client
 from agent.state import (
     CORS_ORIGINS,
@@ -24,6 +25,7 @@ from agent.state import (
     ws_rate_limiter,
 )
 from agent.schemas import MessagePayload
+from shared.auth import SESSION_COOKIE_NAME
 from shared.database import async_session_factory
 from shared.logger import get_logger
 from shared.models import Chat, Message
@@ -66,6 +68,15 @@ def _validate_origin(websocket: WebSocket) -> bool:
 
     logger.warning("ws_origin_rejected", origin=origin)
     return False
+
+
+async def _user_owns_chat(db: AsyncSession, user_id: int, chat_id: int) -> bool:
+    """Return True when chat_id exists and belongs to user_id."""
+    chat = await db.get(Chat, chat_id)
+    if chat is None or chat.user_id != user_id:
+        logger.warning("ws_auth_rejected", chat_id=chat_id, reason="not_owner")
+        return False
+    return True
 
 
 def _check_rate_limit(chat_id: int) -> bool:
@@ -261,6 +272,18 @@ async def ws_chat(websocket: WebSocket, chat_id: int) -> None:
     if not _validate_origin(websocket):
         await websocket.close(code=1008, reason="Origin not allowed")
         return
+
+    session_id = websocket.cookies.get(SESSION_COOKIE_NAME)
+    async with async_session_factory() as db:
+        user = await get_current_user_ws(session_id, db)
+        if user is None:
+            logger.warning("ws_auth_rejected", chat_id=chat_id, reason="no_session")
+            await websocket.close(code=1008, reason="Unauthorized")
+            return
+
+        if not await _user_owns_chat(db, user.id, chat_id):
+            await websocket.close(code=1008, reason="Unauthorized")
+            return
 
     await websocket.accept()
     active_connections.add(websocket)
