@@ -16,6 +16,8 @@ FACTS_JSON_MAX_LENGTH = 50_000
 SUMMARY_TEXT_MAX_LENGTH = 50_000
 USERNAME_MAX_LENGTH = 64
 PASSWORD_MAX_LENGTH = 128
+MEMORY_KEY_MAX_LENGTH = 200
+MEMORY_VALUE_MAX_LENGTH = 50_000
 
 
 class HealthResponse(BaseModel):
@@ -144,3 +146,21 @@ class CreateUserRequest(BaseModel):
 
     username: str = Field(min_length=1, max_length=USERNAME_MAX_LENGTH)
     password: str = Field(min_length=1, max_length=PASSWORD_MAX_LENGTH)
+
+
+class MemoryEntryResponse(BaseModel):
+    """Serialized memory row for the inspection panel."""
+
+    id: int
+    key: str = Field(max_length=MEMORY_KEY_MAX_LENGTH)
+    value: str = Field(max_length=MEMORY_VALUE_MAX_LENGTH)
+    updated_at: datetime
+
+
+class ChatMemoryResponse(BaseModel):
+    """GET /api/v1/chats/{chat_id}/memory response: all three memory layers."""
+
+    chat_id: int
+    short_term_message_count: int
+    working: list[MemoryEntryResponse]
+    long_term: list[MemoryEntryResponse]

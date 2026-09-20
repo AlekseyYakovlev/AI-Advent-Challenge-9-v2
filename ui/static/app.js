@@ -25,6 +25,7 @@ const state = {
     contextWindow: null,
     isStatsLocal: false,
     statsAbortController: null,
+    lastMemory: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -247,6 +248,61 @@ async function loadChatStats(chatId) {
     }
 }
 
+async function loadChatMemory(chatId) {
+    try {
+        const data = await apiFetch(`/api/v1/chats/${chatId}/memory`);
+        state.lastMemory = data;
+        renderMemoryPanel();
+    } catch (err) {
+        console.error('Failed to load memory:', err);
+    }
+}
+
+function renderMemoryEntries(container, entries) {
+    container.replaceChildren();
+    if (!entries.length) {
+        const empty = document.createElement('div');
+        empty.className = 'text-slate-600';
+        empty.textContent = '—';
+        container.appendChild(empty);
+        return;
+    }
+    entries.forEach((entry) => {
+        const row = document.createElement('div');
+        row.className = 'rounded-lg bg-slate-800 px-2 py-1';
+
+        const keyEl = document.createElement('div');
+        keyEl.className = 'text-slate-300 font-semibold';
+        keyEl.textContent = entry.key;
+
+        const valueEl = document.createElement('div');
+        valueEl.className = 'text-slate-400 truncate';
+        const truncated = entry.value.length > 160 ? `${entry.value.slice(0, 160)}…` : entry.value;
+        valueEl.textContent = truncated;
+        valueEl.title = entry.value;
+
+        row.appendChild(keyEl);
+        row.appendChild(valueEl);
+        container.appendChild(row);
+    });
+}
+
+function renderMemoryPanel() {
+    const data = state.lastMemory;
+    const shortTermEl = $('memory-short-term-count');
+    const workingCountEl = $('memory-working-count');
+    const longTermCountEl = $('memory-long-term-count');
+    const workingEl = $('memory-working');
+    const longTermEl = $('memory-long-term');
+    if (!data) return;
+
+    if (shortTermEl) shortTermEl.textContent = String(data.short_term_message_count);
+    if (workingCountEl) workingCountEl.textContent = String(data.working.length);
+    if (longTermCountEl) longTermCountEl.textContent = String(data.long_term.length);
+    if (workingEl) renderMemoryEntries(workingEl, data.working);
+    if (longTermEl) renderMemoryEntries(longTermEl, data.long_term);
+}
+
 function appendLoadingBubble() {
     const container = $('messages');
     const existing = container.querySelector('[data-streaming="true"]');
@@ -352,6 +408,7 @@ async function selectChat(chatId) {
     renderChatList();
     await loadChatTree(chatId);
     await loadChatStats(chatId);
+    await loadChatMemory(chatId);
     connectWs(chatId);
 }
 
@@ -534,7 +591,10 @@ function handleWsMessage(data) {
             unblockInput();
             state.lastFailedMessage = null;
             if (data.stats) updateStats(data.stats);
-            if (state.currentChatId) loadChatTree(state.currentChatId);
+            if (state.currentChatId) {
+                loadChatTree(state.currentChatId);
+                loadChatMemory(state.currentChatId);
+            }
             break;
         case 'error':
             setStreaming(false);
