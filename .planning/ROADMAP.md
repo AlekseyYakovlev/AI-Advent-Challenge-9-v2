@@ -9,7 +9,7 @@
 ## Phases
 
 - [x] **Phase 1: Auth Foundation** — Users can log in, all accounts are equal "admin," and all data becomes scoped to the owning user (completed 2026-09-20)
-- [ ] **Phase 2: Memory (Day 11)** — Agent has three explicit, inspectable memory layers populated only via deliberate LLM tool calls
+- [x] **Phase 2: Memory (Day 11)** — Agent has three explicit, inspectable memory layers populated only via deliberate LLM tool calls (completed 2026-09-20)
 - [ ] **Phase 3: Personalization (Day 12)** — Each user's profile is injected into every request and observably shapes responses
 - [ ] **Phase 4: Task State Machine (Day 13)** — Chats can contain multiple LLM-created tasks tracked through an explicit lifecycle
 - [ ] **Phase 5: Invariants (Day 14)** — Global and per-chat ground rules are injected into context and checked against agent behavior
@@ -84,7 +84,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 02-05-PLAN.md — Day 11 acceptance demo against a real tool-capable model; records the resolved LM Studio and DeepSeek-routing open questions (MEM-01, MEM-03, MEM-04, MEM-05)
+- [x] 02-05-PLAN.md — Day 11 acceptance demo against a real tool-capable model; records the resolved LM Studio and DeepSeek-routing open questions (MEM-01, MEM-03, MEM-04, MEM-05)
 
 **UI hint**: yes
 
@@ -162,7 +162,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Auth Foundation | 5/5 | Complete   | 2026-09-20 |
-| 2. Memory (Day 11) | 4/5 | In Progress|  |
+| 2. Memory (Day 11) | 5/5 | Complete   | 2026-09-20 |
 | 3. Personalization (Day 12) | 0/? | Not started | - |
 | 4. Task State Machine (Day 13) | 0/? | Not started | - |
 | 5. Invariants (Day 14) | 0/? | Not started | - |
