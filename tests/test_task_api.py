@@ -2,6 +2,7 @@
 
 import pytest
 from httpx import AsyncClient
+from sqlmodel import select
 
 from shared.database import async_session_factory
 from shared.models import Chat, Task, TaskState, TaskTransition
@@ -100,3 +101,176 @@ async def test_get_chat_tasks_requires_auth(client: AsyncClient) -> None:
     """Unauthenticated GET returns 401."""
     resp = await client.get("/api/v1/chats/1/tasks")
     assert resp.status_code == 401
+
+
+async def _create_task_row(user_id: int, chat_id: int, title: str = "Task") -> int:
+    """Insert a Task row (and its creation transition) directly via the DB, bypassing tools."""
+    async with async_session_factory() as session:
+        task = Task(
+            user_id=user_id,
+            chat_id=chat_id,
+            title=title,
+            description="Description",
+            goal="Goal",
+            state=TaskState.PLANNING,
+        )
+        session.add(task)
+        await session.flush()
+        session.add(
+            TaskTransition(task_id=task.id, from_state=None, to_state=TaskState.PLANNING, note=""),
+        )
+        await session.commit()
+        await session.refresh(task)
+        return task.id
+
+
+@pytest.mark.asyncio
+async def test_pause_endpoint_sets_is_paused(authenticated_client: AsyncClient) -> None:
+    """POST /pause sets is_paused True and leaves state unchanged."""
+    user_id = authenticated_client.seeded_user_id
+    chat_resp = await authenticated_client.post("/api/v1/chats", json={"title": "Pause chat"})
+    chat_id = chat_resp.json()["id"]
+    task_id = await _create_task_row(user_id, chat_id)
+
+    resp = await authenticated_client.post(f"/api/v1/tasks/{task_id}/pause")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["is_paused"] is True
+    assert body["state"] == "planning"
+
+    async with async_session_factory() as session:
+        task = await session.get(Task, task_id)
+        assert task.is_paused is True
+        assert task.state is TaskState.PLANNING
+
+
+@pytest.mark.asyncio
+async def test_resume_endpoint_clears_is_paused(authenticated_client: AsyncClient) -> None:
+    """POST /resume clears is_paused after a prior pause."""
+    user_id = authenticated_client.seeded_user_id
+    chat_resp = await authenticated_client.post("/api/v1/chats", json={"title": "Resume chat"})
+    chat_id = chat_resp.json()["id"]
+    task_id = await _create_task_row(user_id, chat_id)
+
+    await authenticated_client.post(f"/api/v1/tasks/{task_id}/pause")
+    resp = await authenticated_client.post(f"/api/v1/tasks/{task_id}/resume")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["is_paused"] is False
+
+    async with async_session_factory() as session:
+        task = await session.get(Task, task_id)
+        assert task.is_paused is False
+
+
+@pytest.mark.asyncio
+async def test_cancel_endpoint_sets_cancelled_state_and_appends_transition(
+    authenticated_client: AsyncClient,
+) -> None:
+    """POST /cancel moves the task to cancelled and appends a TaskTransition row."""
+    user_id = authenticated_client.seeded_user_id
+    chat_resp = await authenticated_client.post("/api/v1/chats", json={"title": "Cancel chat"})
+    chat_id = chat_resp.json()["id"]
+    task_id = await _create_task_row(user_id, chat_id)
+
+    resp = await authenticated_client.post(f"/api/v1/tasks/{task_id}/cancel")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["state"] == "cancelled"
+
+    async with async_session_factory() as session:
+        result = await session.exec(
+            select(TaskTransition).where(TaskTransition.task_id == task_id),
+        )
+        rows = list(result.all())
+        assert len(rows) == 2
+        newest = max(rows, key=lambda row: row.id)
+        assert newest.to_state is TaskState.CANCELLED
+        assert newest.from_state is TaskState.PLANNING
+
+
+@pytest.mark.asyncio
+async def test_cancel_endpoint_response_includes_history(
+    authenticated_client: AsyncClient,
+) -> None:
+    """The cancel endpoint's response embeds the new cancellation entry in history."""
+    user_id = authenticated_client.seeded_user_id
+    chat_resp = await authenticated_client.post("/api/v1/chats", json={"title": "History chat"})
+    chat_id = chat_resp.json()["id"]
+    task_id = await _create_task_row(user_id, chat_id)
+
+    resp = await authenticated_client.post(f"/api/v1/tasks/{task_id}/cancel")
+    body = resp.json()
+    assert any(h["to_state"] == "cancelled" for h in body["history"])
+
+
+@pytest.mark.asyncio
+async def test_pause_endpoint_other_users_task_returns_404(
+    authenticated_client: AsyncClient,
+    second_authenticated_client: AsyncClient,
+) -> None:
+    """A non-owner POST /pause returns 404 (never 403) and leaves is_paused False."""
+    user_id = authenticated_client.seeded_user_id
+    chat_resp = await authenticated_client.post("/api/v1/chats", json={"title": "Owned by A"})
+    chat_id = chat_resp.json()["id"]
+    task_id = await _create_task_row(user_id, chat_id)
+
+    resp = await second_authenticated_client.post(f"/api/v1/tasks/{task_id}/pause")
+    assert resp.status_code == 404
+
+    async with async_session_factory() as session:
+        task = await session.get(Task, task_id)
+        assert task.is_paused is False
+
+
+@pytest.mark.asyncio
+async def test_resume_endpoint_other_users_task_returns_404(
+    authenticated_client: AsyncClient,
+    second_authenticated_client: AsyncClient,
+) -> None:
+    """A non-owner POST /resume returns 404 (never 403) and leaves is_paused False."""
+    user_id = authenticated_client.seeded_user_id
+    chat_resp = await authenticated_client.post("/api/v1/chats", json={"title": "Owned by A2"})
+    chat_id = chat_resp.json()["id"]
+    task_id = await _create_task_row(user_id, chat_id)
+
+    resp = await second_authenticated_client.post(f"/api/v1/tasks/{task_id}/resume")
+    assert resp.status_code == 404
+
+    async with async_session_factory() as session:
+        task = await session.get(Task, task_id)
+        assert task.is_paused is False
+
+
+@pytest.mark.asyncio
+async def test_cancel_endpoint_other_users_task_returns_404(
+    authenticated_client: AsyncClient,
+    second_authenticated_client: AsyncClient,
+) -> None:
+    """A non-owner POST /cancel returns 404 (never 403) and leaves state unchanged."""
+    user_id = authenticated_client.seeded_user_id
+    chat_resp = await authenticated_client.post("/api/v1/chats", json={"title": "Owned by A3"})
+    chat_id = chat_resp.json()["id"]
+    task_id = await _create_task_row(user_id, chat_id)
+
+    resp = await second_authenticated_client.post(f"/api/v1/tasks/{task_id}/cancel")
+    assert resp.status_code == 404
+
+    async with async_session_factory() as session:
+        task = await session.get(Task, task_id)
+        assert task.state is TaskState.PLANNING
+
+
+@pytest.mark.asyncio
+async def test_task_control_endpoints_require_auth(client: AsyncClient) -> None:
+    """Unauthenticated POSTs to all three control endpoints return 401."""
+    for suffix in ("pause", "resume", "cancel"):
+        resp = await client.post(f"/api/v1/tasks/1/{suffix}")
+        assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_unknown_task_id_returns_404(authenticated_client: AsyncClient) -> None:
+    """POST /pause for a nonexistent task id returns 404."""
+    resp = await authenticated_client.post("/api/v1/tasks/999999/pause")
+    assert resp.status_code == 404
