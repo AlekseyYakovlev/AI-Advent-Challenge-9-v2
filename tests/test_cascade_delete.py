@@ -9,6 +9,7 @@ from shared.database import async_session_factory
 from shared.models import (
     Chat,
     ChatInvariant,
+    InvariantConflict,
     Message,
     Settings,
     Task,
@@ -147,3 +148,41 @@ async def test_delete_chat_cascades_chat_invariants(
 
     async with async_session_factory() as session:
         assert (await session.get(ChatInvariant, invariant_id)) is None
+
+
+@pytest.mark.asyncio
+async def test_delete_chat_cascades_invariant_conflicts(
+    authenticated_client: AsyncClient,
+) -> None:
+    """DELETE should CASCADE-remove a chat's InvariantConflict rows."""
+    async with async_session_factory() as session:
+        chat = Chat(title="Cascade Conflicts", user_id=authenticated_client.seeded_user_id)
+        session.add(chat)
+        await session.commit()
+        await session.refresh(chat)
+
+        message = Message(chat_id=chat.id, role="assistant", content="Разверни через Docker")
+        session.add(message)
+        await session.commit()
+        await session.refresh(message)
+
+        conflict = InvariantConflict(
+            chat_id=chat.id,
+            message_id=message.id,
+            invariant_scope="global",
+            invariant_id=1,
+            invariant_title="Без Docker",
+            note="Беру свои слова назад.",
+        )
+        session.add(conflict)
+        await session.commit()
+        await session.refresh(conflict)
+
+        chat_id = chat.id
+        conflict_id = conflict.id
+
+    resp = await authenticated_client.delete(f"/api/v1/chats/{chat_id}")
+    assert resp.status_code == 204
+
+    async with async_session_factory() as session:
+        assert (await session.get(InvariantConflict, conflict_id)) is None
