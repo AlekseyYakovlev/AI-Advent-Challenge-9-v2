@@ -106,7 +106,7 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 03-01-PLAN.md — Profile table (D-01), agent/profile.py CRUD, GET/PUT /api/v1/profile, unconditional injection in build_system_prompt (PERS-01, PERS-02)
+- [x] 03-01-PLAN.md — Profile table (D-01), agent/profile.py CRUD, GET/PUT /api/v1/profile, unconditional injection in build_system_prompt (PERS-01, PERS-02)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -176,7 +176,7 @@ Plans:
 |-------|----------------|--------|-----------|
 | 1. Auth Foundation | 5/5 | Complete   | 2026-09-20 |
 | 2. Memory (Day 11) | 5/5 | Complete   | 2026-09-20 |
-| 3. Personalization (Day 12) | 0/3 | Planned | - |
+| 3. Personalization (Day 12) | 1/3 | In Progress|  |
 | 4. Task State Machine (Day 13) | 0/? | Not started | - |
 | 5. Invariants (Day 14) | 0/? | Not started | - |
 | 6. Controlled Transitions (Day 15) | 0/? | Not started | - |
