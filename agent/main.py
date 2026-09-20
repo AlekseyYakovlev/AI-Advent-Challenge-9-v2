@@ -25,6 +25,8 @@ from agent.schemas import (
     MessageResponse,
     ModelLoadRequest,
     ModelLoadResult,
+    ProfileResponse,
+    ProfileUpdate,
     SettingsResponse,
     SettingsUpdate,
     UserResponse,
@@ -32,7 +34,7 @@ from agent.schemas import (
 from agent.llm_client import LMStudioClient
 from agent.state import CORS_ORIGINS, cleanup_chat_caches
 from agent.context_engine import compute_chat_stats
-from agent import memory
+from agent import memory, profile
 from agent.ws import ws_chat
 from shared.auth import (
     SESSION_COOKIE_NAME,
@@ -44,7 +46,15 @@ from shared.auth import (
 )
 from shared.database import engine, get_session, init_db
 from shared.logger import get_logger
-from shared.models import Chat, ContextStrategy, Message, Session as SessionRow, Settings, User
+from shared.models import (
+    Chat,
+    ContextStrategy,
+    Message,
+    Profile,
+    Session as SessionRow,
+    Settings,
+    User,
+)
 
 logger = get_logger(__name__)
 
@@ -124,6 +134,17 @@ def _settings_to_response(row: Settings) -> SettingsResponse:
         strategy=_normalize_strategy(row.strategy),
         facts_json=row.facts_json,
         summary_text=row.summary_text,
+    )
+
+
+def _profile_to_response(row: Profile) -> ProfileResponse:
+    """Map a Profile ORM row to the API response schema."""
+    return ProfileResponse(
+        id=row.id,
+        style=row.style,
+        format=row.format,
+        constraints=row.constraints,
+        updated_at=row.updated_at,
     )
 
 
@@ -487,6 +508,28 @@ async def update_settings(
         await session.rollback()
         raise
     return _settings_to_response(row)
+
+
+@app.get("/api/v1/profile", response_model=ProfileResponse)
+async def get_profile(
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> ProfileResponse:
+    """Return the caller's profile, lazily creating an empty row on first access."""
+    row = await profile.get_or_create_profile(session, current_user.id)
+    return _profile_to_response(row)
+
+
+@app.put("/api/v1/profile", response_model=ProfileResponse)
+async def update_profile(
+    body: ProfileUpdate,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> ProfileResponse:
+    """Update the caller's profile fields (UI-only write path, D-02)."""
+    updates = body.model_dump(exclude_unset=True)
+    row = await profile.update_profile(session, current_user.id, **updates)
+    return _profile_to_response(row)
 
 
 @app.get("/api/v1/lm-studio/models")
