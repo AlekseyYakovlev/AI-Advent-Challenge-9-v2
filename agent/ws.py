@@ -317,14 +317,14 @@ async def _handle_chat_message(
                 for result in tool_results:
                     if result["ok"] and result["name"] in TASK_TOOL_NAMES:
                         try:
-                            payload = json.loads(result["content"])
+                            task_result = json.loads(result["content"])
                         except json.JSONDecodeError:
                             continue
                         task_writes.append(
                             {
-                                "id": payload.get("id"),
-                                "title": payload.get("title"),
-                                "state": payload.get("state"),
+                                "id": task_result.get("id"),
+                                "title": task_result.get("title"),
+                                "state": task_result.get("state"),
                             },
                         )
 
