@@ -30,6 +30,8 @@ const state = {
     lastTasks: null,
     lastGlobalInvariants: null,
     editingGlobalInvariantId: null,
+    lastChatInvariants: null,
+    editingChatInvariantId: null,
 };
 
 const TASK_STATE_LABELS = {
@@ -553,6 +555,40 @@ async function loadInvariants() {
     }
 }
 
+async function loadChatInvariants(chatId) {
+    try {
+        const data = await apiFetch(`/api/v1/chats/${chatId}/invariants`);
+        state.lastChatInvariants = data;
+        renderInvariantsPanel();
+    } catch (err) {
+        console.error('Failed to load chat invariants:', err);
+        showToast('Не удалось загрузить инварианты. Проверьте соединение и попробуйте снова.', 'error');
+    }
+}
+
+function populateOverridesSelect() {
+    const select = $('invariant-chat-overrides');
+    if (!select) return;
+    const previousValue = select.value;
+    select.replaceChildren();
+
+    const defaultOption = document.createElement('option');
+    defaultOption.value = '';
+    defaultOption.textContent = 'Не переопределяет';
+    select.appendChild(defaultOption);
+
+    const globals = state.lastGlobalInvariants || [];
+    globals.forEach((item) => {
+        const opt = document.createElement('option');
+        opt.value = String(item.id);
+        opt.textContent = item.title;
+        select.appendChild(opt);
+    });
+
+    const stillExists = globals.some((item) => String(item.id) === previousValue);
+    select.value = stillExists ? previousValue : '';
+}
+
 function renderInvariantsPanel() {
     const items = state.lastGlobalInvariants;
     if (items === null) return;
@@ -616,6 +652,126 @@ function renderInvariantsPanel() {
         card.appendChild(actionsEl);
         listEl.appendChild(card);
     });
+
+    populateOverridesSelect();
+
+    const chatItems = state.lastChatInvariants;
+    const chatCountEl = $('invariant-chat-count');
+    const chatListEl = $('invariant-chat-list');
+    if (chatCountEl) chatCountEl.textContent = String((chatItems || []).length);
+    if (chatListEl) {
+        chatListEl.replaceChildren();
+        if (!chatItems || !chatItems.length) {
+            const empty = document.createElement('div');
+            empty.className = 'text-slate-600';
+            empty.textContent = 'У этого чата нет отдельных инвариантов';
+            chatListEl.appendChild(empty);
+
+            const helper = document.createElement('div');
+            helper.className = 'text-slate-600';
+            helper.textContent = 'Правила чата могут дополнять или переопределять глобальные';
+            chatListEl.appendChild(helper);
+        } else {
+            chatItems.forEach((item) => {
+                const card = document.createElement('div');
+                card.className = 'rounded-lg bg-slate-800 px-2 py-1';
+
+                const titleEl = document.createElement('div');
+                titleEl.className = 'text-sm font-semibold text-slate-300';
+                titleEl.textContent = item.title;
+                card.appendChild(titleEl);
+
+                const ruleEl = document.createElement('div');
+                ruleEl.className = 'text-slate-400';
+                ruleEl.textContent = item.rule_text;
+                card.appendChild(ruleEl);
+
+                if (item.overrides_title) {
+                    const overrideEl = document.createElement('div');
+                    overrideEl.className = 'text-amber-400';
+                    overrideEl.textContent = `переопределяет: ${item.overrides_title}`;
+                    card.appendChild(overrideEl);
+                }
+
+                const actionsEl = document.createElement('div');
+                actionsEl.className = 'flex items-center gap-2 mt-1';
+
+                const editBtn = document.createElement('button');
+                editBtn.type = 'button';
+                editBtn.className = 'text-slate-400 hover:text-white';
+                editBtn.textContent = 'Изменить';
+                editBtn.addEventListener('click', () => {
+                    state.editingChatInvariantId = item.id;
+                    $('invariant-chat-title').value = item.title;
+                    $('invariant-chat-rule').value = item.rule_text;
+                    const select = $('invariant-chat-overrides');
+                    if (select) select.value = item.overrides_id ? String(item.overrides_id) : '';
+                    $('btn-save-chat-invariant').textContent = 'Сохранить инвариант';
+                });
+                actionsEl.appendChild(editBtn);
+
+                const deleteBtn = document.createElement('button');
+                deleteBtn.type = 'button';
+                deleteBtn.className = 'text-red-400 hover:text-red-300';
+                deleteBtn.textContent = 'Удалить';
+                deleteBtn.addEventListener('click', () => {
+                    deleteChatInvariant(item.id).catch((err) => showToast(err.message, 'error'));
+                });
+                actionsEl.appendChild(deleteBtn);
+
+                card.appendChild(actionsEl);
+                chatListEl.appendChild(card);
+            });
+        }
+    }
+}
+
+async function deleteChatInvariant(invariantId) {
+    if (!state.currentChatId) return;
+    if (!confirm('Удалить этот инвариант? Это действие нельзя отменить.')) return;
+    try {
+        await apiFetch(`/api/v1/chats/${state.currentChatId}/invariants/${invariantId}`, {
+            method: 'DELETE',
+        });
+        showToast('Инвариант удалён', 'success');
+        await loadChatInvariants(state.currentChatId);
+    } catch (err) {
+        showToast('Не удалось удалить инвариант. Проверьте соединение и попробуйте снова.', 'error');
+    }
+}
+
+async function saveChatInvariant() {
+    const title = $('invariant-chat-title').value.trim();
+    const ruleText = $('invariant-chat-rule').value.trim();
+    if (!title || !ruleText || !state.currentChatId) {
+        showToast('Заполните название и текст правила', 'error');
+        return;
+    }
+    const select = $('invariant-chat-overrides');
+    const overridesId = select && select.value !== '' ? Number(select.value) : null;
+    const body = { title, rule_text: ruleText, overrides_id: overridesId };
+    try {
+        if (state.editingChatInvariantId === null) {
+            await apiFetch(`/api/v1/chats/${state.currentChatId}/invariants`, {
+                method: 'POST',
+                body: JSON.stringify(body),
+            });
+        } else {
+            await apiFetch(
+                `/api/v1/chats/${state.currentChatId}/invariants/${state.editingChatInvariantId}`,
+                { method: 'PUT', body: JSON.stringify(body) },
+            );
+        }
+        $('invariant-chat-title').value = '';
+        $('invariant-chat-rule').value = '';
+        if (select) select.value = '';
+        state.editingChatInvariantId = null;
+        $('btn-save-chat-invariant').textContent = 'Добавить инвариант чата';
+        showToast('Инвариант сохранён', 'success');
+        await loadChatInvariants(state.currentChatId);
+    } catch (err) {
+        showToast('Не удалось сохранить инвариант. Проверьте соединение и попробуйте снова.', 'error');
+    }
 }
 
 async function deleteGlobalInvariant(invariantId) {
@@ -764,6 +920,7 @@ async function selectChat(chatId) {
     await loadChatStats(chatId);
     await loadChatMemory(chatId);
     await loadChatTasks(chatId);
+    await loadChatInvariants(chatId);
     connectWs(chatId);
 }
 
@@ -950,6 +1107,7 @@ function handleWsMessage(data) {
                 loadChatTree(state.currentChatId);
                 loadChatMemory(state.currentChatId);
                 loadChatTasks(state.currentChatId);
+                loadChatInvariants(state.currentChatId);
             }
             break;
         case 'error':
@@ -1298,6 +1456,9 @@ function bindEvents() {
     });
     $('btn-save-global-invariant').addEventListener('click', () => {
         saveGlobalInvariant().catch((err) => showToast(err.message, 'error'));
+    });
+    $('btn-save-chat-invariant').addEventListener('click', () => {
+        saveChatInvariant().catch((err) => showToast(err.message, 'error'));
     });
     setupFoldablePanels();
 }
