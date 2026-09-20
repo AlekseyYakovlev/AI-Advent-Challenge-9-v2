@@ -172,7 +172,7 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 05-01-PLAN.md — GlobalInvariant table, agent/invariants.py CRUD, shared /api/v1/invariants routes, Инварианты sidebar tab, fold/unfold retrofit on all four panels (INV-01, INV-05)
+- [x] 05-01-PLAN.md — GlobalInvariant table, agent/invariants.py CRUD, shared /api/v1/invariants routes, Инварианты sidebar tab, fold/unfold retrofit on all four panels (INV-01, INV-05)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -212,7 +212,7 @@ Plans:
 | 2. Memory (Day 11) | 5/5 | Complete   | 2026-09-20 |
 | 3. Personalization (Day 12) | 3/3 | Complete   | 2026-09-20 |
 | 4. Task State Machine (Day 13) | 4/4 | Complete   | 2026-09-20 |
-| 5. Invariants (Day 14) | 0/4 | Planned | - |
+| 5. Invariants (Day 14) | 1/4 | In Progress|  |
 | 6. Controlled Transitions (Day 15) | 0/? | Not started | - |
 
 ---
