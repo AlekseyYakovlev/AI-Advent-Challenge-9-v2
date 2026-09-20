@@ -45,7 +45,7 @@ async def test_init_db_migrates_branching_strategy() -> None:
 
 @pytest.mark.asyncio
 async def test_init_db_creates_all_tables() -> None:
-    """init_db() should create chat, message, settings, tokenusage, user, session, memory, and profile tables."""
+    """init_db() should create chat, message, settings, tokenusage, user, session, memory, profile, task, and invariant tables."""
     async with engine.connect() as conn:
         result = await conn.execute(
             text(
@@ -67,6 +67,9 @@ async def test_init_db_creates_all_tables() -> None:
         "profile",
         "task",
         "tasktransition",
+        "globalinvariant",
+        "chatinvariant",
+        "invariantconflict",
     }
 
 

@@ -28,6 +28,11 @@ const state = {
     lastMemory: null,
     lastProfile: null,
     lastTasks: null,
+    lastGlobalInvariants: null,
+    editingGlobalInvariantId: null,
+    lastChatInvariants: null,
+    editingChatInvariantId: null,
+    lastConflicts: [],
 };
 
 const TASK_STATE_LABELS = {
@@ -178,6 +183,11 @@ function renderMessages() {
         bubble.appendChild(controls);
         wrapper.appendChild(bubble);
         container.appendChild(wrapper);
+        state.lastConflicts
+            .filter((conflict) => conflict.message_id === msg.id)
+            .forEach((conflict) => {
+                container.appendChild(buildConflictBanner(conflict));
+            });
     });
     if (state.isStreaming) {
         appendLoadingBubble();
@@ -527,6 +537,336 @@ async function saveProfile() {
     }
 }
 
+function setupFoldablePanels() {
+    document.querySelectorAll('[data-fold-toggle]').forEach((btn) => {
+        const targetId = btn.dataset.foldToggle;
+        const body = document.getElementById(targetId);
+        if (!body) return;
+        btn.addEventListener('click', () => {
+            const collapsed = body.classList.toggle('hidden');
+            btn.textContent = collapsed ? '▸' : '▾';
+            btn.setAttribute('aria-expanded', String(!collapsed));
+        });
+    });
+}
+
+async function loadInvariants() {
+    try {
+        const data = await apiFetch('/api/v1/invariants');
+        state.lastGlobalInvariants = data;
+        renderInvariantsPanel();
+    } catch (err) {
+        console.error('Failed to load invariants:', err);
+        showToast('Не удалось загрузить инварианты. Проверьте соединение и попробуйте снова.', 'error');
+    }
+}
+
+async function loadChatInvariants(chatId) {
+    try {
+        const data = await apiFetch(`/api/v1/chats/${chatId}/invariants`);
+        state.lastChatInvariants = data;
+        renderInvariantsPanel();
+    } catch (err) {
+        console.error('Failed to load chat invariants:', err);
+        showToast('Не удалось загрузить инварианты. Проверьте соединение и попробуйте снова.', 'error');
+    }
+}
+
+async function loadChatConflicts(chatId) {
+    try {
+        const data = await apiFetch(`/api/v1/chats/${chatId}/invariant-conflicts`);
+        state.lastConflicts = data;
+        renderConflictBadge();
+        renderMessages();
+    } catch (err) {
+        console.error('Failed to load invariant conflicts:', err);
+        showToast('Не удалось загрузить инварианты. Проверьте соединение и попробуйте снова.', 'error');
+        state.lastConflicts = [];
+    }
+}
+
+function renderConflictBadge() {
+    const badge = $('invariant-conflict-badge');
+    if (!badge) return;
+    badge.textContent = String(state.lastConflicts.length);
+    badge.classList.toggle('hidden', state.lastConflicts.length === 0);
+}
+
+function buildConflictBanner(conflict) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'flex justify-start';
+
+    const bubble = document.createElement('div');
+    bubble.className = 'max-w-[75%] rounded-xl border border-amber-700 bg-amber-900/50 px-4 py-2 text-sm';
+
+    const heading = document.createElement('div');
+    heading.className = 'text-amber-400 font-semibold';
+    heading.textContent = '⚠️ Обнаружен конфликт с инвариантом';
+    bubble.appendChild(heading);
+
+    const body = document.createElement('div');
+    body.className = 'message-content prose prose-invert prose-sm max-w-none mt-1';
+
+    const titleEl = document.createElement('span');
+    titleEl.textContent = `«${conflict.invariant_title}» — `;
+    body.appendChild(titleEl);
+
+    const noteEl = document.createElement('span');
+    noteEl.innerHTML = renderMarkdown(conflict.note);
+    body.appendChild(noteEl);
+
+    bubble.appendChild(body);
+    wrapper.appendChild(bubble);
+    return wrapper;
+}
+
+function populateOverridesSelect() {
+    const select = $('invariant-chat-overrides');
+    if (!select) return;
+    const previousValue = select.value;
+    select.replaceChildren();
+
+    const defaultOption = document.createElement('option');
+    defaultOption.value = '';
+    defaultOption.textContent = 'Не переопределяет';
+    select.appendChild(defaultOption);
+
+    const globals = state.lastGlobalInvariants || [];
+    globals.forEach((item) => {
+        const opt = document.createElement('option');
+        opt.value = String(item.id);
+        opt.textContent = item.title;
+        select.appendChild(opt);
+    });
+
+    const stillExists = globals.some((item) => String(item.id) === previousValue);
+    select.value = stillExists ? previousValue : '';
+}
+
+function renderInvariantsPanel() {
+    const items = state.lastGlobalInvariants;
+    if (items === null) return;
+    const countEl = $('invariant-global-count');
+    const listEl = $('invariant-global-list');
+    if (countEl) countEl.textContent = String(items.length);
+    if (!listEl) return;
+    listEl.replaceChildren();
+
+    if (!items.length) {
+        const empty = document.createElement('div');
+        empty.className = 'text-slate-600';
+        empty.textContent = 'Глобальных инвариантов пока нет';
+        listEl.appendChild(empty);
+
+        const helper = document.createElement('div');
+        helper.className = 'text-slate-600';
+        helper.textContent = 'Добавьте первое правило — оно будет действовать во всех чатах';
+        listEl.appendChild(helper);
+        return;
+    }
+
+    items.forEach((item) => {
+        const card = document.createElement('div');
+        card.className = 'rounded-lg bg-slate-800 px-2 py-1';
+
+        const titleEl = document.createElement('div');
+        titleEl.className = 'text-sm font-semibold text-slate-300';
+        titleEl.textContent = item.title;
+        card.appendChild(titleEl);
+
+        const ruleEl = document.createElement('div');
+        ruleEl.className = 'text-slate-400';
+        ruleEl.textContent = item.rule_text;
+        card.appendChild(ruleEl);
+
+        const actionsEl = document.createElement('div');
+        actionsEl.className = 'flex items-center gap-2 mt-1';
+
+        const editBtn = document.createElement('button');
+        editBtn.type = 'button';
+        editBtn.className = 'text-slate-400 hover:text-white';
+        editBtn.textContent = 'Изменить';
+        editBtn.addEventListener('click', () => {
+            state.editingGlobalInvariantId = item.id;
+            $('invariant-global-title').value = item.title;
+            $('invariant-global-rule').value = item.rule_text;
+            $('btn-save-global-invariant').textContent = 'Сохранить инвариант';
+        });
+        actionsEl.appendChild(editBtn);
+
+        const deleteBtn = document.createElement('button');
+        deleteBtn.type = 'button';
+        deleteBtn.className = 'text-red-400 hover:text-red-300';
+        deleteBtn.textContent = 'Удалить';
+        deleteBtn.addEventListener('click', () => {
+            deleteGlobalInvariant(item.id).catch((err) => showToast(err.message, 'error'));
+        });
+        actionsEl.appendChild(deleteBtn);
+
+        card.appendChild(actionsEl);
+        listEl.appendChild(card);
+    });
+
+    populateOverridesSelect();
+
+    const chatItems = state.lastChatInvariants;
+    const chatCountEl = $('invariant-chat-count');
+    const chatListEl = $('invariant-chat-list');
+    if (chatCountEl) chatCountEl.textContent = String((chatItems || []).length);
+    if (chatListEl) {
+        chatListEl.replaceChildren();
+        if (!chatItems || !chatItems.length) {
+            const empty = document.createElement('div');
+            empty.className = 'text-slate-600';
+            empty.textContent = 'У этого чата нет отдельных инвариантов';
+            chatListEl.appendChild(empty);
+
+            const helper = document.createElement('div');
+            helper.className = 'text-slate-600';
+            helper.textContent = 'Правила чата могут дополнять или переопределять глобальные';
+            chatListEl.appendChild(helper);
+        } else {
+            chatItems.forEach((item) => {
+                const card = document.createElement('div');
+                card.className = 'rounded-lg bg-slate-800 px-2 py-1';
+
+                const titleEl = document.createElement('div');
+                titleEl.className = 'text-sm font-semibold text-slate-300';
+                titleEl.textContent = item.title;
+                card.appendChild(titleEl);
+
+                const ruleEl = document.createElement('div');
+                ruleEl.className = 'text-slate-400';
+                ruleEl.textContent = item.rule_text;
+                card.appendChild(ruleEl);
+
+                if (item.overrides_title) {
+                    const overrideEl = document.createElement('div');
+                    overrideEl.className = 'text-amber-400';
+                    overrideEl.textContent = `переопределяет: ${item.overrides_title}`;
+                    card.appendChild(overrideEl);
+                }
+
+                const actionsEl = document.createElement('div');
+                actionsEl.className = 'flex items-center gap-2 mt-1';
+
+                const editBtn = document.createElement('button');
+                editBtn.type = 'button';
+                editBtn.className = 'text-slate-400 hover:text-white';
+                editBtn.textContent = 'Изменить';
+                editBtn.addEventListener('click', () => {
+                    state.editingChatInvariantId = item.id;
+                    $('invariant-chat-title').value = item.title;
+                    $('invariant-chat-rule').value = item.rule_text;
+                    const select = $('invariant-chat-overrides');
+                    if (select) select.value = item.overrides_id ? String(item.overrides_id) : '';
+                    $('btn-save-chat-invariant').textContent = 'Сохранить инвариант';
+                });
+                actionsEl.appendChild(editBtn);
+
+                const deleteBtn = document.createElement('button');
+                deleteBtn.type = 'button';
+                deleteBtn.className = 'text-red-400 hover:text-red-300';
+                deleteBtn.textContent = 'Удалить';
+                deleteBtn.addEventListener('click', () => {
+                    deleteChatInvariant(item.id).catch((err) => showToast(err.message, 'error'));
+                });
+                actionsEl.appendChild(deleteBtn);
+
+                card.appendChild(actionsEl);
+                chatListEl.appendChild(card);
+            });
+        }
+    }
+}
+
+async function deleteChatInvariant(invariantId) {
+    if (!state.currentChatId) return;
+    if (!confirm('Удалить этот инвариант? Это действие нельзя отменить.')) return;
+    try {
+        await apiFetch(`/api/v1/chats/${state.currentChatId}/invariants/${invariantId}`, {
+            method: 'DELETE',
+        });
+        showToast('Инвариант удалён', 'success');
+        await loadChatInvariants(state.currentChatId);
+    } catch (err) {
+        showToast('Не удалось удалить инвариант. Проверьте соединение и попробуйте снова.', 'error');
+    }
+}
+
+async function saveChatInvariant() {
+    const title = $('invariant-chat-title').value.trim();
+    const ruleText = $('invariant-chat-rule').value.trim();
+    if (!title || !ruleText || !state.currentChatId) {
+        showToast('Заполните название и текст правила', 'error');
+        return;
+    }
+    const select = $('invariant-chat-overrides');
+    const overridesId = select && select.value !== '' ? Number(select.value) : null;
+    const body = { title, rule_text: ruleText, overrides_id: overridesId };
+    try {
+        if (state.editingChatInvariantId === null) {
+            await apiFetch(`/api/v1/chats/${state.currentChatId}/invariants`, {
+                method: 'POST',
+                body: JSON.stringify(body),
+            });
+        } else {
+            await apiFetch(
+                `/api/v1/chats/${state.currentChatId}/invariants/${state.editingChatInvariantId}`,
+                { method: 'PUT', body: JSON.stringify(body) },
+            );
+        }
+        $('invariant-chat-title').value = '';
+        $('invariant-chat-rule').value = '';
+        if (select) select.value = '';
+        state.editingChatInvariantId = null;
+        $('btn-save-chat-invariant').textContent = 'Добавить инвариант чата';
+        showToast('Инвариант сохранён', 'success');
+        await loadChatInvariants(state.currentChatId);
+    } catch (err) {
+        showToast('Не удалось сохранить инвариант. Проверьте соединение и попробуйте снова.', 'error');
+    }
+}
+
+async function deleteGlobalInvariant(invariantId) {
+    if (!confirm('Удалить этот инвариант? Это действие нельзя отменить.')) return;
+    try {
+        await apiFetch(`/api/v1/invariants/${invariantId}`, { method: 'DELETE' });
+        showToast('Инвариант удалён', 'success');
+        await loadInvariants();
+    } catch (err) {
+        showToast('Не удалось удалить инвариант. Проверьте соединение и попробуйте снова.', 'error');
+    }
+}
+
+async function saveGlobalInvariant() {
+    const title = $('invariant-global-title').value.trim();
+    const ruleText = $('invariant-global-rule').value.trim();
+    if (!title || !ruleText) {
+        showToast('Заполните название и текст правила', 'error');
+        return;
+    }
+    const body = { title, rule_text: ruleText };
+    try {
+        if (state.editingGlobalInvariantId === null) {
+            await apiFetch('/api/v1/invariants', { method: 'POST', body: JSON.stringify(body) });
+        } else {
+            await apiFetch(`/api/v1/invariants/${state.editingGlobalInvariantId}`, {
+                method: 'PUT',
+                body: JSON.stringify(body),
+            });
+        }
+        $('invariant-global-title').value = '';
+        $('invariant-global-rule').value = '';
+        state.editingGlobalInvariantId = null;
+        $('btn-save-global-invariant').textContent = 'Добавить инвариант';
+        showToast('Инвариант сохранён', 'success');
+        await loadInvariants();
+    } catch (err) {
+        showToast('Не удалось сохранить инвариант. Проверьте соединение и попробуйте снова.', 'error');
+    }
+}
+
 function appendLoadingBubble() {
     const container = $('messages');
     const existing = container.querySelector('[data-streaming="true"]');
@@ -627,6 +967,7 @@ async function selectChat(chatId) {
     state.isStatsLocal = false;
     state.childrenByParent.clear();
     state.activeChildByParent.clear();
+    state.lastConflicts = [];
     const chat = state.chats.find((c) => c.id === chatId);
     $('chat-title').textContent = chat?.title || 'Чат';
     renderChatList();
@@ -634,6 +975,8 @@ async function selectChat(chatId) {
     await loadChatStats(chatId);
     await loadChatMemory(chatId);
     await loadChatTasks(chatId);
+    await loadChatInvariants(chatId);
+    await loadChatConflicts(chatId);
     connectWs(chatId);
 }
 
@@ -820,6 +1163,11 @@ function handleWsMessage(data) {
                 loadChatTree(state.currentChatId);
                 loadChatMemory(state.currentChatId);
                 loadChatTasks(state.currentChatId);
+                loadChatInvariants(state.currentChatId);
+                loadChatConflicts(state.currentChatId);
+            }
+            if (data.invariant_conflict) {
+                showToast('⚠️ Обнаружен конфликт с инвариантом', 'warning');
             }
             break;
         case 'error':
@@ -1166,6 +1514,13 @@ function bindEvents() {
     $('btn-save-profile').addEventListener('click', () => {
         saveProfile().catch((err) => showToast(err.message, 'error'));
     });
+    $('btn-save-global-invariant').addEventListener('click', () => {
+        saveGlobalInvariant().catch((err) => showToast(err.message, 'error'));
+    });
+    $('btn-save-chat-invariant').addEventListener('click', () => {
+        saveChatInvariant().catch((err) => showToast(err.message, 'error'));
+    });
+    setupFoldablePanels();
 }
 
 async function init() {
@@ -1174,6 +1529,7 @@ async function init() {
     setInterval(checkAgentHealth, 5000);
     await loadModels();
     await loadProfile();
+    await loadInvariants();
     try {
         await loadChats();
         if (state.chats.length) {

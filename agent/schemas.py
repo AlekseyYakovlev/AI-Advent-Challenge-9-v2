@@ -23,6 +23,9 @@ TASK_TITLE_MAX_LENGTH = 200
 TASK_DESCRIPTION_MAX_LENGTH = 5_000
 TASK_GOAL_MAX_LENGTH = 2_000
 TASK_NOTE_MAX_LENGTH = 2_000
+INVARIANT_TITLE_MAX_LENGTH = 200
+INVARIANT_RULE_MAX_LENGTH = 2000
+INVARIANT_CONFLICT_NOTE_MAX_LENGTH = 2000
 
 
 class HealthResponse(BaseModel):
@@ -309,3 +312,77 @@ class TaskResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     history: list[TaskTransitionResponse]
+
+
+class GlobalInvariantCreate(BaseModel):
+    """Request body for creating a global invariant (D-01, D-02)."""
+
+    title: str = Field(min_length=1, max_length=INVARIANT_TITLE_MAX_LENGTH)
+    rule_text: str = Field(min_length=1, max_length=INVARIANT_RULE_MAX_LENGTH)
+
+
+class GlobalInvariantUpdate(BaseModel):
+    """Partial update for a global invariant (D-04, full CRUD)."""
+
+    title: Optional[str] = Field(
+        default=None, min_length=1, max_length=INVARIANT_TITLE_MAX_LENGTH,
+    )
+    rule_text: Optional[str] = Field(
+        default=None, min_length=1, max_length=INVARIANT_RULE_MAX_LENGTH,
+    )
+
+
+class GlobalInvariantResponse(BaseModel):
+    """Serialized global invariant returned to the client."""
+
+    id: int
+    title: str = Field(max_length=INVARIANT_TITLE_MAX_LENGTH)
+    rule_text: str = Field(max_length=INVARIANT_RULE_MAX_LENGTH)
+    created_at: datetime
+    updated_at: datetime
+
+
+class ChatInvariantCreate(BaseModel):
+    """Request body for creating a per-chat invariant (D-01, D-05)."""
+
+    title: str = Field(min_length=1, max_length=INVARIANT_TITLE_MAX_LENGTH)
+    rule_text: str = Field(min_length=1, max_length=INVARIANT_RULE_MAX_LENGTH)
+    overrides_id: Optional[int] = None
+
+
+class ChatInvariantUpdate(BaseModel):
+    """Partial update for a per-chat invariant (D-04, full CRUD)."""
+
+    title: Optional[str] = Field(
+        default=None, min_length=1, max_length=INVARIANT_TITLE_MAX_LENGTH,
+    )
+    rule_text: Optional[str] = Field(
+        default=None, min_length=1, max_length=INVARIANT_RULE_MAX_LENGTH,
+    )
+    overrides_id: Optional[int] = None
+
+
+class ChatInvariantResponse(BaseModel):
+    """Serialized per-chat invariant, including the resolved title of its overridden global."""
+
+    id: int
+    chat_id: int
+    title: str = Field(max_length=INVARIANT_TITLE_MAX_LENGTH)
+    rule_text: str = Field(max_length=INVARIANT_RULE_MAX_LENGTH)
+    overrides_id: Optional[int] = None
+    overrides_title: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class InvariantConflictResponse(BaseModel):
+    """Serialized invariant conflict record returned to the client (D-13)."""
+
+    id: int
+    chat_id: int
+    message_id: int
+    invariant_scope: str
+    invariant_id: int
+    invariant_title: str = Field(max_length=INVARIANT_TITLE_MAX_LENGTH)
+    note: str = Field(default="", max_length=INVARIANT_CONFLICT_NOTE_MAX_LENGTH)
+    created_at: datetime

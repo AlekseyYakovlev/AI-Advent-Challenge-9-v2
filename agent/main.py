@@ -16,10 +16,17 @@ from agent.dependencies import get_current_user
 from agent.schemas import (
     BranchRequest,
     ChatCreate,
+    ChatInvariantCreate,
+    ChatInvariantResponse,
+    ChatInvariantUpdate,
     ChatMemoryResponse,
     ChatResponse,
     CreateUserRequest,
+    GlobalInvariantCreate,
+    GlobalInvariantResponse,
+    GlobalInvariantUpdate,
     HealthResponse,
+    InvariantConflictResponse,
     LoginRequest,
     MemoryEntryResponse,
     MessageResponse,
@@ -36,7 +43,7 @@ from agent.schemas import (
 from agent.llm_client import LMStudioClient
 from agent.state import CORS_ORIGINS, chat_locks, cleanup_chat_caches
 from agent.context_engine import compute_chat_stats
-from agent import memory, profile, tasks
+from agent import invariants, memory, profile, tasks
 from agent.ws import ws_chat
 from shared.auth import (
     SESSION_COOKIE_NAME,
@@ -50,7 +57,10 @@ from shared.database import engine, get_session, init_db
 from shared.logger import get_logger
 from shared.models import (
     Chat,
+    ChatInvariant,
     ContextStrategy,
+    GlobalInvariant,
+    InvariantConflict,
     Message,
     Profile,
     Session as SessionRow,
@@ -115,6 +125,24 @@ async def _get_task_or_404(
     return task
 
 
+async def _get_chat_invariant_or_404(
+    session: AsyncSession,
+    chat_id: int,
+    invariant_id: int,
+) -> ChatInvariant:
+    """Load a per-chat invariant belonging to chat_id or raise HTTP 404 (never 403)."""
+    invariant = await invariants.get_chat_invariant(session, invariant_id)
+    if invariant is None or invariant.chat_id != chat_id:
+        logger.warning(
+            "invariant_access_denied", chat_id=chat_id, invariant_id=invariant_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Invariant {invariant_id} not found",
+        )
+    return invariant
+
+
 async def _resolve_settings(
     session: AsyncSession,
     chat_id: int | None,
@@ -165,6 +193,52 @@ def _profile_to_response(row: Profile) -> ProfileResponse:
         format=row.format,
         constraints=row.constraints,
         updated_at=row.updated_at,
+    )
+
+
+def _global_invariant_to_response(row: GlobalInvariant) -> GlobalInvariantResponse:
+    """Map a GlobalInvariant ORM row to the API response schema."""
+    return GlobalInvariantResponse(
+        id=row.id,
+        title=row.title,
+        rule_text=row.rule_text,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+async def _chat_invariant_to_response(
+    session: AsyncSession,
+    row: ChatInvariant,
+) -> ChatInvariantResponse:
+    """Map a ChatInvariant ORM row to the API response schema, resolving overrides_title."""
+    overrides_title: str | None = None
+    if row.overrides_id is not None:
+        overridden = await invariants.get_global(session, row.overrides_id)
+        overrides_title = overridden.title if overridden is not None else None
+    return ChatInvariantResponse(
+        id=row.id,
+        chat_id=row.chat_id,
+        title=row.title,
+        rule_text=row.rule_text,
+        overrides_id=row.overrides_id,
+        overrides_title=overrides_title,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+def _invariant_conflict_to_response(row: InvariantConflict) -> InvariantConflictResponse:
+    """Map an InvariantConflict ORM row to the API response schema."""
+    return InvariantConflictResponse(
+        id=row.id,
+        chat_id=row.chat_id,
+        message_id=row.message_id,
+        invariant_scope=row.invariant_scope,
+        invariant_id=row.invariant_id,
+        invariant_title=row.invariant_title,
+        note=row.note,
+        created_at=row.created_at,
     )
 
 
@@ -507,6 +581,104 @@ async def get_chat_tasks(
     ]
 
 
+@app.get(
+    "/api/v1/chats/{chat_id}/invariants",
+    response_model=list[ChatInvariantResponse],
+)
+async def get_chat_invariants(
+    chat_id: int,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> list[ChatInvariantResponse]:
+    """Return this chat's per-chat invariants (ownership-checked, D-05)."""
+    await _get_chat_or_404(session, chat_id, current_user.id)
+    rows = await invariants.list_chat_invariants(session, chat_id)
+    return [await _chat_invariant_to_response(session, row) for row in rows]
+
+
+@app.post(
+    "/api/v1/chats/{chat_id}/invariants",
+    response_model=ChatInvariantResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_chat_invariant_endpoint(
+    chat_id: int,
+    body: ChatInvariantCreate,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> ChatInvariantResponse:
+    """Create a per-chat invariant, optionally overriding an existing global one (D-05)."""
+    await _get_chat_or_404(session, chat_id, current_user.id)
+    if body.overrides_id is not None:
+        global_row = await invariants.get_global(session, body.overrides_id)
+        if global_row is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Invariant {body.overrides_id} not found",
+            )
+    row = await invariants.create_chat_invariant(
+        session, current_user.id, chat_id, body.title, body.rule_text, body.overrides_id,
+    )
+    return await _chat_invariant_to_response(session, row)
+
+
+@app.put(
+    "/api/v1/chats/{chat_id}/invariants/{invariant_id}",
+    response_model=ChatInvariantResponse,
+)
+async def update_chat_invariant_endpoint(
+    chat_id: int,
+    invariant_id: int,
+    body: ChatInvariantUpdate,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> ChatInvariantResponse:
+    """Update a per-chat invariant (ownership-checked, D-05)."""
+    await _get_chat_or_404(session, chat_id, current_user.id)
+    await _get_chat_invariant_or_404(session, chat_id, invariant_id)
+    updates = body.model_dump(exclude_unset=True)
+    if updates.get("overrides_id") is not None:
+        global_row = await invariants.get_global(session, updates["overrides_id"])
+        if global_row is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Invariant {updates['overrides_id']} not found",
+            )
+    row = await invariants.update_chat_invariant(session, invariant_id, **updates)
+    return await _chat_invariant_to_response(session, row)
+
+
+@app.delete(
+    "/api/v1/chats/{chat_id}/invariants/{invariant_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_chat_invariant_endpoint(
+    chat_id: int,
+    invariant_id: int,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    """Delete a per-chat invariant (ownership-checked, D-05)."""
+    await _get_chat_or_404(session, chat_id, current_user.id)
+    await _get_chat_invariant_or_404(session, chat_id, invariant_id)
+    await invariants.delete_chat_invariant(session, invariant_id)
+
+
+@app.get(
+    "/api/v1/chats/{chat_id}/invariant-conflicts",
+    response_model=list[InvariantConflictResponse],
+)
+async def get_invariant_conflicts(
+    chat_id: int,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> list[InvariantConflictResponse]:
+    """Return this chat's persisted invariant-conflict log (ownership-checked, D-13)."""
+    await _get_chat_or_404(session, chat_id, current_user.id)
+    rows = await invariants.list_conflicts(session, chat_id)
+    return [_invariant_conflict_to_response(row) for row in rows]
+
+
 @app.post("/api/v1/tasks/{task_id}/pause", response_model=TaskResponse)
 async def pause_task_endpoint(
     task_id: int,
@@ -639,6 +811,68 @@ async def update_profile(
     updates = body.model_dump(exclude_unset=True)
     row = await profile.update_profile(session, current_user.id, **updates)
     return _profile_to_response(row)
+
+
+@app.get("/api/v1/invariants", response_model=list[GlobalInvariantResponse])
+async def list_global_invariants(
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> list[GlobalInvariantResponse]:
+    """Return every global invariant. Auth required, but NOT ownership-filtered (D-02) —
+    global invariants are a genuinely app-wide shared set, not a per-user resource.
+    """
+    rows = await invariants.list_global(session)
+    return [_global_invariant_to_response(row) for row in rows]
+
+
+@app.post(
+    "/api/v1/invariants",
+    response_model=GlobalInvariantResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_global_invariant(
+    body: GlobalInvariantCreate,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> GlobalInvariantResponse:
+    """Create a global invariant. Any logged-in user may do this (D-02) — every account
+    has equal "admin" capability, so no ownership check exists by design.
+    """
+    row = await invariants.create_global(session, body.title, body.rule_text)
+    return _global_invariant_to_response(row)
+
+
+@app.put("/api/v1/invariants/{invariant_id}", response_model=GlobalInvariantResponse)
+async def update_global_invariant(
+    invariant_id: int,
+    body: GlobalInvariantUpdate,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> GlobalInvariantResponse:
+    """Update a global invariant. No ownership filter (D-02) — shared by every account."""
+    updates = body.model_dump(exclude_unset=True)
+    row = await invariants.update_global(session, invariant_id, **updates)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Invariant {invariant_id} not found",
+        )
+    return _global_invariant_to_response(row)
+
+
+@app.delete("/api/v1/invariants/{invariant_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_global_invariant(
+    invariant_id: int,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    """Delete a global invariant. No ownership filter (D-02) — shared by every account."""
+    deleted = await invariants.delete_global(session, invariant_id)
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Invariant {invariant_id} not found",
+        )
 
 
 @app.get("/api/v1/lm-studio/models")

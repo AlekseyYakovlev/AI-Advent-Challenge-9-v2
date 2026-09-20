@@ -205,6 +205,83 @@ class Profile(SQLModel, table=True):
     )
 
 
+class GlobalInvariant(SQLModel, table=True):
+    """App-wide ground rule shared by every account (D-02 — deliberately NOT user_id-scoped)."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    title: str = Field(max_length=200)
+    rule_text: str = Field(max_length=2000)
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+    )
+
+
+class ChatInvariant(SQLModel, table=True):
+    """Per-chat ground rule layered on top of (and optionally overriding) a global invariant (D-05)."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("user.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+    )
+    chat_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("chat.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+    )
+    title: str = Field(max_length=200)
+    rule_text: str = Field(max_length=2000)
+    overrides_id: Optional[int] = Field(
+        default=None,
+        sa_column=Column(
+            Integer,
+            ForeignKey("globalinvariant.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
+    )
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+    )
+
+
+class InvariantConflict(SQLModel, table=True):
+    """Persisted record of a detected invariant conflict (D-13)."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    chat_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("chat.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+    )
+    message_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("message.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+    )
+    invariant_scope: str = Field(max_length=10)
+    invariant_id: int
+    invariant_title: str = Field(max_length=200)
+    note: str = Field(default="", max_length=2000)
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+    )
+
+
 class TaskState(str, Enum):
     """Lifecycle state of a task (TASK-01)."""
 

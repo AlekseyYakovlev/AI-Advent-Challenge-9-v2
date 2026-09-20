@@ -46,53 +46,111 @@
             </div>
             <nav id="chat-list" class="flex-1 overflow-y-auto p-2 space-y-1"></nav>
             <div id="memory-panel" class="border-t border-slate-800 p-3 text-xs text-slate-400 overflow-y-auto max-h-72">
-                <h3 class="text-slate-300 font-semibold mb-2">Память</h3>
-                <div class="mb-2">
-                    <div class="flex items-center justify-between">
-                        <span class="text-slate-500">Кратковременная (диалог)</span>
-                        <span id="memory-short-term-count" class="text-white font-semibold">0</span>
+                <h3 class="text-slate-300 font-semibold mb-2 flex items-center justify-between">
+                    <span>Память</span>
+                    <button type="button" data-fold-toggle="memory-panel-body" aria-expanded="false"
+                        title="Свернуть/развернуть" class="text-slate-400 hover:text-white">▸</button>
+                </h3>
+                <div id="memory-panel-body" class="hidden">
+                    <div class="mb-2">
+                        <div class="flex items-center justify-between">
+                            <span class="text-slate-500">Кратковременная (диалог)</span>
+                            <span id="memory-short-term-count" class="text-white font-semibold">0</span>
+                        </div>
                     </div>
-                </div>
-                <div class="mb-2">
-                    <div class="flex items-center justify-between mb-1">
-                        <span class="text-slate-500">Рабочая (этот чат)</span>
-                        <span id="memory-working-count" class="text-white font-semibold">0</span>
+                    <div class="mb-2">
+                        <div class="flex items-center justify-between mb-1">
+                            <span class="text-slate-500">Рабочая (этот чат)</span>
+                            <span id="memory-working-count" class="text-white font-semibold">0</span>
+                        </div>
+                        <div id="memory-working" class="space-y-1"></div>
                     </div>
-                    <div id="memory-working" class="space-y-1"></div>
-                </div>
-                <div>
-                    <div class="flex items-center justify-between mb-1">
-                        <span class="text-slate-500">Долговременная (все чаты)</span>
-                        <span id="memory-long-term-count" class="text-white font-semibold">0</span>
+                    <div>
+                        <div class="flex items-center justify-between mb-1">
+                            <span class="text-slate-500">Долговременная (все чаты)</span>
+                            <span id="memory-long-term-count" class="text-white font-semibold">0</span>
+                        </div>
+                        <div id="memory-long-term" class="space-y-1"></div>
                     </div>
-                    <div id="memory-long-term" class="space-y-1"></div>
                 </div>
             </div>
             <div id="profile-panel" class="border-t border-slate-800 p-3 text-xs text-slate-400">
-                <h3 class="text-slate-300 font-medium mb-2">Профиль</h3>
-                <div class="mb-2">
-                    <label for="profile-style" class="block text-sm text-slate-400 mb-1">Стиль общения</label>
-                    <textarea id="profile-style" rows="2" placeholder="Например: коротко и по делу, без длинных вступлений"
-                        class="w-full resize-none rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
+                <h3 class="text-slate-300 font-semibold mb-2 flex items-center justify-between">
+                    <span>Профиль</span>
+                    <button type="button" data-fold-toggle="profile-panel-body" aria-expanded="false"
+                        title="Свернуть/развернуть" class="text-slate-400 hover:text-white">▸</button>
+                </h3>
+                <div id="profile-panel-body" class="hidden">
+                    <div class="mb-2">
+                        <label for="profile-style" class="block text-sm text-slate-400 mb-1">Стиль общения</label>
+                        <textarea id="profile-style" rows="2" placeholder="Например: коротко и по делу, без длинных вступлений"
+                            class="w-full resize-none rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
+                    </div>
+                    <div class="mb-2">
+                        <label for="profile-format" class="block text-sm text-slate-400 mb-1">Формат ответа</label>
+                        <textarea id="profile-format" rows="2" placeholder="Например: списком, с примерами кода"
+                            class="w-full resize-none rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
+                    </div>
+                    <div class="mb-2">
+                        <label for="profile-constraints" class="block text-sm text-slate-400 mb-1">Ограничения</label>
+                        <textarea id="profile-constraints" rows="2" placeholder="Например: не используй жаргон, всегда указывай источники"
+                            class="w-full resize-none rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
+                    </div>
+                    <button id="btn-save-profile" type="button"
+                        class="w-full rounded-lg bg-indigo-600 hover:bg-indigo-500 px-4 py-2 text-sm font-medium transition">
+                        Сохранить профиль
+                    </button>
                 </div>
-                <div class="mb-2">
-                    <label for="profile-format" class="block text-sm text-slate-400 mb-1">Формат ответа</label>
-                    <textarea id="profile-format" rows="2" placeholder="Например: списком, с примерами кода"
-                        class="w-full resize-none rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
-                </div>
-                <div class="mb-2">
-                    <label for="profile-constraints" class="block text-sm text-slate-400 mb-1">Ограничения</label>
-                    <textarea id="profile-constraints" rows="2" placeholder="Например: не используй жаргон, всегда указывай источники"
-                        class="w-full resize-none rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
-                </div>
-                <button id="btn-save-profile" type="button"
-                    class="w-full rounded-lg bg-indigo-600 hover:bg-indigo-500 px-4 py-2 text-sm font-medium transition">
-                    Сохранить профиль
-                </button>
             </div>
             <div id="task-panel" class="border-t border-slate-800 p-3 text-xs text-slate-400 overflow-y-auto max-h-72">
-                <h3 class="text-slate-300 font-semibold mb-2">Задачи <span id="task-count" class="text-white font-semibold">0</span></h3>
-                <div id="task-list" class="space-y-2"></div>
+                <h3 class="text-slate-300 font-semibold mb-2 flex items-center justify-between">
+                    <span>Задачи <span id="task-count" class="text-white font-semibold">0</span></span>
+                    <button type="button" data-fold-toggle="task-panel-body" aria-expanded="false"
+                        title="Свернуть/развернуть" class="text-slate-400 hover:text-white">▸</button>
+                </h3>
+                <div id="task-panel-body" class="hidden">
+                    <div id="task-list" class="space-y-2"></div>
+                </div>
+            </div>
+            <div id="invariants-panel" class="border-t border-slate-800 p-3 text-xs text-slate-400 overflow-y-auto max-h-72">
+                <h3 class="text-slate-300 font-semibold mb-2 flex items-center justify-between">
+                    <span>Инварианты <span id="invariant-conflict-badge" class="text-amber-400 font-semibold hidden" title="Конфликты с инвариантами">0</span></span>
+                    <button type="button" data-fold-toggle="invariants-panel-body" aria-expanded="false"
+                        title="Свернуть/развернуть" class="text-slate-400 hover:text-white">▸</button>
+                </h3>
+                <div id="invariants-panel-body" class="hidden">
+                    <div class="flex items-center justify-between mb-1">
+                        <span class="text-slate-500">Глобальные</span>
+                        <span id="invariant-global-count" class="text-white font-semibold">0</span>
+                    </div>
+                    <div id="invariant-global-list" class="space-y-2"></div>
+                    <input id="invariant-global-title" type="text" maxlength="200" placeholder="Название правила"
+                        class="mt-2 w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    <textarea id="invariant-global-rule" rows="2" maxlength="2000" placeholder="Текст правила"
+                        class="mt-1 w-full resize-none rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
+                    <button id="btn-save-global-invariant" type="button"
+                        class="mt-1 w-full rounded-lg bg-indigo-600 hover:bg-indigo-500 px-4 py-2 text-sm font-medium transition">
+                        Добавить инвариант
+                    </button>
+
+                    <div class="flex items-center justify-between mb-1 mt-3">
+                        <span class="text-slate-500">Этого чата</span>
+                        <span id="invariant-chat-count" class="text-white font-semibold">0</span>
+                    </div>
+                    <div id="invariant-chat-list" class="space-y-2"></div>
+                    <input id="invariant-chat-title" type="text" maxlength="200" placeholder="Название правила"
+                        class="mt-2 w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    <textarea id="invariant-chat-rule" rows="2" maxlength="2000" placeholder="Текст правила"
+                        class="mt-1 w-full resize-none rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
+                    <select id="invariant-chat-overrides"
+                        class="mt-1 w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-1.5 text-sm">
+                        <option value="">Не переопределяет</option>
+                    </select>
+                    <button id="btn-save-chat-invariant" type="button"
+                        class="mt-1 w-full rounded-lg bg-indigo-600 hover:bg-indigo-500 px-4 py-2 text-sm font-medium transition">
+                        Добавить инвариант чата
+                    </button>
+                </div>
             </div>
             <div id="agent-status" class="p-3 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
                 <span>Agent: <span id="agent-status-text">подключение…</span></span>
