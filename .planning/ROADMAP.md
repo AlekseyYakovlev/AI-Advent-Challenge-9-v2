@@ -80,7 +80,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 02-04-PLAN.md — Read-only memory injection in build_system_prompt, tool-call round-trip inside the per-chat-locked WS turn, memory_writes on the done frame (MEM-01, MEM-03)
+- [x] 02-04-PLAN.md — Read-only memory injection in build_system_prompt, tool-call round-trip inside the per-chat-locked WS turn, memory_writes on the done frame (MEM-01, MEM-03)
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -162,7 +162,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Auth Foundation | 5/5 | Complete   | 2026-09-20 |
-| 2. Memory (Day 11) | 3/5 | In Progress|  |
+| 2. Memory (Day 11) | 4/5 | In Progress|  |
 | 3. Personalization (Day 12) | 0/? | Not started | - |
 | 4. Task State Machine (Day 13) | 0/? | Not started | - |
 | 5. Invariants (Day 14) | 0/? | Not started | - |
