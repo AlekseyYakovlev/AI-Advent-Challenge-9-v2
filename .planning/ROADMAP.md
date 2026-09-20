@@ -168,7 +168,24 @@ Plans:
   4. When the agent's response/tool calls conflict with an active invariant, a dedicated check flags it and prompts the LLM to justify or retract the step
   5. UI surfaces active invariants and any detected conflicts
 
-**Plans**: TBD
+**Plans**: 4 plans (4 waves)
+Plans:
+**Wave 1**
+
+- [ ] 05-01-PLAN.md — GlobalInvariant table, agent/invariants.py CRUD, shared /api/v1/invariants routes, Инварианты sidebar tab, fold/unfold retrofit on all four panels (INV-01, INV-05)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 05-02-PLAN.md — ChatInvariant table with the overrides_id FK, resolve_active_invariants, per-chat REST routes, D-06 override labelling in build_system_prompt, overrides dropdown (INV-02, INV-03)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 05-03-PLAN.md — InvariantConflict table, self-critique complete_chat call, justify/retract round-trip, conflict persistence and log endpoint, inline amber banner + tab badge (INV-04, INV-05)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 05-04-PLAN.md — Strategy-matrix and long-history injection guards plus the Day 14 acceptance demo (INV-01..INV-05)
+
 **UI hint**: yes
 
 ### Phase 6: Controlled Transitions (Day 15)
@@ -195,9 +212,9 @@ Plans:
 | 2. Memory (Day 11) | 5/5 | Complete   | 2026-09-20 |
 | 3. Personalization (Day 12) | 3/3 | Complete   | 2026-09-20 |
 | 4. Task State Machine (Day 13) | 4/4 | Complete   | 2026-09-20 |
-| 5. Invariants (Day 14) | 0/? | Not started | - |
+| 5. Invariants (Day 14) | 0/4 | Planned | - |
 | 6. Controlled Transitions (Day 15) | 0/? | Not started | - |
 
 ---
 *Roadmap created: 2026-09-19*
-*Last updated: 2026-09-20 — Phase 4 planned (4 plans, 4 waves)*
+*Last updated: 2026-09-20 — Phase 5 planned (4 plans, 4 waves)*
