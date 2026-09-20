@@ -145,7 +145,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 04-03-PLAN.md — pause_task/resume_task tools plus lock-protected POST /tasks/{id}/pause|resume|cancel and the Пауза/Продолжить/Отменить controls (TASK-04, TASK-05)
+- [x] 04-03-PLAN.md — pause_task/resume_task tools plus lock-protected POST /tasks/{id}/pause|resume|cancel and the Пауза/Продолжить/Отменить controls (TASK-04, TASK-05)
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -194,7 +194,7 @@ Plans:
 | 1. Auth Foundation | 5/5 | Complete   | 2026-09-20 |
 | 2. Memory (Day 11) | 5/5 | Complete   | 2026-09-20 |
 | 3. Personalization (Day 12) | 3/3 | Complete   | 2026-09-20 |
-| 4. Task State Machine (Day 13) | 2/4 | In Progress|  |
+| 4. Task State Machine (Day 13) | 3/4 | In Progress|  |
 | 5. Invariants (Day 14) | 0/? | Not started | - |
 | 6. Controlled Transitions (Day 15) | 0/? | Not started | - |
 
