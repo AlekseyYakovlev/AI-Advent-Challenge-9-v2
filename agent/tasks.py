@@ -1,6 +1,7 @@
 """Thin CRUD layer owning all reads and writes to the task tables."""
 
 from datetime import datetime, timezone
+from typing import Any
 
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -13,6 +14,68 @@ logger = get_logger(__name__)
 
 class TaskNotFoundError(Exception):
     """Raised when a task_id does not resolve to a row owned by the calling chat/user."""
+
+
+_FORWARD_EDGES: dict[TaskState, TaskState] = {
+    TaskState.PLANNING: TaskState.EXECUTION,
+    TaskState.EXECUTION: TaskState.VALIDATION,
+    TaskState.VALIDATION: TaskState.DONE,
+}
+
+_BACKWARD_EDGES: dict[TaskState, TaskState] = {
+    TaskState.EXECUTION: TaskState.PLANNING,
+    TaskState.VALIDATION: TaskState.EXECUTION,
+}
+
+_TERMINAL_STATES: set[TaskState] = {TaskState.DONE, TaskState.CANCELLED}
+
+
+class IllegalTransitionError(Exception):
+    """Raised when a transition/pause/resume/cancel attempt violates the transition graph."""
+
+    def __init__(
+        self,
+        task_id: int,
+        from_state: TaskState,
+        to_state: TaskState,
+        reason: str,
+    ) -> None:
+        self.task_id = task_id
+        self.from_state = from_state
+        self.to_state = to_state
+        super().__init__(reason)
+
+
+def _legal_targets(from_state: TaskState) -> list[TaskState]:
+    """Return the states reachable in exactly one edge from from_state ([] if terminal)."""
+    if from_state in _TERMINAL_STATES:
+        return []
+    targets = []
+    if from_state in _FORWARD_EDGES:
+        targets.append(_FORWARD_EDGES[from_state])
+    if from_state in _BACKWARD_EDGES:
+        targets.append(_BACKWARD_EDGES[from_state])
+    return targets
+
+
+def _is_legal_transition(from_state: TaskState, to_state: TaskState) -> bool:
+    """Return whether to_state is reachable from from_state in exactly one edge."""
+    return to_state in _legal_targets(from_state)
+
+
+def build_transition_illegal_prompt(rejected: list[dict[str, Any]]) -> str:
+    """Build the re-prompt asking the model to retry legally or explain the illegal attempt (D-08)."""
+    lines = [
+        f'Task #{entry["task_id"]}: the move from "{entry["from_state"]}" to '
+        f'"{entry["to_state"]}" was not legal. Reason: {entry["error"]}.'
+        for entry in rejected
+    ]
+    return (
+        "\n".join(lines)
+        + "\nEither call transition_task again with a legal next state, or briefly explain to "
+        "the user why you attempted that move, in the user's language, without repeating your "
+        "whole previous answer."
+    )
 
 
 async def create_task(
@@ -105,11 +168,44 @@ async def transition_task(
 ) -> Task:
     """Move an owned task to a new lifecycle state and append one history row.
 
-    Does not validate that previous_state -> new_state is a legal edge --
-    transition-graph legality enforcement is Phase 6's job (TRANS-01).
+    Only single-edge moves along the transition graph are accepted -- one step
+    forward or one step back; skipping states or exiting a terminal state raises
+    IllegalTransitionError (TRANS-01).
     """
     task = await _get_owned_task(session, user_id, chat_id, task_id)
     previous_state = task.state
+
+    if not _is_legal_transition(previous_state, new_state):
+        legal = _legal_targets(previous_state)
+        legal_desc = ", ".join(state.value for state in legal) if legal else "terminal state"
+        reason = (
+            f"Task {task.id} is in {previous_state.value} and cannot move to "
+            f"{new_state.value}; legal next states are: {legal_desc}."
+        )
+        session.add(
+            TaskTransition(
+                task_id=task.id,
+                from_state=previous_state,
+                to_state=new_state,
+                note=note,
+                rejected=True,
+                rejection_reason=reason,
+            ),
+        )
+        try:
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        logger.warning(
+            "task_transition_rejected",
+            task_id=task.id,
+            chat_id=chat_id,
+            from_state=previous_state.value,
+            to_state=new_state.value,
+        )
+        raise IllegalTransitionError(task.id, previous_state, new_state, reason)
+
     task.state = new_state
     task.updated_at = datetime.now(timezone.utc)
     session.add(task)
