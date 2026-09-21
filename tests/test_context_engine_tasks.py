@@ -4,9 +4,11 @@ import pytest
 from httpx import AsyncClient
 from sqlmodel import select
 
-from agent.context_engine import build_system_prompt
+from agent import memory, tasks
+from agent.context_engine import build_llm_context, build_system_prompt
+from agent.llm_client import llm_client
 from shared.database import async_session_factory
-from shared.models import Chat, ContextStrategy, Settings, Task, TaskState
+from shared.models import Chat, ContextStrategy, Message, Settings, Task, TaskState, TaskTransition
 
 BASE_PROMPT = "Base prompt"
 
@@ -188,3 +190,120 @@ async def test_task_injection_survives_every_compression_strategy(
 
     assert "Open tasks in this chat:" in prompt
     assert f"#{task.id}" in prompt
+
+
+async def _append_messages(
+    session,
+    chat: Chat,
+    contents: list[str],
+    role: str = "user",
+) -> None:
+    """Append a linear chain of messages and advance the chat leaf."""
+    parent_id = chat.current_leaf_message_id
+    for content in contents:
+        msg = Message(
+            chat_id=chat.id,
+            parent_id=parent_id,
+            role=role,
+            content=content,
+            token_count=llm_client.count_tokens(content),
+        )
+        session.add(msg)
+        await session.flush()
+        parent_id = msg.id
+    chat.current_leaf_message_id = parent_id
+    session.add(chat)
+    await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_paused_task_and_working_memory_survive_sliding_window_compression(
+    authenticated_client: AsyncClient,
+) -> None:
+    """A paused task and its working memory reach the model regardless of sliding-window (TRANS-03)."""
+    user_id = authenticated_client.seeded_user_id
+    chat_id = await _create_chat(user_id)
+
+    async with async_session_factory() as session:
+        task = await tasks.create_task(
+            session, user_id, chat_id, "Long-running task", "desc", "ship the export feature",
+        )
+        await memory.save_working_memory(
+            session, user_id, chat_id, "scratch_key", "scratch_value",
+        )
+        await tasks.set_paused(session, user_id, chat_id, task.id, True)
+
+        chat = await session.get(Chat, chat_id)
+        result = await session.exec(select(Settings).where(Settings.chat_id == chat_id))
+        settings_row = result.one()
+        settings_row.strategy = ContextStrategy.SLIDING_WINDOW
+        settings_row.context_length = 300
+        session.add(settings_row)
+        await session.commit()
+
+        contents = [f"Turn {i}: " + "filler conversation text " * 15 for i in range(15)]
+        await _append_messages(session, chat, contents)
+
+        llm_messages = await build_llm_context(session, chat_id)
+
+    system_message = next(msg for msg in llm_messages if msg["role"] == "system")
+    assert "Long-running task" in system_message["content"]
+    assert "[ON PAUSE]" in system_message["content"]
+    assert "scratch_key" in system_message["content"]
+    assert "scratch_value" in system_message["content"]
+
+    non_system_messages = [msg for msg in llm_messages if msg["role"] != "system"]
+    assert len(non_system_messages) < len(contents)
+
+
+@pytest.mark.asyncio
+async def test_resume_after_compression_continues_along_the_graph(
+    authenticated_client: AsyncClient,
+) -> None:
+    """After a resume, the transition graph still gates further moves (TRANS-03)."""
+    user_id = authenticated_client.seeded_user_id
+    chat_id = await _create_chat(user_id)
+
+    async with async_session_factory() as session:
+        task = await tasks.create_task(
+            session, user_id, chat_id, "Paused task", "desc", "finish it",
+        )
+        await tasks.set_paused(session, user_id, chat_id, task.id, True)
+
+    async with async_session_factory() as session:
+        resumed = await tasks.set_paused(session, user_id, chat_id, task.id, False)
+    assert resumed.is_paused is False
+    assert resumed.state is TaskState.PLANNING
+
+    async with async_session_factory() as session:
+        in_execution = await tasks.transition_task(
+            session, user_id, chat_id, task.id, TaskState.EXECUTION,
+        )
+    assert in_execution.state is TaskState.EXECUTION
+
+    async with async_session_factory() as session:
+        with pytest.raises(tasks.IllegalTransitionError):
+            await tasks.transition_task(session, user_id, chat_id, task.id, TaskState.DONE)
+
+    async with async_session_factory() as session:
+        result = await session.exec(
+            select(TaskTransition).where(TaskTransition.task_id == task.id),
+        )
+        rows_before_second_resume = len(list(result.all()))
+
+    async with async_session_factory() as session:
+        with pytest.raises(tasks.IllegalTransitionError):
+            await tasks.set_paused(session, user_id, chat_id, task.id, False)
+
+    async with async_session_factory() as session:
+        result = await session.exec(
+            select(TaskTransition)
+            .where(TaskTransition.task_id == task.id)
+            .order_by(TaskTransition.created_at, TaskTransition.id),
+        )
+        rows_after_second_resume = list(result.all())
+
+    assert len(rows_after_second_resume) == rows_before_second_resume + 1
+    new_row = rows_after_second_resume[-1]
+    assert new_row.rejected is True
+    assert new_row.from_state == new_row.to_state
