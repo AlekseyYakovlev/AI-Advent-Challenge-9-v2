@@ -61,6 +61,12 @@ None yet.
 
 None.
 
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260921-juu | Fix silent message-drop race (model/WS not ready) and delayed user-bubble rendering in ui/static/app.js | 2026-09-21 | 56224e1 | [260921-juu-fix-silent-message-drop-race-model-ws-no](./quick/260921-juu-fix-silent-message-drop-race-model-ws-no/) |
+
 ## Session Continuity
 
 **Last session:** 2026-09-21T00:09:43.399Z
