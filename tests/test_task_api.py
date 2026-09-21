@@ -4,6 +4,7 @@ import pytest
 from httpx import AsyncClient
 from sqlmodel import select
 
+from agent import tasks
 from shared.database import async_session_factory
 from shared.models import Chat, Task, TaskState, TaskTransition
 
@@ -274,3 +275,164 @@ async def test_unknown_task_id_returns_404(authenticated_client: AsyncClient) ->
     """POST /pause for a nonexistent task id returns 404."""
     resp = await authenticated_client.post("/api/v1/tasks/999999/pause")
     assert resp.status_code == 404
+
+
+async def _advance_task_to_done(user_id: int, chat_id: int, task_id: int) -> None:
+    """Drive a planning-state task through the legal graph to done."""
+    async with async_session_factory() as session:
+        await tasks.transition_task(session, user_id, chat_id, task_id, TaskState.EXECUTION)
+        await tasks.transition_task(session, user_id, chat_id, task_id, TaskState.VALIDATION)
+        await tasks.transition_task(session, user_id, chat_id, task_id, TaskState.DONE)
+
+
+@pytest.mark.asyncio
+async def test_cancel_endpoint_on_done_task_returns_409(
+    authenticated_client: AsyncClient,
+) -> None:
+    """Cancelling an already-done task returns 409 with an explanatory detail, state unchanged."""
+    user_id = authenticated_client.seeded_user_id
+    chat_resp = await authenticated_client.post("/api/v1/chats", json={"title": "Done chat"})
+    chat_id = chat_resp.json()["id"]
+    task_id = await _create_task_row(user_id, chat_id)
+    await _advance_task_to_done(user_id, chat_id, task_id)
+
+    resp = await authenticated_client.post(f"/api/v1/tasks/{task_id}/cancel")
+    assert resp.status_code == 409
+    assert resp.json()["detail"]
+
+    async with async_session_factory() as session:
+        task = await session.get(Task, task_id)
+        assert task.state is TaskState.DONE
+
+
+@pytest.mark.asyncio
+async def test_cancel_endpoint_on_already_cancelled_task_returns_409(
+    authenticated_client: AsyncClient,
+) -> None:
+    """Cancelling an already-cancelled task returns 409."""
+    user_id = authenticated_client.seeded_user_id
+    chat_resp = await authenticated_client.post("/api/v1/chats", json={"title": "Cancel twice"})
+    chat_id = chat_resp.json()["id"]
+    task_id = await _create_task_row(user_id, chat_id)
+
+    first = await authenticated_client.post(f"/api/v1/tasks/{task_id}/cancel")
+    assert first.status_code == 200
+
+    second = await authenticated_client.post(f"/api/v1/tasks/{task_id}/cancel")
+    assert second.status_code == 409
+    assert second.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_pause_endpoint_on_done_task_returns_409(authenticated_client: AsyncClient) -> None:
+    """Pausing an already-done task returns 409, is_paused stays False."""
+    user_id = authenticated_client.seeded_user_id
+    chat_resp = await authenticated_client.post("/api/v1/chats", json={"title": "Pause done"})
+    chat_id = chat_resp.json()["id"]
+    task_id = await _create_task_row(user_id, chat_id)
+    await _advance_task_to_done(user_id, chat_id, task_id)
+
+    resp = await authenticated_client.post(f"/api/v1/tasks/{task_id}/pause")
+    assert resp.status_code == 409
+    assert resp.json()["detail"]
+
+    async with async_session_factory() as session:
+        task = await session.get(Task, task_id)
+        assert task.is_paused is False
+
+
+@pytest.mark.asyncio
+async def test_resume_endpoint_on_non_paused_task_returns_409(
+    authenticated_client: AsyncClient,
+) -> None:
+    """Resuming a task that was never paused returns 409."""
+    user_id = authenticated_client.seeded_user_id
+    chat_resp = await authenticated_client.post("/api/v1/chats", json={"title": "Resume no-op"})
+    chat_id = chat_resp.json()["id"]
+    task_id = await _create_task_row(user_id, chat_id)
+
+    resp = await authenticated_client.post(f"/api/v1/tasks/{task_id}/resume")
+    assert resp.status_code == 409
+    assert resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_resume_endpoint_on_paused_non_terminal_task_returns_200(
+    authenticated_client: AsyncClient,
+) -> None:
+    """Resuming a genuinely paused, non-terminal task still succeeds with is_paused False."""
+    user_id = authenticated_client.seeded_user_id
+    chat_resp = await authenticated_client.post("/api/v1/chats", json={"title": "Resume legal"})
+    chat_id = chat_resp.json()["id"]
+    task_id = await _create_task_row(user_id, chat_id)
+
+    pause_resp = await authenticated_client.post(f"/api/v1/tasks/{task_id}/pause")
+    assert pause_resp.status_code == 200
+
+    resume_resp = await authenticated_client.post(f"/api/v1/tasks/{task_id}/resume")
+    assert resume_resp.status_code == 200
+    assert resume_resp.json()["is_paused"] is False
+
+
+@pytest.mark.asyncio
+async def test_cancel_endpoint_other_users_done_task_returns_404_not_409(
+    authenticated_client: AsyncClient,
+    second_authenticated_client: AsyncClient,
+) -> None:
+    """Another user's task_id yields 404, not 409, even when the operation would be illegal."""
+    user_id = authenticated_client.seeded_user_id
+    chat_resp = await authenticated_client.post("/api/v1/chats", json={"title": "Owned, done"})
+    chat_id = chat_resp.json()["id"]
+    task_id = await _create_task_row(user_id, chat_id)
+    await _advance_task_to_done(user_id, chat_id, task_id)
+
+    resp = await second_authenticated_client.post(f"/api/v1/tasks/{task_id}/cancel")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_tasks_list_exposes_rejected_history_after_refused_cancel(
+    authenticated_client: AsyncClient,
+) -> None:
+    """The tasks-list payload carries rejected/rejection_reason on the refused-cancel entry."""
+    user_id = authenticated_client.seeded_user_id
+    chat_resp = await authenticated_client.post("/api/v1/chats", json={"title": "Reject list"})
+    chat_id = chat_resp.json()["id"]
+    task_id = await _create_task_row(user_id, chat_id)
+    await _advance_task_to_done(user_id, chat_id, task_id)
+
+    refused = await authenticated_client.post(f"/api/v1/tasks/{task_id}/cancel")
+    assert refused.status_code == 409
+
+    resp = await authenticated_client.get(f"/api/v1/chats/{chat_id}/tasks")
+    assert resp.status_code == 200
+    history = resp.json()[0]["history"]
+    rejected_entries = [h for h in history if h["rejected"] is True]
+    assert len(rejected_entries) == 1
+    entry = rejected_entries[0]
+    assert entry["rejection_reason"]
+    assert entry["from_state"] == "done"
+    assert entry["to_state"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_tasks_list_exposes_self_loop_history_after_refused_resume(
+    authenticated_client: AsyncClient,
+) -> None:
+    """A refused resume persists a self-loop rejected=True row (from_state == to_state)."""
+    user_id = authenticated_client.seeded_user_id
+    chat_resp = await authenticated_client.post("/api/v1/chats", json={"title": "Self-loop"})
+    chat_id = chat_resp.json()["id"]
+    task_id = await _create_task_row(user_id, chat_id)
+
+    refused = await authenticated_client.post(f"/api/v1/tasks/{task_id}/resume")
+    assert refused.status_code == 409
+
+    resp = await authenticated_client.get(f"/api/v1/chats/{chat_id}/tasks")
+    assert resp.status_code == 200
+    history = resp.json()[0]["history"]
+    rejected_entries = [h for h in history if h["rejected"] is True]
+    assert len(rejected_entries) == 1
+    entry = rejected_entries[0]
+    assert entry["rejection_reason"]
+    assert entry["from_state"] == entry["to_state"]

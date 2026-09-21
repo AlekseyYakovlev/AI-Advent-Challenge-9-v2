@@ -296,6 +296,8 @@ class TaskTransitionResponse(BaseModel):
     from_state: Optional[str] = None
     to_state: str
     note: str = ""
+    rejected: bool = False
+    rejection_reason: Optional[str] = Field(default=None, max_length=TASK_NOTE_MAX_LENGTH)
     created_at: datetime
 
 
