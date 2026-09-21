@@ -355,11 +355,27 @@ function formatTaskTimestamp(isoString) {
 function renderTaskHistory(container, history) {
     container.replaceChildren();
     history.forEach((entry) => {
-        const fromLabel = entry.from_state ? TASK_STATE_LABELS[entry.from_state] : 'создана';
         const line = document.createElement('div');
-        line.className = 'text-slate-500';
-        line.textContent =
-            `${fromLabel} → ${TASK_STATE_LABELS[entry.to_state]} · ${formatTaskTimestamp(entry.created_at)}`;
+
+        if (entry.rejected) {
+            line.className = 'text-red-400 line-through';
+            let text;
+            if (entry.from_state === entry.to_state) {
+                text = `операция отклонена (${TASK_STATE_LABELS[entry.to_state]})`;
+            } else {
+                text = `попытка → ${TASK_STATE_LABELS[entry.to_state]}: отклонено`;
+            }
+            if (entry.rejection_reason) {
+                text += ` (${entry.rejection_reason})`;
+            }
+            text += ` · ${formatTaskTimestamp(entry.created_at)}`;
+            line.textContent = text;
+        } else {
+            const fromLabel = entry.from_state ? TASK_STATE_LABELS[entry.from_state] : 'создана';
+            line.className = 'text-slate-500';
+            line.textContent =
+                `${fromLabel} → ${TASK_STATE_LABELS[entry.to_state]} · ${formatTaskTimestamp(entry.created_at)}`;
+        }
         container.appendChild(line);
 
         if (entry.note) {
