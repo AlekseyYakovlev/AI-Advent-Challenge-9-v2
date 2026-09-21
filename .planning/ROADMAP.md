@@ -205,7 +205,7 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 06-01-PLAN.md — TaskTransition rejection columns + idempotent migration, transition-graph edge table, IllegalTransitionError, legality gates on transition_task/set_paused/cancel_task, rejected-row persistence (TRANS-01, TRANS-03)
+- [x] 06-01-PLAN.md — TaskTransition rejection columns + idempotent migration, transition-graph edge table, IllegalTransitionError, legality gates on transition_task/set_paused/cancel_task, rejected-row persistence (TRANS-01, TRANS-03)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -227,7 +227,7 @@ Plans:
 | 3. Personalization (Day 12) | 3/3 | Complete   | 2026-09-20 |
 | 4. Task State Machine (Day 13) | 4/4 | Complete   | 2026-09-20 |
 | 5. Invariants (Day 14) | 4/4 | Complete   | 2026-09-20 |
-| 6. Controlled Transitions (Day 15) | 0/4 | Planned | - |
+| 6. Controlled Transitions (Day 15) | 1/4 | In Progress|  |
 
 ---
 *Roadmap created: 2026-09-19*
