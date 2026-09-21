@@ -18,7 +18,7 @@ from agent.context_engine import (
     get_effective_settings,
 )
 from agent.dependencies import get_current_user_ws
-from agent import invariants
+from agent import invariants, tasks
 from agent.llm_client import llm_client
 from agent.state import (
     CORS_ORIGINS,
@@ -343,6 +343,45 @@ async def _handle_chat_message(
                                 "detail": error_detail,
                                 "code": "TOOL_ERROR",
                             },
+                        )
+
+                rejected_transitions: list[dict[str, Any]] = []
+                for result in tool_results:
+                    if result["ok"] or result.get("name") != "transition_task":
+                        continue
+                    try:
+                        parsed = json.loads(result["content"])
+                    except json.JSONDecodeError:
+                        continue
+                    if parsed.get("code") != "illegal_transition":
+                        continue
+                    rejected_transitions.append(parsed)
+
+                if rejected_transitions:
+                    llm_messages.append(
+                        {
+                            "role": "user",
+                            "content": tasks.build_transition_illegal_prompt(
+                                rejected_transitions,
+                            ),
+                        },
+                    )
+                    try:
+                        async for token in llm_client.stream_chat(
+                            llm_messages,
+                            payload.model,
+                            temperature,
+                            max_tokens,
+                        ):
+                            assistant_text += token
+                            await websocket.send_json(
+                                {"type": "token", "content": token},
+                            )
+                    except Exception as exc:
+                        logger.warning(
+                            "transition_illegal_reprompt_failed",
+                            chat_id=chat_id,
+                            error=str(exc),
                         )
 
             active_invariants = await invariants.resolve_active_invariants(session, chat_id)

@@ -147,17 +147,22 @@ async def dispatch_tool_calls(
             tool_call_id=tool_call_id,
             chat_id=chat_id,
         )
+        ok = result.get("status") != "error"
         results.append(
             {
                 "tool_call_id": tool_call_id,
                 "name": name,
-                "ok": True,
+                "ok": ok,
                 "content": json.dumps(result),
-                "write": {
-                    "id": result.get("id"),
-                    "key": result.get("key"),
-                    "layer": result.get("layer"),
-                },
+                "write": (
+                    None
+                    if not ok
+                    else {
+                        "id": result.get("id"),
+                        "key": result.get("key"),
+                        "layer": result.get("layer"),
+                    }
+                ),
             },
         )
     return results
@@ -242,7 +247,20 @@ async def _transition_task(
             args.get("note", ""),
         )
     except tasks.TaskNotFoundError:
-        return {"status": "error", "error": f"task {args['task_id']} not found in this chat"}
+        return {
+            "status": "error",
+            "code": "not_found",
+            "error": f"task {args['task_id']} not found in this chat",
+        }
+    except tasks.IllegalTransitionError as exc:
+        return {
+            "status": "error",
+            "code": "illegal_transition",
+            "error": str(exc),
+            "task_id": exc.task_id,
+            "from_state": exc.from_state.value,
+            "to_state": exc.to_state.value,
+        }
     return {"status": "transitioned", "id": row.id, "title": row.title, "state": row.state.value}
 
 
@@ -263,7 +281,20 @@ async def _pause_task(
     try:
         row = await tasks.set_paused(session, user_id, chat_id, args["task_id"], True)
     except tasks.TaskNotFoundError:
-        return {"status": "error", "error": f"task {args['task_id']} not found in this chat"}
+        return {
+            "status": "error",
+            "code": "not_found",
+            "error": f"task {args['task_id']} not found in this chat",
+        }
+    except tasks.IllegalTransitionError as exc:
+        return {
+            "status": "error",
+            "code": "illegal_transition",
+            "error": str(exc),
+            "task_id": exc.task_id,
+            "from_state": exc.from_state.value,
+            "to_state": exc.to_state.value,
+        }
     return {
         "status": "paused",
         "id": row.id,
@@ -289,7 +320,20 @@ async def _resume_task(
     try:
         row = await tasks.set_paused(session, user_id, chat_id, args["task_id"], False)
     except tasks.TaskNotFoundError:
-        return {"status": "error", "error": f"task {args['task_id']} not found in this chat"}
+        return {
+            "status": "error",
+            "code": "not_found",
+            "error": f"task {args['task_id']} not found in this chat",
+        }
+    except tasks.IllegalTransitionError as exc:
+        return {
+            "status": "error",
+            "code": "illegal_transition",
+            "error": str(exc),
+            "task_id": exc.task_id,
+            "from_state": exc.from_state.value,
+            "to_state": exc.to_state.value,
+        }
     return {
         "status": "resumed",
         "id": row.id,
