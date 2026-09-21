@@ -884,6 +884,21 @@ async function saveGlobalInvariant() {
     }
 }
 
+function appendUserBubble(content) {
+    const container = $('messages');
+    const wrapper = document.createElement('div');
+    wrapper.className = 'flex justify-end';
+    const bubble = document.createElement('div');
+    bubble.className = 'max-w-[75%] rounded-xl px-4 py-2 text-sm bg-indigo-600 text-white';
+    const contentEl = document.createElement('div');
+    contentEl.className = 'message-content prose prose-invert prose-sm max-w-none';
+    contentEl.innerHTML = DOMPurify.sanitize(content);
+    bubble.appendChild(contentEl);
+    wrapper.appendChild(bubble);
+    container.appendChild(wrapper);
+    container.scrollTop = container.scrollHeight;
+}
+
 function appendLoadingBubble() {
     const container = $('messages');
     const existing = container.querySelector('[data-streaming="true"]');
@@ -1246,6 +1261,7 @@ async function sendMessage(content) {
     state.lastFailedMessage = trimmed;
 
     setStreaming(true);
+    appendUserBubble(trimmed);
     appendLoadingBubble();
 
     state.ws.send(JSON.stringify({
