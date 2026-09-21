@@ -237,10 +237,50 @@ async def set_paused(
 ) -> Task:
     """Toggle an owned task's is_paused flag without touching its lifecycle state.
 
-    Writes no TaskTransition row: is_paused is orthogonal to state (D-04),
-    not a fifth enum value, so pausing/resuming is not a history event.
+    On success, writes no TaskTransition row: is_paused is orthogonal to state
+    (D-04), not a fifth enum value, so pausing/resuming is not a history event.
+    On refusal (terminal-state pause/resume, or resuming a non-paused task),
+    raises IllegalTransitionError and persists one self-loop
+    (from_state == to_state == task.state) rejected=True row instead.
     """
     task = await _get_owned_task(session, user_id, chat_id, task_id)
+
+    rejection_reason: str | None = None
+    if task.state in _TERMINAL_STATES:
+        operation = "pause" if is_paused else "resume"
+        rejection_reason = (
+            f"Task {task.id} is in the terminal state {task.state.value} and cannot be "
+            f"{operation}d."
+        )
+    elif not is_paused and not task.is_paused:
+        rejection_reason = f"Task {task.id} is not paused, so there is nothing to resume."
+
+    if rejection_reason is not None:
+        session.add(
+            TaskTransition(
+                task_id=task.id,
+                from_state=task.state,
+                to_state=task.state,
+                note="",
+                rejected=True,
+                rejection_reason=rejection_reason,
+            ),
+        )
+        try:
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        logger.warning(
+            "task_pause_toggle_rejected",
+            task_id=task.id,
+            chat_id=chat_id,
+            state=task.state.value,
+            is_paused=task.is_paused,
+            requested=is_paused,
+        )
+        raise IllegalTransitionError(task.id, task.state, task.state, rejection_reason)
+
     task.is_paused = is_paused
     task.updated_at = datetime.now(timezone.utc)
     session.add(task)
@@ -262,11 +302,37 @@ async def cancel_task(
 ) -> Task:
     """Move an owned task to the terminal cancelled state and append one history row.
 
-    There is deliberately no legality check on the previous state -- transition-
-    graph legality enforcement is Phase 6's job (TRANS-01).
+    Rejects once the task is already done or cancelled -- a terminal task's
+    outcome cannot be overwritten by a later cancel (TRANS-01).
     """
     task = await _get_owned_task(session, user_id, chat_id, task_id)
     previous_state = task.state
+
+    if previous_state in _TERMINAL_STATES:
+        reason = f"Task {task.id} is already in the terminal state {previous_state.value}."
+        session.add(
+            TaskTransition(
+                task_id=task.id,
+                from_state=previous_state,
+                to_state=TaskState.CANCELLED,
+                note="",
+                rejected=True,
+                rejection_reason=reason,
+            ),
+        )
+        try:
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        logger.warning(
+            "task_cancel_rejected",
+            task_id=task.id,
+            chat_id=chat_id,
+            from_state=previous_state.value,
+        )
+        raise IllegalTransitionError(task.id, previous_state, TaskState.CANCELLED, reason)
+
     task.state = TaskState.CANCELLED
     task.updated_at = datetime.now(timezone.utc)
     session.add(task)
