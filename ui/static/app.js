@@ -20,6 +20,7 @@ const state = {
     reconnectTimer: null,
     shouldReconnect: true,
     lastFailedMessage: null,
+    pendingMessage: null,
     lastStats: null,
     lastStatsChatId: null,
     contextWindow: null,
@@ -1049,6 +1050,7 @@ function connectWs(chatId) {
     ws.onopen = () => {
         state.reconnectAttempt = 0;
         if (state.currentChatId === chatId) loadChatStats(chatId);
+        trySendPending();
     };
 
     ws.onmessage = (event) => {
@@ -1212,16 +1214,30 @@ function handleWsMessage(data) {
     }
 }
 
+function trySendPending() {
+    if (!state.pendingMessage) return;
+    if (!state.currentChatId) return;
+    if (state.isStreaming) return;
+    if (!state.selectedModel) return;
+    if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+
+    const queued = state.pendingMessage;
+    state.pendingMessage = null;
+    sendMessage(queued).catch((err) => showToast(err.message, 'error'));
+}
+
 async function sendMessage(content) {
     if (!state.currentChatId || !content.trim() || state.isStreaming) return;
 
     if (!state.selectedModel) {
-        showToast('Выберите модель', 'error');
+        state.pendingMessage = content.trim();
+        showToast('Модель ещё загружается — сообщение будет отправлено автоматически', 'info');
         return;
     }
 
     if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
-        showToast('WebSocket не подключён', 'error');
+        state.pendingMessage = content.trim();
+        showToast('Переподключение к серверу — сообщение будет отправлено автоматически', 'info');
         connectWs(state.currentChatId);
         return;
     }
@@ -1305,6 +1321,7 @@ function populateModelSelect() {
         select.value = state.models[0].id;
         state.selectedModel = state.models[0].id;
     }
+    trySendPending();
 }
 
 async function refreshModelSelector() {
