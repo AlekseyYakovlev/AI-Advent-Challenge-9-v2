@@ -209,8 +209,8 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 06-02-PLAN.md — ok=False promotion in the tool dispatcher, code discriminators on all three task tools, D-08 justify/retract re-prompt in the WS turn flow, resume-after-compression regression test (TRANS-02, TRANS-03)
-- [ ] 06-03-PLAN.md — rejected/rejection_reason in the task API schema, HTTP 409 on manual pause/resume/cancel, inline red strikethrough rejected rows in the Tasks tab history (TRANS-01, TRANS-02, TRANS-03)
+- [x] 06-02-PLAN.md — ok=False promotion in the tool dispatcher, code discriminators on all three task tools, D-08 justify/retract re-prompt in the WS turn flow, resume-after-compression regression test (TRANS-02, TRANS-03)
+- [x] 06-03-PLAN.md — rejected/rejection_reason in the task API schema, HTTP 409 on manual pause/resume/cancel, inline red strikethrough rejected rows in the Tasks tab history (TRANS-01, TRANS-02, TRANS-03)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -227,7 +227,7 @@ Plans:
 | 3. Personalization (Day 12) | 3/3 | Complete   | 2026-09-20 |
 | 4. Task State Machine (Day 13) | 4/4 | Complete   | 2026-09-20 |
 | 5. Invariants (Day 14) | 4/4 | Complete   | 2026-09-20 |
-| 6. Controlled Transitions (Day 15) | 1/4 | In Progress|  |
+| 6. Controlled Transitions (Day 15) | 3/4 | In Progress|  |
 
 ---
 *Roadmap created: 2026-09-19*
