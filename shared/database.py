@@ -118,6 +118,35 @@ async def migrate_add_user_id_columns(conn: Any) -> None:
             )
 
 
+async def migrate_add_task_transition_rejection_columns(conn: Any) -> None:
+    """Add rejected/rejection_reason columns to tasktransition when missing (idempotent)."""
+    table_check = await conn.execute(
+        text(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='table' AND name='tasktransition'",
+        ),
+    )
+    if table_check.fetchone() is None:
+        return
+
+    result = await conn.execute(text("PRAGMA table_info(tasktransition)"))
+    columns = [row[1] for row in result.fetchall()]
+    if "rejected" not in columns or "rejection_reason" not in columns:
+        logger.info("migrating_tasktransition_add_rejection_columns")
+        if "rejected" not in columns:
+            await conn.execute(
+                text(
+                    "ALTER TABLE tasktransition ADD COLUMN rejected BOOLEAN DEFAULT 0",
+                ),
+            )
+        if "rejection_reason" not in columns:
+            await conn.execute(
+                text(
+                    "ALTER TABLE tasktransition ADD COLUMN rejection_reason TEXT",
+                ),
+            )
+
+
 async def ensure_bootstrap_admin() -> tuple[str, str] | None:
     """Create a bootstrap admin account when no users exist (D-05)."""
     async with async_session_factory() as session:
@@ -179,6 +208,7 @@ async def init_db() -> None:
     async with engine.begin() as conn:
         await migrate_add_context_length(conn)
         await migrate_add_user_id_columns(conn)
+        await migrate_add_task_transition_rejection_columns(conn)
         await conn.run_sync(SQLModel.metadata.create_all)
         await _migrate_legacy_strategies(conn)
 
