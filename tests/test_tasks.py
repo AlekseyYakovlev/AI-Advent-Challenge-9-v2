@@ -7,6 +7,7 @@ from httpx import AsyncClient
 from sqlalchemy import text
 from sqlmodel import select
 
+from agent import tasks
 from agent.tools import TOOL_REGISTRY, build_tool_schemas, dispatch_tool_calls
 from shared.database import async_session_factory
 from shared.models import Chat, Task, TaskState, TaskTransition
@@ -647,3 +648,195 @@ async def test_transition_task_unknown_id_is_rejected(authenticated_client: Asyn
         )
         rows = list(result.all())
         assert len(rows) == 0
+
+
+@pytest.mark.asyncio
+async def test_transition_task_execution_to_planning_succeeds(
+    authenticated_client: AsyncClient,
+) -> None:
+    """A one-step-back rework move (execution -> planning) is legal (D-01)."""
+    user_id = authenticated_client.seeded_user_id
+    chat_id = await _seed_chat(user_id)
+    task_id = await _create_task_via_tool(user_id, chat_id)
+
+    async with async_session_factory() as session:
+        await tasks.transition_task(session, user_id, chat_id, task_id, TaskState.EXECUTION)
+
+    async with async_session_factory() as session:
+        task = await tasks.transition_task(session, user_id, chat_id, task_id, TaskState.PLANNING)
+
+    assert task.state is TaskState.PLANNING
+
+
+@pytest.mark.asyncio
+async def test_transition_task_validation_to_execution_succeeds(
+    authenticated_client: AsyncClient,
+) -> None:
+    """A one-step-back rework move (validation -> execution) is legal (D-01)."""
+    user_id = authenticated_client.seeded_user_id
+    chat_id = await _seed_chat(user_id)
+    task_id = await _create_task_via_tool(user_id, chat_id)
+
+    async with async_session_factory() as session:
+        await tasks.transition_task(session, user_id, chat_id, task_id, TaskState.EXECUTION)
+    async with async_session_factory() as session:
+        await tasks.transition_task(session, user_id, chat_id, task_id, TaskState.VALIDATION)
+
+    async with async_session_factory() as session:
+        task = await tasks.transition_task(session, user_id, chat_id, task_id, TaskState.EXECUTION)
+
+    assert task.state is TaskState.EXECUTION
+
+
+@pytest.mark.asyncio
+async def test_transition_task_rejects_skip_ahead(authenticated_client: AsyncClient) -> None:
+    """planning -> done directly (skipping execution/validation) raises IllegalTransitionError."""
+    user_id = authenticated_client.seeded_user_id
+    chat_id = await _seed_chat(user_id)
+    task_id = await _create_task_via_tool(user_id, chat_id)
+
+    async with async_session_factory() as session:
+        task_before = await session.get(Task, task_id)
+        updated_at_before = task_before.updated_at
+
+    async with async_session_factory() as session:
+        with pytest.raises(tasks.IllegalTransitionError):
+            await tasks.transition_task(session, user_id, chat_id, task_id, TaskState.DONE)
+
+    async with async_session_factory() as session:
+        task = await session.get(Task, task_id)
+        assert task.state is TaskState.PLANNING
+        assert task.updated_at == updated_at_before
+
+        result = await session.exec(
+            select(TaskTransition)
+            .where(TaskTransition.task_id == task_id)
+            .order_by(TaskTransition.id),
+        )
+        rows = list(result.all())
+        assert len(rows) == 2
+        newest = rows[-1]
+        assert newest.rejected is True
+        assert newest.from_state is TaskState.PLANNING
+        assert newest.to_state is TaskState.DONE
+        assert newest.rejection_reason
+
+
+@pytest.mark.asyncio
+async def test_transition_task_rejects_two_steps_back(authenticated_client: AsyncClient) -> None:
+    """validation -> planning (two steps back) raises IllegalTransitionError and writes a rejected row."""
+    user_id = authenticated_client.seeded_user_id
+    chat_id = await _seed_chat(user_id)
+    task_id = await _create_task_via_tool(user_id, chat_id)
+
+    async with async_session_factory() as session:
+        await tasks.transition_task(session, user_id, chat_id, task_id, TaskState.EXECUTION)
+    async with async_session_factory() as session:
+        await tasks.transition_task(session, user_id, chat_id, task_id, TaskState.VALIDATION)
+
+    async with async_session_factory() as session:
+        with pytest.raises(tasks.IllegalTransitionError):
+            await tasks.transition_task(session, user_id, chat_id, task_id, TaskState.PLANNING)
+
+    async with async_session_factory() as session:
+        task = await session.get(Task, task_id)
+        assert task.state is TaskState.VALIDATION
+
+        result = await session.exec(
+            select(TaskTransition)
+            .where(TaskTransition.task_id == task_id)
+            .order_by(TaskTransition.id),
+        )
+        newest = list(result.all())[-1]
+        assert newest.rejected is True
+
+
+@pytest.mark.asyncio
+async def test_transition_task_rejects_self_loop(authenticated_client: AsyncClient) -> None:
+    """planning -> planning (self-loop) raises IllegalTransitionError."""
+    user_id = authenticated_client.seeded_user_id
+    chat_id = await _seed_chat(user_id)
+    task_id = await _create_task_via_tool(user_id, chat_id)
+
+    async with async_session_factory() as session:
+        with pytest.raises(tasks.IllegalTransitionError):
+            await tasks.transition_task(session, user_id, chat_id, task_id, TaskState.PLANNING)
+
+
+@pytest.mark.asyncio
+async def test_transition_task_rejects_done_terminal_exit(
+    authenticated_client: AsyncClient,
+) -> None:
+    """done has no exit -- moving to execution raises IllegalTransitionError (D-01)."""
+    user_id = authenticated_client.seeded_user_id
+    chat_id = await _seed_chat(user_id)
+    task_id = await _create_task_via_tool(user_id, chat_id)
+
+    for state in (TaskState.EXECUTION, TaskState.VALIDATION, TaskState.DONE):
+        async with async_session_factory() as session:
+            await tasks.transition_task(session, user_id, chat_id, task_id, state)
+
+    async with async_session_factory() as session:
+        with pytest.raises(tasks.IllegalTransitionError):
+            await tasks.transition_task(session, user_id, chat_id, task_id, TaskState.EXECUTION)
+
+    async with async_session_factory() as session:
+        task = await session.get(Task, task_id)
+        assert task.state is TaskState.DONE
+
+
+@pytest.mark.asyncio
+async def test_transition_task_rejects_cancelled_terminal_exit(
+    authenticated_client: AsyncClient,
+) -> None:
+    """cancelled has no exit -- moving to planning raises IllegalTransitionError (D-01)."""
+    user_id = authenticated_client.seeded_user_id
+    chat_id = await _seed_chat(user_id)
+    task_id = await _create_task_via_tool(user_id, chat_id)
+
+    async with async_session_factory() as session:
+        await tasks.cancel_task(session, user_id, chat_id, task_id)
+
+    async with async_session_factory() as session:
+        with pytest.raises(tasks.IllegalTransitionError):
+            await tasks.transition_task(session, user_id, chat_id, task_id, TaskState.PLANNING)
+
+    async with async_session_factory() as session:
+        task = await session.get(Task, task_id)
+        assert task.state is TaskState.CANCELLED
+
+
+@pytest.mark.asyncio
+async def test_transition_task_other_users_task_raises_not_found_not_illegal(
+    authenticated_client: AsyncClient,
+    second_authenticated_client: AsyncClient,
+) -> None:
+    """Ownership resolves before legality -- another user's task_id raises TaskNotFoundError."""
+    owner_id = authenticated_client.seeded_user_id
+    other_user_id = second_authenticated_client.seeded_user_id
+    chat_id = await _seed_chat(owner_id)
+    task_id = await _create_task_via_tool(owner_id, chat_id)
+
+    other_chat_id = await _seed_chat(other_user_id)
+
+    async with async_session_factory() as session:
+        with pytest.raises(tasks.TaskNotFoundError):
+            await tasks.transition_task(
+                session, other_user_id, other_chat_id, task_id, TaskState.DONE,
+            )
+
+
+def test_build_transition_illegal_prompt_includes_task_details() -> None:
+    """The prompt names the task id and both the from-state and to-state values."""
+    rejected = [
+        {
+            "task_id": 4,
+            "from_state": "planning",
+            "to_state": "done",
+            "error": "validation must come first",
+        },
+    ]
+    prompt = tasks.build_transition_illegal_prompt(rejected)
+    assert "4" in prompt
+    assert "planning" in prompt
+    assert "done" in prompt
