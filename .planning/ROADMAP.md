@@ -201,7 +201,21 @@ Plans:
   2. A rejected transition produces a clear, explainable message in the UI/WS response, never a silent no-op or a crash
   3. Resuming a paused task correctly continues along the valid transition graph, verified using working memory as the source of truth rather than whatever the active context-compression strategy happens to retain
 
-**Plans**: TBD
+**Plans**: 4 plans (3 waves)
+Plans:
+**Wave 1**
+
+- [ ] 06-01-PLAN.md — TaskTransition rejection columns + idempotent migration, transition-graph edge table, IllegalTransitionError, legality gates on transition_task/set_paused/cancel_task, rejected-row persistence (TRANS-01, TRANS-03)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 06-02-PLAN.md — ok=False promotion in the tool dispatcher, code discriminators on all three task tools, D-08 justify/retract re-prompt in the WS turn flow, resume-after-compression regression test (TRANS-02, TRANS-03)
+- [ ] 06-03-PLAN.md — rejected/rejection_reason in the task API schema, HTTP 409 on manual pause/resume/cancel, inline red strikethrough rejected rows in the Tasks tab history (TRANS-01, TRANS-02, TRANS-03)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 06-04-PLAN.md — full regression + real-app.db migration check and the Day 15 acceptance demo checkpoint (TRANS-01..TRANS-03)
+
 **UI hint**: yes
 
 ## Progress
@@ -213,8 +227,8 @@ Plans:
 | 3. Personalization (Day 12) | 3/3 | Complete   | 2026-09-20 |
 | 4. Task State Machine (Day 13) | 4/4 | Complete   | 2026-09-20 |
 | 5. Invariants (Day 14) | 4/4 | Complete   | 2026-09-20 |
-| 6. Controlled Transitions (Day 15) | 0/? | Not started | - |
+| 6. Controlled Transitions (Day 15) | 0/4 | Planned | - |
 
 ---
 *Roadmap created: 2026-09-19*
-*Last updated: 2026-09-20 — Phase 5 planned (4 plans, 4 waves)*
+*Last updated: 2026-09-21 — Phase 6 planned (4 plans, 3 waves)*
