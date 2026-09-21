@@ -20,6 +20,7 @@ const state = {
     reconnectTimer: null,
     shouldReconnect: true,
     lastFailedMessage: null,
+    pendingMessage: null,
     lastStats: null,
     lastStatsChatId: null,
     contextWindow: null,
@@ -883,6 +884,21 @@ async function saveGlobalInvariant() {
     }
 }
 
+function appendUserBubble(content) {
+    const container = $('messages');
+    const wrapper = document.createElement('div');
+    wrapper.className = 'flex justify-end';
+    const bubble = document.createElement('div');
+    bubble.className = 'max-w-[75%] rounded-xl px-4 py-2 text-sm bg-indigo-600 text-white';
+    const contentEl = document.createElement('div');
+    contentEl.className = 'message-content prose prose-invert prose-sm max-w-none';
+    contentEl.innerHTML = DOMPurify.sanitize(content);
+    bubble.appendChild(contentEl);
+    wrapper.appendChild(bubble);
+    container.appendChild(wrapper);
+    container.scrollTop = container.scrollHeight;
+}
+
 function appendLoadingBubble() {
     const container = $('messages');
     const existing = container.querySelector('[data-streaming="true"]');
@@ -1049,6 +1065,7 @@ function connectWs(chatId) {
     ws.onopen = () => {
         state.reconnectAttempt = 0;
         if (state.currentChatId === chatId) loadChatStats(chatId);
+        trySendPending();
     };
 
     ws.onmessage = (event) => {
@@ -1212,16 +1229,30 @@ function handleWsMessage(data) {
     }
 }
 
+function trySendPending() {
+    if (!state.pendingMessage) return;
+    if (!state.currentChatId) return;
+    if (state.isStreaming) return;
+    if (!state.selectedModel) return;
+    if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+
+    const queued = state.pendingMessage;
+    state.pendingMessage = null;
+    sendMessage(queued).catch((err) => showToast(err.message, 'error'));
+}
+
 async function sendMessage(content) {
     if (!state.currentChatId || !content.trim() || state.isStreaming) return;
 
     if (!state.selectedModel) {
-        showToast('Выберите модель', 'error');
+        state.pendingMessage = content.trim();
+        showToast('Модель ещё загружается — сообщение будет отправлено автоматически', 'info');
         return;
     }
 
     if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
-        showToast('WebSocket не подключён', 'error');
+        state.pendingMessage = content.trim();
+        showToast('Переподключение к серверу — сообщение будет отправлено автоматически', 'info');
         connectWs(state.currentChatId);
         return;
     }
@@ -1230,6 +1261,7 @@ async function sendMessage(content) {
     state.lastFailedMessage = trimmed;
 
     setStreaming(true);
+    appendUserBubble(trimmed);
     appendLoadingBubble();
 
     state.ws.send(JSON.stringify({
@@ -1305,6 +1337,7 @@ function populateModelSelect() {
         select.value = state.models[0].id;
         state.selectedModel = state.models[0].id;
     }
+    trySendPending();
 }
 
 async function refreshModelSelector() {
