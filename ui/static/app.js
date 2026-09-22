@@ -20,6 +20,7 @@ const state = {
     reconnectTimer: null,
     shouldReconnect: true,
     lastFailedMessage: null,
+    pendingMessage: null,
     lastStats: null,
     lastStatsChatId: null,
     contextWindow: null,
@@ -355,11 +356,27 @@ function formatTaskTimestamp(isoString) {
 function renderTaskHistory(container, history) {
     container.replaceChildren();
     history.forEach((entry) => {
-        const fromLabel = entry.from_state ? TASK_STATE_LABELS[entry.from_state] : 'создана';
         const line = document.createElement('div');
-        line.className = 'text-slate-500';
-        line.textContent =
-            `${fromLabel} → ${TASK_STATE_LABELS[entry.to_state]} · ${formatTaskTimestamp(entry.created_at)}`;
+
+        if (entry.rejected) {
+            line.className = 'text-red-400 line-through';
+            let text;
+            if (entry.from_state === entry.to_state) {
+                text = `операция отклонена (${TASK_STATE_LABELS[entry.to_state]})`;
+            } else {
+                text = `попытка → ${TASK_STATE_LABELS[entry.to_state]}: отклонено`;
+            }
+            if (entry.rejection_reason) {
+                text += ` (${entry.rejection_reason})`;
+            }
+            text += ` · ${formatTaskTimestamp(entry.created_at)}`;
+            line.textContent = text;
+        } else {
+            const fromLabel = entry.from_state ? TASK_STATE_LABELS[entry.from_state] : 'создана';
+            line.className = 'text-slate-500';
+            line.textContent =
+                `${fromLabel} → ${TASK_STATE_LABELS[entry.to_state]} · ${formatTaskTimestamp(entry.created_at)}`;
+        }
         container.appendChild(line);
 
         if (entry.note) {
@@ -867,6 +884,21 @@ async function saveGlobalInvariant() {
     }
 }
 
+function appendUserBubble(content) {
+    const container = $('messages');
+    const wrapper = document.createElement('div');
+    wrapper.className = 'flex justify-end';
+    const bubble = document.createElement('div');
+    bubble.className = 'max-w-[75%] rounded-xl px-4 py-2 text-sm bg-indigo-600 text-white';
+    const contentEl = document.createElement('div');
+    contentEl.className = 'message-content prose prose-invert prose-sm max-w-none';
+    contentEl.innerHTML = DOMPurify.sanitize(content);
+    bubble.appendChild(contentEl);
+    wrapper.appendChild(bubble);
+    container.appendChild(wrapper);
+    container.scrollTop = container.scrollHeight;
+}
+
 function appendLoadingBubble() {
     const container = $('messages');
     const existing = container.querySelector('[data-streaming="true"]');
@@ -1033,6 +1065,7 @@ function connectWs(chatId) {
     ws.onopen = () => {
         state.reconnectAttempt = 0;
         if (state.currentChatId === chatId) loadChatStats(chatId);
+        trySendPending();
     };
 
     ws.onmessage = (event) => {
@@ -1196,16 +1229,30 @@ function handleWsMessage(data) {
     }
 }
 
+function trySendPending() {
+    if (!state.pendingMessage) return;
+    if (!state.currentChatId) return;
+    if (state.isStreaming) return;
+    if (!state.selectedModel) return;
+    if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+
+    const queued = state.pendingMessage;
+    state.pendingMessage = null;
+    sendMessage(queued).catch((err) => showToast(err.message, 'error'));
+}
+
 async function sendMessage(content) {
     if (!state.currentChatId || !content.trim() || state.isStreaming) return;
 
     if (!state.selectedModel) {
-        showToast('Выберите модель', 'error');
+        state.pendingMessage = content.trim();
+        showToast('Модель ещё загружается — сообщение будет отправлено автоматически', 'info');
         return;
     }
 
     if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
-        showToast('WebSocket не подключён', 'error');
+        state.pendingMessage = content.trim();
+        showToast('Переподключение к серверу — сообщение будет отправлено автоматически', 'info');
         connectWs(state.currentChatId);
         return;
     }
@@ -1214,6 +1261,7 @@ async function sendMessage(content) {
     state.lastFailedMessage = trimmed;
 
     setStreaming(true);
+    appendUserBubble(trimmed);
     appendLoadingBubble();
 
     state.ws.send(JSON.stringify({
@@ -1289,6 +1337,7 @@ function populateModelSelect() {
         select.value = state.models[0].id;
         state.selectedModel = state.models[0].id;
     }
+    trySendPending();
 }
 
 async function refreshModelSelector() {

@@ -364,6 +364,8 @@ class TaskTransition(SQLModel, table=True):
         ),
     )
     note: str = Field(default="", max_length=2_000)
+    rejected: bool = Field(default=False)
+    rejection_reason: Optional[str] = Field(default=None)
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
     )

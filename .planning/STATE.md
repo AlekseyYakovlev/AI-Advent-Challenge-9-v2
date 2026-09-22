@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-last_updated: "2026-09-21T02:48:05.108Z"
+last_updated: "2026-09-21T03:31:51.395Z"
 progress:
   total_phases: 6
   completed_phases: 5
@@ -18,15 +18,15 @@ progress:
 
 **Project:** AiAdventAgentV2 — Week 3: Agent Memory & Task State
 **Core value:** The agent must demonstrably separate and manage distinct kinds of state — short-term dialog, working task data, long-term profile/knowledge, and task lifecycle — making explicit, inspectable decisions about what goes where.
-**Current focus:** Phase 05 — invariants-day-14
+**Current focus:** Phase 06 — controlled-transitions-day-15
 
 ## Current Position
 
-Phase: 05 (invariants-day-14) — EXECUTING
+Phase: 06 (controlled-transitions-day-15) — EXECUTING
 Plan: 1 of 4
 **Phase:** 4 of 6 (task state machine (day 13))
 **Plan:** Not started
-**Status:** Executing Phase 05
+**Status:** Executing Phase 06
 **Progress:** [██████████] 100%
 
 ## Performance Metrics
@@ -60,6 +60,12 @@ None yet.
 ### Blockers
 
 None.
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260921-juu | Fix silent message-drop race (model/WS not ready) and delayed user-bubble rendering in ui/static/app.js | 2026-09-21 | 56224e1 | [260921-juu-fix-silent-message-drop-race-model-ws-no](./quick/260921-juu-fix-silent-message-drop-race-model-ws-no/) |
 
 ## Session Continuity
 

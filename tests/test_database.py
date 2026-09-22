@@ -8,7 +8,13 @@ from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 from sqlmodel import select
 
-from shared.database import async_session_factory, engine, init_db, retry_on_locked_db
+from shared.database import (
+    async_session_factory,
+    engine,
+    init_db,
+    migrate_add_task_transition_rejection_columns,
+    retry_on_locked_db,
+)
 from shared.models import Chat, ContextStrategy, Message, Settings, TokenUsage
 
 
@@ -71,6 +77,21 @@ async def test_init_db_creates_all_tables() -> None:
         "chatinvariant",
         "invariantconflict",
     }
+
+
+@pytest.mark.asyncio
+async def test_migrate_add_task_transition_rejection_columns_is_idempotent() -> None:
+    """Running the tasktransition rejection-column migration twice raises nothing."""
+    async with engine.begin() as conn:
+        await migrate_add_task_transition_rejection_columns(conn)
+        await migrate_add_task_transition_rejection_columns(conn)
+
+    async with engine.connect() as conn:
+        result = await conn.execute(text("PRAGMA table_info(tasktransition)"))
+        columns = [row[1] for row in result.fetchall()]
+
+    assert columns.count("rejected") == 1
+    assert columns.count("rejection_reason") == 1
 
 
 @pytest.mark.asyncio

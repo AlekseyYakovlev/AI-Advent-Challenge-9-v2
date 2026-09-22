@@ -259,6 +259,8 @@ def _task_to_response(row: Task, history: list[TaskTransition]) -> TaskResponse:
                 from_state=(h.from_state.value if h.from_state is not None else None),
                 to_state=h.to_state.value,
                 note=h.note,
+                rejected=h.rejected,
+                rejection_reason=h.rejection_reason,
                 created_at=h.created_at,
             )
             for h in history
@@ -690,8 +692,13 @@ async def pause_task_endpoint(
     if task.chat_id not in chat_locks:
         chat_locks[task.chat_id] = asyncio.Lock()
     async with chat_locks[task.chat_id]:
-        row = await tasks.set_paused(session, current_user.id, task.chat_id, task_id, True)
-        return await _task_response_with_history(session, row)
+        try:
+            row = await tasks.set_paused(session, current_user.id, task.chat_id, task_id, True)
+            return await _task_response_with_history(session, row)
+        except tasks.IllegalTransitionError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail=str(exc),
+            ) from exc
 
 
 @app.post("/api/v1/tasks/{task_id}/resume", response_model=TaskResponse)
@@ -705,8 +712,13 @@ async def resume_task_endpoint(
     if task.chat_id not in chat_locks:
         chat_locks[task.chat_id] = asyncio.Lock()
     async with chat_locks[task.chat_id]:
-        row = await tasks.set_paused(session, current_user.id, task.chat_id, task_id, False)
-        return await _task_response_with_history(session, row)
+        try:
+            row = await tasks.set_paused(session, current_user.id, task.chat_id, task_id, False)
+            return await _task_response_with_history(session, row)
+        except tasks.IllegalTransitionError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail=str(exc),
+            ) from exc
 
 
 @app.post("/api/v1/tasks/{task_id}/cancel", response_model=TaskResponse)
@@ -720,8 +732,13 @@ async def cancel_task_endpoint(
     if task.chat_id not in chat_locks:
         chat_locks[task.chat_id] = asyncio.Lock()
     async with chat_locks[task.chat_id]:
-        row = await tasks.cancel_task(session, current_user.id, task.chat_id, task_id)
-        return await _task_response_with_history(session, row)
+        try:
+            row = await tasks.cancel_task(session, current_user.id, task.chat_id, task_id)
+            return await _task_response_with_history(session, row)
+        except tasks.IllegalTransitionError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail=str(exc),
+            ) from exc
 
 
 @app.post(
