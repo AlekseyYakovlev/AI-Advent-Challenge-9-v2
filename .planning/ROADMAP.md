@@ -13,7 +13,7 @@
 - [x] **Phase 3: Personalization (Day 12)** — Each user's profile is injected into every request and observably shapes responses (completed 2026-09-20)
 - [x] **Phase 4: Task State Machine (Day 13)** — Chats can contain multiple LLM-created tasks tracked through an explicit lifecycle (completed 2026-09-20)
 - [x] **Phase 5: Invariants (Day 14)** — Global and per-chat ground rules are injected into context and checked against agent behavior (completed 2026-09-20)
-- [ ] **Phase 6: Controlled Transitions (Day 15)** — Illegal task-state transitions are hard-rejected with a clear explanation, and pause/resume is verified correct
+- [x] **Phase 6: Controlled Transitions (Day 15)** — Illegal task-state transitions are hard-rejected with a clear explanation, and pause/resume is verified correct (completed 2026-09-21)
 
 ## Phase Details
 
@@ -214,7 +214,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 06-04-PLAN.md — full regression + real-app.db migration check and the Day 15 acceptance demo checkpoint (TRANS-01..TRANS-03)
+- [x] 06-04-PLAN.md — full regression + real-app.db migration check and the Day 15 acceptance demo checkpoint (TRANS-01..TRANS-03)
 
 **UI hint**: yes
 
@@ -227,7 +227,7 @@ Plans:
 | 3. Personalization (Day 12) | 3/3 | Complete   | 2026-09-20 |
 | 4. Task State Machine (Day 13) | 4/4 | Complete   | 2026-09-20 |
 | 5. Invariants (Day 14) | 4/4 | Complete   | 2026-09-20 |
-| 6. Controlled Transitions (Day 15) | 3/4 | In Progress|  |
+| 6. Controlled Transitions (Day 15) | 4/4 | Complete   | 2026-09-21 |
 
 ---
 *Roadmap created: 2026-09-19*
