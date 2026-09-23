@@ -283,6 +283,19 @@ def get_live_session(user_id: int, server_id: int) -> ClientSession | None:
     return _sessions[(user_id, server_id)].session
 
 
+def get_live_tools(user_id: int, server_id: int) -> list[McpToolInfo] | None:
+    """Return the tools cached at connect time, or None when the server is not connected.
+
+    Reads the registry only (no ping) so the chat path never stalls a busy server.
+    """
+    if not is_connected(user_id, server_id):
+        return None
+    result = _sessions[(user_id, server_id)].result
+    if result is None:
+        return None
+    return list(result.tools)
+
+
 async def _is_alive(handle: SessionHandle) -> bool:
     """Check that the owner task is running and the server still answers a ping."""
     session = handle.session

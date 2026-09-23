@@ -1,9 +1,13 @@
 """Portable stdio MCP fixture server with selectable healthy and failing behaviors.
 
 Run as ``python mcp_stdio_server.py <mode>`` where mode is one of:
-ok, die_after, garbage, stderr_exit, hang, bad_protocol.
+ok, tools_extra, die_after, garbage, stderr_exit, hang, bad_protocol.
+
+``ok`` serves exactly echo and add. ``tools_extra`` serves those two plus fail, slow, big
+and noargs, which exercise error, timeout, oversized-result and no-argument tool calls.
 """
 
+import asyncio
 import json
 import os
 import sys
@@ -13,8 +17,8 @@ import time
 USAGE = "usage: mcp_stdio_server.py <ok|die_after|garbage|stderr_exit|hang|bad_protocol>\n"
 
 
-def _run_fastmcp_server() -> None:
-    """Serve two tools over stdio using the MCP SDK's FastMCP."""
+def _run_fastmcp_server(extra: bool = False) -> None:
+    """Serve echo and add over stdio using the MCP SDK's FastMCP, plus more when extra is set."""
     from mcp.server.fastmcp import FastMCP
 
     sys.stderr.write("fixture-server starting\n")
@@ -31,6 +35,29 @@ def _run_fastmcp_server() -> None:
     def add(a: int, b: int = 0) -> int:
         """Add two integers."""
         return a + b
+
+    if extra:
+
+        @server.tool()
+        def fail() -> str:
+            """Always raise so the server reports isError."""
+            raise ValueError("fixture failure")
+
+        @server.tool()
+        async def slow(seconds: float) -> str:
+            """Sleep for the given seconds without blocking the server loop."""
+            await asyncio.sleep(seconds)
+            return "slow-done"
+
+        @server.tool()
+        def big(size: int) -> str:
+            """Return a string of the requested length."""
+            return "x" * size
+
+        @server.tool()
+        def noargs() -> str:
+            """Take no arguments."""
+            return "noargs-ok"
 
     server.run(transport="stdio")
 
@@ -89,6 +116,7 @@ def main() -> None:
     mode = sys.argv[1] if len(sys.argv) > 1 else ""
     handlers = {
         "ok": _run_fastmcp_server,
+        "tools_extra": lambda: _run_fastmcp_server(extra=True),
         "die_after": _mode_die_after,
         "garbage": _mode_garbage,
         "stderr_exit": _mode_stderr_exit,

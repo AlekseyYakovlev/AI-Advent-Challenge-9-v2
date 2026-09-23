@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     LM_STUDIO_BASE_URL: str = "http://localhost:1234"
     LLM_TIMEOUT: float = 60.0
     MCP_CONNECT_TIMEOUT: float = 10.0
+    MCP_TOOL_CALL_TIMEOUT: float = 30.0
+    MCP_TOOL_RESULT_MAX_CHARS: int = 20000
 
 
 settings = Settings()
