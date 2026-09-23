@@ -116,6 +116,48 @@ async def test_update_with_masked_env_preserves_value(
         assert mcp_config.load_env(row) == {"SECRET_TOKEN": "supersecret123", "B": "2"}
 
 
+async def test_update_rename_env_key_with_mask_returns_422_and_changes_nothing(
+    authenticated_client: AsyncClient,
+) -> None:
+    """Keeping the mask on a renamed (unknown) env key is rejected; nothing is modified."""
+    secret = "supersecret123"
+    created = await _create(authenticated_client, env={"SECRET_TOKEN": secret})
+    sid = created["id"]
+    connect = await authenticated_client.post(f"{BASE}/{sid}/connect")
+    assert connect.json()["connection"]["status"] == "connected"
+
+    resp = await authenticated_client.put(
+        f"{BASE}/{sid}",
+        json={"name": "renamed", "env": {"RENAMED": mcp_config.ENV_MASK}},
+    )
+    assert resp.status_code == 422
+    detail = resp.json()["detail"]
+    assert isinstance(detail, str)
+    assert "RENAMED" in detail
+    assert mcp_config.ENV_MASK in detail
+    assert secret not in resp.text
+
+    async with async_session_factory() as session:
+        row = await session.get(McpServerConfig, sid)
+        assert row is not None
+        assert row.name == "fixture"
+        assert mcp_config.load_env(row) == {"SECRET_TOKEN": secret}
+
+    assert mcp_client.is_connected(authenticated_client.seeded_user_id, sid)
+
+
+async def test_create_with_masked_env_value_returns_422_and_creates_nothing(
+    authenticated_client: AsyncClient,
+) -> None:
+    """A mask literal on create has nothing to refer to, so it is rejected with 422."""
+    resp = await authenticated_client.post(
+        BASE, json=_payload(env={"K": mcp_config.ENV_MASK}),
+    )
+    assert resp.status_code == 422
+    assert "K" in resp.json()["detail"]
+    assert (await authenticated_client.get(BASE)).json() == []
+
+
 async def test_cross_user_access_returns_404(
     authenticated_client: AsyncClient,
     second_authenticated_client: AsyncClient,

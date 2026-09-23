@@ -151,6 +151,22 @@ async def _get_chat_invariant_or_404(
     return invariant
 
 
+def _env_mask_error(
+    user_id: int,
+    server_id: int | None,
+    exc: mcp_config.EnvMaskError,
+) -> HTTPException:
+    """Build the HTTP 422 for a masked env value whose key has nothing stored (key name only)."""
+    logger.warning("mcp_env_mask_rejected", user_id=user_id, server_id=server_id, key=exc.key)
+    return HTTPException(
+        status_code=422,  # the status constant was renamed across Starlette versions
+        detail=(
+            f"Для переменной {exc.key} значение скрыто (•••), но такой переменной нет "
+            "в сохранённых. Введите значение заново."
+        ),
+    )
+
+
 async def _get_mcp_server_or_404(
     session: AsyncSession,
     user_id: int,
@@ -441,6 +457,19 @@ async def login(
     return UserResponse(id=user.id, username=user.username)
 
 
+async def _has_live_web_session(session: AsyncSession, user_id: int) -> bool:
+    """Return True if the user still has a non-expired web session row."""
+    result = await session.exec(select(SessionRow).where(SessionRow.user_id == user_id))
+    now: datetime = datetime.now(timezone.utc)
+    for row in result.all():
+        expires_at: datetime = row.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if expires_at >= now:
+            return True
+    return False
+
+
 @app.post("/api/v1/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
 async def logout(
     response: Response,
@@ -461,6 +490,18 @@ async def logout(
             except Exception:
                 await session.rollback()
                 raise
+    # A user with another live web session (other tab/device) keeps their MCP sessions.
+    # An expired web session that never calls logout is still not covered by this cleanup.
+    try:
+        if not await _has_live_web_session(session, current_user.id):
+            await mcp_client.cleanup_user_sessions(current_user.id)
+    except Exception as exc:
+        # MCP cleanup must never make logout fail.
+        logger.warning(
+            "logout_mcp_cleanup_failed",
+            user_id=current_user.id,
+            error_type=type(exc).__name__,
+        )
     response.delete_cookie(SESSION_COOKIE_NAME, path="/")
     logger.info("logout", user_id=current_user.id)
 
@@ -961,16 +1002,19 @@ async def create_mcp_server(
     current_user: User = Depends(get_current_user),
 ) -> McpServerResponse:
     """Create an MCP server config for the current user."""
-    row = await mcp_config.create_server(
-        session,
-        current_user.id,
-        body.name,
-        body.command,
-        body.args,
-        body.env,
-        body.cwd,
-        body.enabled,
-    )
+    try:
+        row = await mcp_config.create_server(
+            session,
+            current_user.id,
+            body.name,
+            body.command,
+            body.args,
+            body.env,
+            body.cwd,
+            body.enabled,
+        )
+    except mcp_config.EnvMaskError as exc:
+        raise _env_mask_error(current_user.id, None, exc) from exc
     connection = McpConnectResult(status=McpConnectionStatus.NOT_CONNECTED)
     return _mcp_server_to_response(row, connection)
 
@@ -984,20 +1028,29 @@ async def update_mcp_server(
 ) -> McpServerResponse:
     """Update an MCP server config; a connected server is disconnected first."""
     row = await _get_mcp_server_or_404(session, current_user.id, server_id)
+    updates = body.model_dump(exclude_unset=True)
+    if updates.get("env") is not None:
+        # Reject before disconnecting so a refused edit does not drop a live connection.
+        try:
+            mcp_config.merge_env(mcp_config.load_env(row), updates["env"])
+        except mcp_config.EnvMaskError as exc:
+            raise _env_mask_error(current_user.id, row.id, exc) from exc
     # Unconditional: also drops a remembered connect error that the edit makes stale.
     await mcp_client.disconnect_server(current_user.id, row.id)
-    updates = body.model_dump(exclude_unset=True)
-    row = await mcp_config.update_server(
-        session,
-        row,
-        name=updates.get("name"),
-        command=updates.get("command"),
-        args=updates.get("args"),
-        env=updates.get("env"),
-        cwd=updates.get("cwd"),
-        cwd_set="cwd" in body.model_fields_set,
-        enabled=updates.get("enabled"),
-    )
+    try:
+        row = await mcp_config.update_server(
+            session,
+            row,
+            name=updates.get("name"),
+            command=updates.get("command"),
+            args=updates.get("args"),
+            env=updates.get("env"),
+            cwd=updates.get("cwd"),
+            cwd_set="cwd" in body.model_fields_set,
+            enabled=updates.get("enabled"),
+        )
+    except mcp_config.EnvMaskError as exc:
+        raise _env_mask_error(current_user.id, row.id, exc) from exc
     connection = await mcp_client.get_status(current_user.id, row.id)
     return _mcp_server_to_response(row, connection)
 

@@ -36,18 +36,28 @@ def load_env(row: McpServerConfig) -> dict[str, str]:
     return {str(key): str(value) for key, value in parsed.items()}
 
 
+class EnvMaskError(ValueError):
+    """A masked env value was submitted for a key that has no stored value."""
+
+    def __init__(self, key: str) -> None:
+        super().__init__(f"Masked env value for unknown variable {key}")
+        self.key: str = key
+
+
 def merge_env(stored: dict[str, str], incoming: dict[str, str]) -> dict[str, str]:
     """Merge an edited env dict over the stored one.
 
     The UI shows secret values masked, so a masked value means "leave unchanged".
     Keys missing from `incoming` are dropped because the UI always sends the full key list.
+    A masked value for a key that is not stored (e.g. a renamed variable) cannot mean
+    "unchanged", so it raises EnvMaskError instead of silently losing the variable.
     """
     merged: dict[str, str] = {}
     for key, value in incoming.items():
         if value == ENV_MASK:
-            if key in stored:
-                merged[key] = stored[key]
-            # An unknown key with the mask literal must never be persisted as a real value.
+            if key not in stored:
+                raise EnvMaskError(key)
+            merged[key] = stored[key]
             continue
         merged[key] = value
     return merged
@@ -93,13 +103,15 @@ async def create_server(
     cwd: str | None,
     enabled: bool,
 ) -> McpServerConfig:
-    """Persist a new MCP server config for the user."""
+    """Persist a new MCP server config for the user; a masked env value raises EnvMaskError."""
+    # Nothing is stored yet, so any masked value is unresolvable.
+    validated_env: dict[str, str] = merge_env({}, env)
     row = McpServerConfig(
         user_id=user_id,
         name=name.strip(),
         command=command.strip(),
         args_json=json.dumps(args),
-        env_json=json.dumps(env),
+        env_json=json.dumps(validated_env),
         cwd=_normalize_cwd(cwd),
         enabled=enabled,
     )
@@ -125,15 +137,22 @@ async def update_server(
     cwd_set: bool = False,
     enabled: bool | None = None,
 ) -> McpServerConfig:
-    """Apply the supplied fields to a config; `cwd_set` lets callers clear the cwd."""
+    """Apply the supplied fields to a config; `cwd_set` lets callers clear the cwd.
+
+    Raises EnvMaskError before touching the row if `env` holds a mask for an unknown key.
+    """
+    # Validate first so a rejected request leaves the row unmodified.
+    merged_env: dict[str, str] | None = None
+    if env is not None:
+        merged_env = merge_env(load_env(row), env)
     if name is not None:
         row.name = name.strip()
     if command is not None:
         row.command = command.strip()
     if args is not None:
         row.args_json = json.dumps(args)
-    if env is not None:
-        row.env_json = json.dumps(merge_env(load_env(row), env))
+    if merged_env is not None:
+        row.env_json = json.dumps(merged_env)
     if cwd_set:
         row.cwd = _normalize_cwd(cwd)
     if enabled is not None:
