@@ -12,6 +12,7 @@ from starlette.testclient import TestClient
 
 os.environ.setdefault("DB_PATH", "test_app.db")
 
+from agent import mcp_client
 from agent import state as agent_state
 from agent.main import app
 from shared.config import settings
@@ -36,6 +37,7 @@ async def clean_test_db() -> None:
     agent_state.ws_rate_limiter.clear()
     agent_state.chat_locks.clear()
     yield
+    await mcp_client.cleanup_all_sessions()
     await engine.dispose()
     if db_path.exists():
         db_path.unlink()
