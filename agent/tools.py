@@ -8,6 +8,7 @@ from pydantic import BaseModel, ValidationError
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from agent import memory, tasks
+from agent.mcp_tools import McpToolBinding, call_mcp_tool
 from agent.schemas import (
     CreateTaskArgs,
     PauseTaskArgs,
@@ -78,20 +79,29 @@ async def dispatch_tool_calls(
     user_id: int,
     chat_id: int,
     tool_calls: list[dict[str, Any]],
+    *,
+    mcp_bindings: dict[str, McpToolBinding] | None = None,
 ) -> list[dict[str, Any]]:
     """Execute tool calls strictly sequentially, in the order returned by the LLM.
 
     Never gather these concurrently and never open a new session or lock: the
     caller already holds the per-chat lock and the open session, and a later
-    call in a turn may depend on an earlier one.
+    call in a turn may depend on an earlier one. Names found in `mcp_bindings`
+    are routed to the user's live MCP session; everything else uses the built-ins.
     """
     results: list[dict[str, Any]] = []
     for call in tool_calls:
         name = call.get("function", {}).get("name")
         tool_call_id = call.get("id")
+        raw_arguments = call.get("function", {}).get("arguments") or ""
+
+        binding = (mcp_bindings or {}).get(name) if isinstance(name, str) else None
+        if binding is not None:
+            results.append(await _dispatch_mcp_call(binding, tool_call_id, raw_arguments))
+            continue
 
         try:
-            raw_args = json.loads(call.get("function", {}).get("arguments") or "")
+            raw_args = json.loads(raw_arguments)
         except json.JSONDecodeError:
             results.append(
                 {
@@ -100,6 +110,8 @@ async def dispatch_tool_calls(
                     "ok": False,
                     "content": json.dumps({"error": "malformed arguments"}),
                     "write": None,
+                    "arguments": raw_arguments,
+                    "mcp": None,
                 },
             )
             continue
@@ -112,6 +124,8 @@ async def dispatch_tool_calls(
                     "ok": False,
                     "content": json.dumps({"error": f"unknown tool {name}"}),
                     "write": None,
+                    "arguments": raw_arguments,
+                    "mcp": None,
                 },
             )
             continue
@@ -127,6 +141,8 @@ async def dispatch_tool_calls(
                     "ok": False,
                     "content": json.dumps({"error": str(exc)}),
                     "write": None,
+                    "arguments": raw_arguments,
+                    "mcp": None,
                 },
             )
             continue
@@ -163,9 +179,83 @@ async def dispatch_tool_calls(
                         "layer": result.get("layer"),
                     }
                 ),
+                "arguments": raw_arguments,
+                "mcp": None,
             },
         )
     return results
+
+
+async def _dispatch_mcp_call(
+    binding: McpToolBinding,
+    tool_call_id: str | None,
+    raw_arguments: str,
+) -> dict[str, Any]:
+    """Run one namespaced MCP call and shape its outcome like a built-in tool result."""
+    mcp_info = {
+        "server_id": binding.server_id,
+        "server_name": binding.server_name,
+        "tool": binding.tool_name,
+    }
+
+    def _failure(text: str) -> dict[str, Any]:
+        return {
+            "tool_call_id": tool_call_id,
+            "name": binding.exposed_name,
+            "ok": False,
+            "content": json.dumps(
+                {
+                    "server": binding.server_name,
+                    "tool": binding.tool_name,
+                    "is_error": True,
+                    "error": text,
+                },
+                ensure_ascii=False,
+            ),
+            "write": None,
+            "arguments": raw_arguments,
+            "mcp": mcp_info,
+            "result_text": text,
+            "truncated": False,
+        }
+
+    if raw_arguments.strip():
+        try:
+            parsed: Any = json.loads(raw_arguments)
+        except json.JSONDecodeError:
+            return _failure("malformed arguments")
+        if not isinstance(parsed, dict):
+            return _failure("arguments must be a JSON object")
+        arguments: dict[str, Any] = parsed
+    else:
+        arguments = {}
+
+    outcome = await call_mcp_tool(binding, arguments)
+    if not outcome["ok"]:
+        failure = _failure(outcome["text"])
+        failure["truncated"] = outcome["truncated"]
+        return failure
+
+    return {
+        "tool_call_id": tool_call_id,
+        "name": binding.exposed_name,
+        "ok": True,
+        "content": json.dumps(
+            {
+                "server": binding.server_name,
+                "tool": binding.tool_name,
+                "is_error": False,
+                "content": outcome["text"],
+                "truncated": outcome["truncated"],
+            },
+            ensure_ascii=False,
+        ),
+        "write": None,
+        "arguments": raw_arguments,
+        "mcp": mcp_info,
+        "result_text": outcome["text"],
+        "truncated": outcome["truncated"],
+    }
 
 
 @register_tool(
