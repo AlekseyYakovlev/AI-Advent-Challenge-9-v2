@@ -22,31 +22,32 @@ The agent must demonstrably separate and manage distinct kinds of state — shor
 - ✓ **AUTH-02**: Every user has the same "admin" role and can create additional user accounts — Phase 1
 - ✓ **AUTH-03**: Session is maintained via an HTTP-only session cookie, valid for both REST and WebSocket — Phase 1
 - ✓ **AUTH-04**: All existing chats/settings/memory become scoped to the owning user (`user_id`) — Phase 1
+- ✓ **MEM-01**: Agent has 3 explicitly separated memory layers — short-term (current dialog), working (current task data), long-term (profile, decisions, knowledge) — v1.0
+- ✓ **MEM-02**: Long-term and working memory are stored in dedicated SQLite tables, not folded into the message tree — v1.0
+- ✓ **MEM-03**: The LLM explicitly chooses what to save and to which layer, via tool calls (not implicit/automatic classification) — v1.0
+- ✓ **MEM-04**: It's possible to inspect what data landed in each memory layer for a given chat — v1.0
+- ✓ **MEM-05**: UI shows the current contents of each memory layer — v1.0
+- ✓ **PERS-01**: Each user has a profile with preferences (style, format, constraints) — v1.0
+- ✓ **PERS-02**: The user's profile is attached to every request (injected into context/system prompt) — v1.0
+- ✓ **PERS-03**: UI lets the user view/edit their profile and preferences — v1.0
+- ✓ **PERS-04**: Responses observably differ across different profiles/preferences — v1.0
+- ✓ **TASK-01**: Task state is modeled as a finite state machine: `planning → execution → validation → done` — v1.0
+- ✓ **TASK-02**: Tasks are granular within a chat (a chat can contain multiple tasks), not one task per chat — v1.0
+- ✓ **TASK-03**: The LLM can autonomously create a new task when it recognizes a new unit of work (tool call), with the structure left open for future delegation to subagents — v1.0
+- ✓ **TASK-04**: A task can be paused at any state and resumed later without re-explaining context — v1.0
+- ✓ **TASK-05**: UI shows the current task, its state, and history of task state changes — v1.0
+- ✓ **INV-01**: Global invariants (architecture/stack/business rules for the whole app) are defined and stored separately from the dialog — v1.0
+- ✓ **INV-02**: Per-chat invariants can be added by the user, layered on top of global invariants — v1.0
+- ✓ **INV-03**: Invariants are injected into the agent's reasoning context (prompt-injection) on every relevant request — v1.0
+- ✓ **INV-04**: A dedicated check inspects the agent's response/tool calls for conflicts with active invariants and prompts the LLM to justify or retract the conflicting step — v1.0
+- ✓ **INV-05**: UI surfaces active invariants and any detected conflicts — v1.0
+- ✓ **TRANS-01**: Task states have an explicit set of allowed transitions; illegal transitions (e.g. execution before an approved plan, done before validation) are rejected — v1.0
+- ✓ **TRANS-02**: Attempting an illegal transition produces a clear, explainable rejection rather than silently succeeding or crashing — v1.0
+- ✓ **TRANS-03**: Task execution correctly resumes from a paused state without violating the transition graph — v1.0
 
 ### Active
 
-- [ ] **MEM-01**: Agent has 3 explicitly separated memory layers — short-term (current dialog), working (current task data), long-term (profile, decisions, knowledge)
-- [ ] **MEM-02**: Long-term and working memory are stored in dedicated SQLite tables, not folded into the message tree
-- [ ] **MEM-03**: The LLM explicitly chooses what to save and to which layer, via tool calls (not implicit/automatic classification)
-- [ ] **MEM-04**: It's possible to inspect what data landed in each memory layer for a given chat
-- [ ] **MEM-05**: UI shows the current contents of each memory layer
-- [ ] **PERS-01**: Each user has a profile with preferences (style, format, constraints)
-- [ ] **PERS-02**: The user's profile is attached to every request (injected into context/system prompt)
-- [ ] **PERS-03**: UI lets the user view/edit their profile and preferences
-- [ ] **PERS-04**: Responses observably differ across different profiles/preferences
-- [ ] **TASK-01**: Task state is modeled as a finite state machine: `planning → execution → validation → done`
-- [ ] **TASK-02**: Tasks are granular within a chat (a chat can contain multiple tasks), not one task per chat
-- [ ] **TASK-03**: The LLM can autonomously create a new task when it recognizes a new unit of work (tool call), with the structure left open for future delegation to subagents
-- [ ] **TASK-04**: A task can be paused at any state and resumed later without re-explaining context
-- [ ] **TASK-05**: UI shows the current task, its state, and history of task state changes
-- [ ] **INV-01**: Global invariants (architecture/stack/business rules for the whole app) are defined and stored separately from the dialog
-- [ ] **INV-02**: Per-chat invariants can be added by the user, layered on top of global invariants
-- [ ] **INV-03**: Invariants are injected into the agent's reasoning context (prompt-injection) on every relevant request
-- [ ] **INV-04**: A dedicated check inspects the agent's response/tool calls for conflicts with active invariants and prompts the LLM to justify or retract the conflicting step
-- [ ] **INV-05**: UI surfaces active invariants and any detected conflicts
-- [ ] **TRANS-01**: Task states have an explicit set of allowed transitions; illegal transitions (e.g. execution before an approved plan, done before validation) are rejected
-- [ ] **TRANS-02**: Attempting an illegal transition produces a clear, explainable rejection rather than silently succeeding or crashing
-- [ ] **TRANS-03**: Task execution correctly resumes from a paused state without violating the transition graph
+(Defined at next milestone start)
 
 ### Out of Scope
 
@@ -58,7 +59,7 @@ The agent must demonstrably separate and manage distinct kinds of state — shor
 
 ## Current State
 
-Phase 1 (Auth Foundation) complete on branch `Auth` — login/session, bootstrap admin + ownership backfill, REST/WebSocket scoping, and multi-user account creation are all merged and verified (123/123 tests pass). Next: Phase 2 (Memory, Day 11).
+Shipped **v1.0 Week 3: Agent Memory & Task State** (2026-09-23): auth, 3-layer memory, personalization, task FSM, invariants with conflict check, and hard-enforced task transitions — 6 phases / 25 plans, all merged to `main`. Known deferred item: Phase 01 VERIFICATION still flagged `human_needed` (auth exercised in every later live demo).
 
 ## Context
 
@@ -79,14 +80,14 @@ Phase 1 (Auth Foundation) complete on branch `Auth` — login/session, bootstrap
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Full UI integration for every phase (not backend-only) | User wants each capability visibly demonstrable in the existing chat UI | — Pending |
-| Memory layers as new SQLite tables, reusing existing DB | Keeps consistency with existing Chat/Message/Settings persistence rather than introducing a second storage mechanism | — Pending |
-| LLM chooses what/when to save via tool calls | Day 11 explicitly requires "you explicitly choose what and where is saved" — tool calls make that choice legible and demonstrate agentic behavior | — Pending |
-| Tasks are granular within a chat, auto-created by the LLM | Matches real task decomposition; leaves room for future subagent delegation per task | — Pending |
+| Full UI integration for every phase (not backend-only) | User wants each capability visibly demonstrable in the existing chat UI | ✓ Good (v1.0) |
+| Memory layers as new SQLite tables, reusing existing DB | Keeps consistency with existing Chat/Message/Settings persistence rather than introducing a second storage mechanism | ✓ Good (v1.0) |
+| LLM chooses what/when to save via tool calls | Day 11 explicitly requires "you explicitly choose what and where is saved" — tool calls make that choice legible and demonstrate agentic behavior | ✓ Good (v1.0) |
+| Tasks are granular within a chat, auto-created by the LLM | Matches real task decomposition; leaves room for future subagent delegation per task | ✓ Good (v1.0) |
 | Drop single-user constraint, add simple multi-user auth (all users = admin) | Personalization needs distinct profiles; user explicitly chose to move off single-user mode | Validated in Phase 1 |
 | Auth as its own foundation phase/branch (`Auth`), before Day 11 | All later phases (memory, profile, tasks, invariants) need `user_id` scoping from day one; avoids retrofitting | Validated in Phase 1 |
 | HTTP-only session cookie for auth | Simple, works uniformly across REST and WebSocket, fits local-first single-deployment model, no extra frontend library needed | Validated in Phase 1 |
-| Invariants enforced via prompt-injection + explicit response-conflict check | Balances realism (LLM can still err) with a real guardrail (dedicated conflict check), appropriate for course scope | — Pending |
+| Invariants enforced via prompt-injection + explicit response-conflict check | Balances realism (LLM can still err) with a real guardrail (dedicated conflict check), appropriate for course scope | ✓ Good (v1.0) |
 
 ## Evolution
 
@@ -106,4 +107,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-09-20 after Phase 1 (Auth Foundation) completion*
+*Last updated: 2026-09-23 after v1.0 milestone*
