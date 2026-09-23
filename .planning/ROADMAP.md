@@ -34,20 +34,33 @@ Full details: [milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
 **Depends on**: Phase 1 (Auth) — server configs are scoped by `user_id`
 **Requirements**: MCP-01, MCP-02, MCP-03, MCP-04, MCP-05, MCP-06
 **Success Criteria** (what must be TRUE):
+
 1. User adds a server in Settings with command `C:\Users\Aleksey\go\bin\filesystem.exe` and an allowed-directory arg; the config survives an app restart and is invisible to other users
 2. Pressing "Connect" shows status "connected" with serverInfo `filesystem-mcp-server` / version / protocol, and lists all 17 tools with descriptions and parameters
 3. A bad command path or a server that exits immediately yields a readable error in the UI, and the Agent's `/health` stays OK
 4. `python scripts/mcp_list_tools.py C:\Users\Aleksey\go\bin\filesystem.exe <dir>` prints serverInfo and the tool list
 5. `pytest tests/ -v` passes, including new MCP connect/list_tools tests (success + failure)
+
 **Plans**: 6 plans
 **UI hint**: yes
 
 Plans:
+**Wave 1**
+
 - [ ] 07-01-PLAN.md — MCP stdio client core: pin mcp, timeout config, result schemas, fixture server, owner-task registry + error classification (wave 1)
 - [ ] 07-02-PLAN.md — McpServerConfig table + user-scoped CRUD service with env masking/merge (wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 07-03-PLAN.md — REST endpoints /api/v1/mcp/servers (CRUD, connect/disconnect/status) + lifespan cleanup + API tests (wave 2)
 - [ ] 07-04-PLAN.md — CLI scripts/mcp_list_tools.py reusing connect_once_and_list + tests (wave 2)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 07-05-PLAN.md — "MCP серверы" section in the Settings modal (wave 3)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
 - [ ] 07-06-PLAN.md — End-to-end acceptance vs filesystem.exe + human UI walkthrough (wave 4, checkpoint)
 
 ## Progress

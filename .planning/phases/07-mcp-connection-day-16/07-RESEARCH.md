@@ -406,7 +406,7 @@ Captured 2026-09-23 by connecting to `C:\Users\Aleksey\go\bin\filesystem.exe` wi
 
 No claims about SDK *behavior* (exception shapes, event loop requirements, stderr capture mechanics, cross-task session usage) are in this table — every one of those was verified by direct execution in this session, not assumed.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Exact registry data structure / module split (`mcp_config.py` vs `mcp_client.py` vs one file)**
    - What we know: CONTEXT.md leaves this to Claude's discretion; the codebase's existing convention (`agent/profile.py` for CRUD, `agent/state.py` for in-memory registries, `agent/llm_client.py` for the "talk to an external process/API" module) suggests a 2-3 file split.
