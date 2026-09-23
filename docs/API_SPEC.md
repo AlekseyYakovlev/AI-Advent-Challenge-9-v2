@@ -113,3 +113,8 @@ Returns real-time statistics for a chat.
 |----------|---------|---------|
 | MCP_TOOL_CALL_TIMEOUT | 30.0 | Seconds allowed for one MCP tool call made from a chat turn |
 | MCP_TOOL_RESULT_MAX_CHARS | 20000 | Maximum characters of an MCP tool result sent to the model |
+| MCP_AUTO_CONNECT | true | Connect the user's enabled, unconnected MCP servers at the start of a chat turn (failures not retried until manual reconnect/edit) |
+
+With `MCP_AUTO_CONNECT` on, the first chat turn may wait up to `MCP_CONNECT_TIMEOUT` for a server
+that hangs at handshake, and `GET /api/v1/mcp/servers` then reports auto-connected servers as
+`connected`.

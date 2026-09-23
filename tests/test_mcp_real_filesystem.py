@@ -87,3 +87,47 @@ async def test_list_allowed_directories_with_empty_arguments_via_chat_dispatch()
         leftover = _filesystem_pids() - protected
     assert not leftover, f"filesystem.exe from this run still alive: {sorted(leftover)}"
     assert all(psutil.pid_exists(pid) for pid in protected)
+
+
+async def test_auto_connect_without_prior_connect_lists_allowed_directories() -> None:
+    """A configured but never connected server is connected by the toolset build itself."""
+    protected = _filesystem_pids()
+    user_id = await _create_user("realfsauto", "pw")
+    async with async_session_factory() as session:
+        row = await mcp_config.create_server(
+            session, user_id, "Filesystem", FILESYSTEM_EXE, [ALLOWED_DIR], {}, None, True,
+        )
+        server_id = row.id
+        chat = Chat(title="Real filesystem auto", user_id=user_id)
+        session.add(chat)
+        await session.commit()
+        await session.refresh(chat)
+        chat_id = chat.id
+
+    try:
+        async with async_session_factory() as session:
+            toolset = await build_mcp_toolset(session, user_id, set(TOOL_REGISTRY))
+            assert EXPOSED_NAME in toolset.bindings
+
+            call = {
+                "id": "call_real_auto",
+                "type": "function",
+                "function": {"name": EXPOSED_NAME, "arguments": ""},
+            }
+            results = await dispatch_tool_calls(
+                session, user_id, chat_id, [call], mcp_bindings=toolset.bindings,
+            )
+
+        (result,) = results
+        assert result["ok"] is True, result["content"]
+        assert "aiadventagentv2" in json.loads(result["content"])["content"].lower()
+    finally:
+        await mcp_client.disconnect_server(user_id, server_id)
+
+    deadline = asyncio.get_running_loop().time() + CLEANUP_WAIT_SECONDS
+    leftover = _filesystem_pids() - protected
+    while leftover and asyncio.get_running_loop().time() < deadline:
+        await asyncio.sleep(0.2)
+        leftover = _filesystem_pids() - protected
+    assert not leftover, f"filesystem.exe from this run still alive: {sorted(leftover)}"
+    assert all(psutil.pid_exists(pid) for pid in protected)
