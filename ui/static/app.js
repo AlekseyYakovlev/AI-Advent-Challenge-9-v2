@@ -1393,6 +1393,355 @@ async function onModelSelect(modelId) {
     }
 }
 
+// ---- MCP servers (Phase 7) ----
+
+const MCP_STATUS_BADGE_CLASSES = {
+    not_connected: 'text-slate-400',
+    connecting: 'text-sky-400',
+    connected: 'text-emerald-400',
+    error: 'text-red-400',
+};
+
+const MCP_STATUS_LABELS = {
+    not_connected: 'не подключён',
+    connecting: 'подключение…',
+    connected: 'подключено',
+    error: 'ошибка',
+};
+
+const MCP_ENV_MASK = '•••';
+
+const MCP_NEUTRAL_BTN_CLASSES = 'px-2 py-1 text-xs rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 disabled:opacity-50 disabled:cursor-not-allowed';
+const MCP_PRE_CLASSES = 'text-xs text-slate-400 bg-black/30 rounded-md p-2 overflow-x-auto whitespace-pre-wrap';
+
+state.mcpServers = [];
+state.mcpEditingId = null;
+state.mcpConnecting = new Set();
+state.mcpExpanded = new Set();
+
+function mcpEl(tag, className, text) {
+    const el = document.createElement(tag);
+    if (className) el.className = className;
+    if (text !== undefined) el.textContent = text;
+    return el;
+}
+
+async function loadMcpServers() {
+    state.mcpServers = await apiFetch('/api/v1/mcp/servers') || [];
+    renderMcpServers();
+}
+
+function replaceMcpServer(updated) {
+    const idx = state.mcpServers.findIndex((s) => s.id === updated.id);
+    if (idx === -1) {
+        state.mcpServers.push(updated);
+    } else {
+        state.mcpServers[idx] = updated;
+    }
+}
+
+function bindMcpFold(button, body, key, caret) {
+    const apply = (open) => {
+        body.classList.toggle('hidden', !open);
+        button.setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (caret) caret.textContent = open ? '▾' : '▸';
+    };
+    apply(state.mcpExpanded.has(key));
+    button.addEventListener('click', () => {
+        const open = body.classList.contains('hidden');
+        apply(open);
+        if (open) {
+            state.mcpExpanded.add(key);
+        } else {
+            state.mcpExpanded.delete(key);
+        }
+    });
+}
+
+function describeMcpParams(schema) {
+    const props = schema && typeof schema.properties === 'object' && schema.properties ? schema.properties : {};
+    const required = schema && Array.isArray(schema.required) ? schema.required : [];
+    return Object.keys(props).map((name) => {
+        const spec = props[name] && typeof props[name] === 'object' ? props[name] : {};
+        const type = Array.isArray(spec.type) ? spec.type.join('|') : (spec.type || 'any');
+        return {
+            name,
+            type: String(type),
+            required: required.includes(name),
+            description: typeof spec.description === 'string' ? spec.description : '',
+        };
+    });
+}
+
+function renderMcpParamLine(param) {
+    const line = mcpEl('div', 'flex flex-wrap items-baseline gap-2');
+    line.appendChild(mcpEl('span', 'font-mono text-xs', param.name));
+    line.appendChild(mcpEl('span', 'text-slate-500 text-xs', param.type));
+    if (param.required) line.appendChild(mcpEl('span', 'text-red-400 text-xs', '*'));
+    if (param.description) line.appendChild(mcpEl('span', 'text-xs text-slate-400', param.description));
+    return line;
+}
+
+function renderMcpToolRow(server, tool) {
+    const toolKey = `tool-${server.id}-${tool.name}`;
+    const jsonKey = `json-${server.id}-${tool.name}`;
+    const row = mcpEl('div', 'rounded-md bg-slate-900/60 border border-slate-700 p-2');
+
+    const toggle = mcpEl('button', 'w-full text-left flex items-center gap-2');
+    toggle.type = 'button';
+    const caret = mcpEl('span', 'text-slate-500 text-xs', '▸');
+    toggle.appendChild(caret);
+    toggle.appendChild(mcpEl('span', 'text-sm font-semibold', tool.name));
+    toggle.appendChild(mcpEl('span', 'text-xs text-slate-400 truncate min-w-0 flex-1', tool.description || ''));
+    row.appendChild(toggle);
+
+    const body = mcpEl('div', 'mt-2 space-y-1 hidden');
+    const params = describeMcpParams(tool.input_schema);
+    params.forEach((param) => body.appendChild(renderMcpParamLine(param)));
+
+    const jsonRow = mcpEl('div', 'flex justify-end');
+    const jsonBtn = mcpEl('button', 'text-xs text-slate-400 hover:text-white', 'JSON');
+    jsonBtn.type = 'button';
+    jsonRow.appendChild(jsonBtn);
+    body.appendChild(jsonRow);
+    const jsonPre = mcpEl('pre', MCP_PRE_CLASSES, JSON.stringify(tool.input_schema, null, 2));
+    body.appendChild(jsonPre);
+    bindMcpFold(jsonBtn, jsonPre, jsonKey, null);
+
+    row.appendChild(body);
+    bindMcpFold(toggle, body, toolKey, caret);
+    return row;
+}
+
+function renderMcpTools(server) {
+    const tools = server.connection.tools || [];
+    const wrap = mcpEl('div', 'space-y-2');
+    const key = `tools-${server.id}`;
+
+    const header = mcpEl('button', 'flex items-center gap-2 text-left');
+    header.type = 'button';
+    const caret = mcpEl('span', 'text-slate-500 text-xs', '▸');
+    header.appendChild(caret);
+    header.appendChild(mcpEl('span', 'text-sm font-semibold', `Инструменты (${tools.length})`));
+    wrap.appendChild(header);
+
+    const list = mcpEl('div', 'space-y-2 hidden');
+    tools.forEach((tool) => list.appendChild(renderMcpToolRow(server, tool)));
+    wrap.appendChild(list);
+    bindMcpFold(header, list, key, caret);
+    return wrap;
+}
+
+function renderMcpError(server) {
+    const conn = server.connection;
+    const wrap = mcpEl('div', 'space-y-2');
+    wrap.appendChild(mcpEl('p', 'text-red-400 text-sm', conn.error_message || ''));
+    if (conn.detail) wrap.appendChild(mcpEl('p', 'text-xs text-slate-500', conn.detail));
+    if (conn.stderr_tail) {
+        const key = `stderr-${server.id}`;
+        const toggle = mcpEl('button', 'flex items-center gap-2 text-left');
+        toggle.type = 'button';
+        const caret = mcpEl('span', 'text-slate-500 text-xs', '▸');
+        toggle.appendChild(caret);
+        toggle.appendChild(mcpEl('span', 'text-xs text-slate-400', 'Показать журнал сервера (stderr)'));
+        wrap.appendChild(toggle);
+        const pre = mcpEl('pre', MCP_PRE_CLASSES, conn.stderr_tail);
+        wrap.appendChild(pre);
+        bindMcpFold(toggle, pre, key, caret);
+    }
+    return wrap;
+}
+
+function renderMcpServerRow(server) {
+    const conn = server.connection;
+    const connecting = state.mcpConnecting.has(server.id);
+    const status = connecting ? 'connecting' : conn.status;
+    const card = mcpEl('div', 'rounded-lg bg-slate-800 border border-slate-700 p-3 space-y-2');
+
+    const header = mcpEl('div', 'flex flex-wrap items-center justify-between gap-2');
+    const title = mcpEl('div', 'flex items-center gap-2 min-w-0');
+    title.appendChild(mcpEl('span', 'text-sm font-semibold truncate', server.name));
+    title.appendChild(mcpEl('span', `text-xs ${MCP_STATUS_BADGE_CLASSES[status] || 'text-slate-400'}`, MCP_STATUS_LABELS[status] || status));
+    header.appendChild(title);
+
+    const actions = mcpEl('div', 'flex items-center gap-2');
+    if (conn.status === 'connected') {
+        const btn = mcpEl('button', MCP_NEUTRAL_BTN_CLASSES, 'Отключить');
+        btn.type = 'button';
+        btn.disabled = connecting;
+        btn.addEventListener('click', () => {
+            disconnectMcpServer(server).catch((err) => showToast(err.message, 'error'));
+        });
+        actions.appendChild(btn);
+    } else {
+        const btn = mcpEl('button', 'px-2 py-1 text-xs rounded bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed', 'Подключить');
+        btn.type = 'button';
+        btn.disabled = connecting || !server.enabled;
+        if (!server.enabled) btn.classList.add('opacity-50', 'cursor-not-allowed');
+        btn.addEventListener('click', () => {
+            connectMcpServer(server).catch((err) => showToast(err.message, 'error'));
+        });
+        actions.appendChild(btn);
+    }
+    const editBtn = mcpEl('button', MCP_NEUTRAL_BTN_CLASSES, 'Изменить');
+    editBtn.type = 'button';
+    editBtn.disabled = connecting;
+    editBtn.addEventListener('click', () => openMcpForm(server));
+    actions.appendChild(editBtn);
+    const delBtn = mcpEl('button', 'px-2 py-1 text-xs text-red-400 hover:text-red-300 disabled:opacity-50 disabled:cursor-not-allowed', 'Удалить');
+    delBtn.type = 'button';
+    delBtn.disabled = connecting;
+    delBtn.addEventListener('click', () => {
+        deleteMcpServer(server).catch((err) => showToast(err.message, 'error'));
+    });
+    actions.appendChild(delBtn);
+    header.appendChild(actions);
+    card.appendChild(header);
+
+    if (!connecting && conn.status === 'connected') {
+        const info = conn.server_info;
+        if (info) {
+            card.appendChild(mcpEl('p', 'text-xs text-slate-500', `${info.name} · v${info.version} · MCP ${info.protocol_version}`));
+        }
+        card.appendChild(renderMcpTools(server));
+    } else if (!connecting && conn.status === 'error') {
+        card.appendChild(renderMcpError(server));
+    }
+    return card;
+}
+
+function renderMcpServers() {
+    const listEl = $('mcp-server-list');
+    $('mcp-empty').classList.toggle('hidden', state.mcpServers.length > 0);
+    listEl.textContent = '';
+    state.mcpServers.forEach((server) => listEl.appendChild(renderMcpServerRow(server)));
+}
+
+function openMcpForm(server) {
+    state.mcpEditingId = server ? server.id : null;
+    $('mcp-name').value = server ? server.name : '';
+    $('mcp-command').value = server ? server.command : '';
+    $('mcp-args').value = server ? (server.args || []).join('\n') : '';
+    $('mcp-env').value = server ? (server.env_keys || []).map((k) => `${k}=${MCP_ENV_MASK}`).join('\n') : '';
+    $('mcp-cwd').value = server && server.cwd ? server.cwd : '';
+    $('mcp-enabled').checked = server ? server.enabled : true;
+    $('mcp-form-error').textContent = '';
+    $('mcp-server-form').classList.remove('hidden');
+    $('mcp-name').focus();
+}
+
+function closeMcpForm() {
+    state.mcpEditingId = null;
+    $('mcp-server-form').classList.add('hidden');
+    $('mcp-form-error').textContent = '';
+    ['mcp-name', 'mcp-command', 'mcp-args', 'mcp-env', 'mcp-cwd'].forEach((id) => { $(id).value = ''; });
+    $('mcp-enabled').checked = true;
+}
+
+function parseMcpArgs(text) {
+    return text.split('\n').map((line) => line.replace(/\r$/, '')).filter((line) => line !== '');
+}
+
+function parseMcpEnv(text) {
+    const env = {};
+    text.split('\n').forEach((rawLine, idx) => {
+        const line = rawLine.replace(/\r$/, '');
+        if (line.trim() === '') return;
+        const eq = line.indexOf('=');
+        const key = eq === -1 ? '' : line.slice(0, eq).trim();
+        if (!key) throw new Error(`Строка ${idx + 1}: ожидается KEY=VALUE`);
+        env[key] = line.slice(eq + 1);
+    });
+    return env;
+}
+
+async function saveMcpServer() {
+    const name = $('mcp-name').value.trim();
+    const command = $('mcp-command').value.trim();
+    const errorEl = $('mcp-form-error');
+    errorEl.textContent = '';
+    if (!name || !command) {
+        errorEl.textContent = 'Заполните название и команду';
+        return;
+    }
+    let env;
+    try {
+        env = parseMcpEnv($('mcp-env').value);
+    } catch (err) {
+        errorEl.textContent = err.message;
+        return;
+    }
+    const body = {
+        name,
+        command,
+        args: parseMcpArgs($('mcp-args').value),
+        env,
+        cwd: $('mcp-cwd').value.trim() || null,
+        enabled: $('mcp-enabled').checked,
+    };
+    const editingId = state.mcpEditingId;
+    const previous = editingId === null ? null : state.mcpServers.find((s) => s.id === editingId);
+    const wasConnected = Boolean(previous && previous.connection.status === 'connected');
+    try {
+        if (editingId === null) {
+            await apiFetch('/api/v1/mcp/servers', { method: 'POST', body: JSON.stringify(body) });
+        } else {
+            await apiFetch(`/api/v1/mcp/servers/${editingId}`, { method: 'PUT', body: JSON.stringify(body) });
+        }
+    } catch (err) {
+        errorEl.textContent = err.message;
+        return;
+    }
+    if (wasConnected) {
+        showToast(`Сервер «${name}» отключён из-за изменения настроек. Подключите заново.`, 'info');
+    } else {
+        showToast('Сервер сохранён', 'success');
+    }
+    closeMcpForm();
+    await loadMcpServers();
+}
+
+async function deleteMcpServer(server) {
+    const message = server.connection.status === 'connected'
+        ? `Сервер «${server.name}» подключён и будет отключён перед удалением. Продолжить?`
+        : `Удалить сервер «${server.name}»? Это действие нельзя отменить.`;
+    if (!confirm(message)) return;
+    await apiFetch(`/api/v1/mcp/servers/${server.id}`, { method: 'DELETE' });
+    if (state.mcpEditingId === server.id) closeMcpForm();
+    showToast('Сервер удалён', 'success');
+    await loadMcpServers();
+}
+
+async function connectMcpServer(server) {
+    state.mcpConnecting.add(server.id);
+    renderMcpServers();
+    try {
+        const updated = await apiFetch(`/api/v1/mcp/servers/${server.id}/connect`, { method: 'POST' });
+        if (updated) {
+            replaceMcpServer(updated);
+            const conn = updated.connection;
+            if (conn.status === 'connected') {
+                showToast(`Подключено: ${(conn.tools || []).length} инструментов`, 'success');
+            } else if (conn.status === 'error') {
+                showToast(conn.error_message || 'Не удалось подключиться к серверу', 'error');
+            }
+        }
+    } catch (err) {
+        showToast(err.message, 'error');
+    } finally {
+        state.mcpConnecting.delete(server.id);
+        renderMcpServers();
+    }
+}
+
+async function disconnectMcpServer(server) {
+    const updated = await apiFetch(`/api/v1/mcp/servers/${server.id}/disconnect`, { method: 'POST' });
+    if (updated) replaceMcpServer(updated);
+    renderMcpServers();
+}
+
+// ---- end MCP servers ----
+
 async function openSettingsModal() {
     const perChat = $('settings-per-chat').checked;
     const chatId = perChat && state.currentChatId ? state.currentChatId : null;
@@ -1415,6 +1764,7 @@ async function openSettingsModal() {
     $('settings-max-tokens').value = settings.max_tokens;
     $('settings-system-prompt').value = settings.system_prompt;
     $('settings-modal').classList.remove('hidden');
+    loadMcpServers().catch((err) => showToast(err.message, 'error'));
 }
 
 function closeSettingsModal() {
@@ -1568,6 +1918,11 @@ function bindEvents() {
     });
     $('btn-save-chat-invariant').addEventListener('click', () => {
         saveChatInvariant().catch((err) => showToast(err.message, 'error'));
+    });
+    $('btn-mcp-add').addEventListener('click', () => openMcpForm(null));
+    $('btn-mcp-cancel').addEventListener('click', closeMcpForm);
+    $('btn-mcp-save').addEventListener('click', () => {
+        saveMcpServer().catch((err) => showToast(err.message, 'error'));
     });
     setupFoldablePanels();
 }
