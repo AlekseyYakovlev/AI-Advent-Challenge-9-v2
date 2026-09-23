@@ -17,7 +17,7 @@ progress:
 
 ## Project Reference
 
-**Project:** AiAdventAgentV2 — Week 3: Agent Memory & Task State
+**Project:** AiAdventAgentV2 — Week 4: MCP Integration
 **Core value:** The agent must demonstrably separate and manage distinct kinds of state — short-term dialog, working task data, long-term profile/knowledge, and task lifecycle — making explicit, inspectable decisions about what goes where.
 **Current focus:** Phase 06 — controlled-transitions-day-15
 

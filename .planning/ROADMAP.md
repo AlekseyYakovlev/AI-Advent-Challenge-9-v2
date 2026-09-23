@@ -3,6 +3,7 @@
 ## Milestones
 
 - ✅ **v1.0 Week 3: Agent Memory & Task State** — Phases 1-6 (shipped 2026-09-23)
+- 🚧 **v2.0 Week 4: MCP Integration** — Phase 7+ (in progress)
 
 ## Phases
 
@@ -20,6 +21,27 @@ Full details: [milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
 
 </details>
 
+### 🚧 v2.0 Week 4: MCP Integration (In Progress)
+
+- [ ] **Phase 7: MCP Connection (Day 16)** — The agent connects to an MCP server configured in Settings and shows the server's tool list
+
+## Phase Details
+
+### Phase 7: MCP Connection (Day 16)
+
+**Goal**: A user can configure an MCP server in the Settings UI, connect to it, and see the list of tools the server exposes — proven against the locally installed Go filesystem MCP server
+**Branch**: `Day16`
+**Depends on**: Phase 1 (Auth) — server configs are scoped by `user_id`
+**Requirements**: MCP-01, MCP-02, MCP-03, MCP-04, MCP-05, MCP-06
+**Success Criteria** (what must be TRUE):
+1. User adds a server in Settings with command `C:\Users\Aleksey\go\bin\filesystem.exe` and an allowed-directory arg; the config survives an app restart and is invisible to other users
+2. Pressing "Connect" shows status "connected" with serverInfo `filesystem-mcp-server` / version / protocol, and lists all 17 tools with descriptions and parameters
+3. A bad command path or a server that exits immediately yields a readable error in the UI, and the Agent's `/health` stays OK
+4. `python scripts/mcp_list_tools.py C:\Users\Aleksey\go\bin\filesystem.exe <dir>` prints serverInfo and the tool list
+5. `pytest tests/ -v` passes, including new MCP connect/list_tools tests (success + failure)
+**Plans**: TBD
+**UI hint**: yes
+
 ## Progress
 
 | Phase | Milestone | Plans Complete | Status | Completed |
@@ -30,6 +52,7 @@ Full details: [milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
 | 4. Task State Machine (Day 13) | v1.0 | 4/4 | Complete | 2026-09-20 |
 | 5. Invariants (Day 14) | v1.0 | 4/4 | Complete | 2026-09-20 |
 | 6. Controlled Transitions (Day 15) | v1.0 | 4/4 | Complete | 2026-09-21 |
+| 7. MCP Connection (Day 16) | v2.0 | 0/? | Not started | - |
 
 ---
 *Roadmap created: 2026-09-19*
