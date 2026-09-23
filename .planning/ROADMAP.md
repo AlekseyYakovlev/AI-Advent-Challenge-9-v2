@@ -57,7 +57,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 07-05-PLAN.md — "MCP серверы" section in the Settings modal (wave 3)
+- [x] 07-05-PLAN.md — "MCP серверы" section in the Settings modal (wave 3)
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -73,7 +73,7 @@ Plans:
 | 4. Task State Machine (Day 13) | v1.0 | 4/4 | Complete | 2026-09-20 |
 | 5. Invariants (Day 14) | v1.0 | 4/4 | Complete | 2026-09-20 |
 | 6. Controlled Transitions (Day 15) | v1.0 | 4/4 | Complete | 2026-09-21 |
-| 7. MCP Connection (Day 16) | v2.0 | 4/6 | In Progress|  |
+| 7. MCP Connection (Day 16) | v2.0 | 5/6 | In Progress|  |
 
 ---
 *Roadmap created: 2026-09-19*
