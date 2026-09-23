@@ -62,10 +62,11 @@ None.
 
 ### Quick Tasks Completed
 
-| # | Description | Date | Commit | Directory |
-|---|-------------|------|--------|-----------|
-| 260921-juu | Fix silent message-drop race (model/WS not ready) and delayed user-bubble rendering in ui/static/app.js | 2026-09-21 | 56224e1 | [260921-juu-fix-silent-message-drop-race-model-ws-no](./quick/260921-juu-fix-silent-message-drop-race-model-ws-no/) |
-| fast-fefd0de | Phase 7 UI gap: click MCP tool name in Settings tool list copies it to clipboard (toast; row still toggles elsewhere) | 2026-09-24 | fefd0de | — |
+| # | Description | Date | Commit | Status | Directory |
+|---|-------------|------|--------|--------|-----------|
+| 260921-juu | Fix silent message-drop race (model/WS not ready) and delayed user-bubble rendering in ui/static/app.js | 2026-09-21 | 56224e1 | | [260921-juu-fix-silent-message-drop-race-model-ws-no](./quick/260921-juu-fix-silent-message-drop-race-model-ws-no/) |
+| fast-fefd0de | Phase 7 UI gap: click MCP tool name in Settings tool list copies it to clipboard (toast; row still toggles elsewhere) | 2026-09-24 | fefd0de | | — |
+| 260924-1ic | MCP-F1: LLM can call MCP tools from a chat turn (namespaced tools, per-user live sessions, tool-call cards; Phase 7 scope extension) | 2026-09-24 | fff5f4a | Needs Review (UI cards not browser-verified; Playwright blocked by busy ports) | [260924-1ic-phase-7-extension-mcp-f1-llm-can-call-mc](./quick/260924-1ic-phase-7-extension-mcp-f1-llm-can-call-mc/) |
 
 ## Deferred Items
 

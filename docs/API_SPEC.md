@@ -88,8 +88,7 @@ Returns real-time statistics for a chat.
   "tool": "list_allowed_directories",
   "arguments": "{}",
   "ok": true,
-  "result": "Allowed directories:
-C:\Projects\AiAdventAgentV2",
+  "result": "Allowed directories:\nC:\\Projects\\AiAdventAgentV2",
   "truncated": false
 }
 ```
