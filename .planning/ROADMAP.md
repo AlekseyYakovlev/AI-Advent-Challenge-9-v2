@@ -23,7 +23,7 @@ Full details: [milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
 
 ### 🚧 v2.0 Week 4: MCP Integration (In Progress)
 
-- [ ] **Phase 7: MCP Connection (Day 16)** — The agent connects to an MCP server configured in Settings and shows the server's tool list
+- [x] **Phase 7: MCP Connection (Day 16)** — The agent connects to an MCP server configured in Settings and shows the server's tool list (completed 2026-09-23)
 
 ## Phase Details
 
@@ -47,21 +47,21 @@ Full details: [milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
 Plans:
 **Wave 1**
 
-- [ ] 07-01-PLAN.md — MCP stdio client core: pin mcp, timeout config, result schemas, fixture server, owner-task registry + error classification (wave 1)
-- [ ] 07-02-PLAN.md — McpServerConfig table + user-scoped CRUD service with env masking/merge (wave 1)
+- [x] 07-01-PLAN.md — MCP stdio client core: pin mcp, timeout config, result schemas, fixture server, owner-task registry + error classification (wave 1)
+- [x] 07-02-PLAN.md — McpServerConfig table + user-scoped CRUD service with env masking/merge (wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 07-03-PLAN.md — REST endpoints /api/v1/mcp/servers (CRUD, connect/disconnect/status) + lifespan cleanup + API tests (wave 2)
-- [ ] 07-04-PLAN.md — CLI scripts/mcp_list_tools.py reusing connect_once_and_list + tests (wave 2)
+- [x] 07-03-PLAN.md — REST endpoints /api/v1/mcp/servers (CRUD, connect/disconnect/status) + lifespan cleanup + API tests (wave 2)
+- [x] 07-04-PLAN.md — CLI scripts/mcp_list_tools.py reusing connect_once_and_list + tests (wave 2)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 07-05-PLAN.md — "MCP серверы" section in the Settings modal (wave 3)
+- [x] 07-05-PLAN.md — "MCP серверы" section in the Settings modal (wave 3)
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 07-06-PLAN.md — End-to-end acceptance vs filesystem.exe + human UI walkthrough (wave 4, checkpoint)
+- [x] 07-06-PLAN.md — End-to-end acceptance vs filesystem.exe + human UI walkthrough (wave 4, checkpoint)
 
 ## Progress
 
@@ -73,7 +73,7 @@ Plans:
 | 4. Task State Machine (Day 13) | v1.0 | 4/4 | Complete | 2026-09-20 |
 | 5. Invariants (Day 14) | v1.0 | 4/4 | Complete | 2026-09-20 |
 | 6. Controlled Transitions (Day 15) | v1.0 | 4/4 | Complete | 2026-09-21 |
-| 7. MCP Connection (Day 16) | v2.0 | 0/? | Not started | - |
+| 7. MCP Connection (Day 16) | v2.0 | 6/6 | Complete   | 2026-09-23 |
 
 ---
 *Roadmap created: 2026-09-19*

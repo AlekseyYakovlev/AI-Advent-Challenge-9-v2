@@ -1,10 +1,11 @@
 """Pydantic request/response schemas for the Agent REST API."""
 
+import re
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from shared.models import ContextStrategy
 
@@ -26,6 +27,16 @@ TASK_NOTE_MAX_LENGTH = 2_000
 INVARIANT_TITLE_MAX_LENGTH = 200
 INVARIANT_RULE_MAX_LENGTH = 2000
 INVARIANT_CONFLICT_NOTE_MAX_LENGTH = 2000
+MCP_NAME_MAX_LENGTH = 100
+MCP_COMMAND_MAX_LENGTH = 1000
+MCP_ARG_MAX_LENGTH = 1000
+MCP_ARGS_MAX_ITEMS = 50
+MCP_ENV_MAX_ITEMS = 50
+MCP_ENV_VALUE_MAX_LENGTH = 4000
+MCP_CWD_MAX_LENGTH = 1000
+MCP_ENV_KEY_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+TOOL_EVENT_PREVIEW_CHARS = 4000
+TOOL_EVENT_ARGS_PREVIEW_CHARS = 2000
 
 
 class HealthResponse(BaseModel):
@@ -120,11 +131,177 @@ class ModelLoadResult(BaseModel):
     model_id: Optional[str] = None
 
 
+class McpConnectionStatus(str, Enum):
+    """Lifecycle status of an MCP server connection as reported by the API."""
+
+    NOT_CONNECTED = "not_connected"
+    CONNECTED = "connected"
+    ERROR = "error"
+
+
+class McpErrorCode(str, Enum):
+    """Fixed classification of MCP connection failures."""
+
+    COMMAND_NOT_FOUND = "COMMAND_NOT_FOUND"
+    PROCESS_EXITED = "PROCESS_EXITED"
+    HANDSHAKE_TIMEOUT = "HANDSHAKE_TIMEOUT"
+    PROTOCOL_ERROR = "PROTOCOL_ERROR"
+
+
+class McpServerInfo(BaseModel):
+    """Identity reported by an MCP server during the initialize handshake."""
+
+    name: str
+    version: str
+    protocol_version: str
+
+
+class McpToolInfo(BaseModel):
+    """A single tool advertised by an MCP server."""
+
+    name: str
+    description: Optional[str] = None
+    input_schema: dict[str, Any]
+
+
+class McpConnectResult(BaseModel):
+    """Result of an MCP connect, status check, or disconnect; never raised to callers."""
+
+    status: McpConnectionStatus
+    server_info: Optional[McpServerInfo] = None
+    tools: list[McpToolInfo] = Field(default_factory=list)
+    error_code: Optional[McpErrorCode] = None
+    error_message: Optional[str] = None
+    detail: Optional[str] = None
+    stderr_tail: Optional[str] = None
+
+
+def _validate_mcp_text(value: str | None) -> str | None:
+    """Strip a name/command and reject it when nothing is left."""
+    if value is None:
+        return None
+    stripped = value.strip()
+    if not stripped:
+        raise ValueError("must not be empty")
+    return stripped
+
+
+def _validate_mcp_args(value: list[str] | None) -> list[str] | None:
+    """Reject launch args longer than the per-arg limit."""
+    if value is None:
+        return None
+    for arg in value:
+        if len(arg) > MCP_ARG_MAX_LENGTH:
+            raise ValueError(f"each arg must be at most {MCP_ARG_MAX_LENGTH} characters")
+    return value
+
+
+def _validate_mcp_env(value: dict[str, str] | None) -> dict[str, str] | None:
+    """Require POSIX-style env var names and bounded values."""
+    if value is None:
+        return None
+    for key, item in value.items():
+        if not MCP_ENV_KEY_PATTERN.match(key):
+            raise ValueError(f"invalid environment variable name: {key!r}")
+        if len(item) > MCP_ENV_VALUE_MAX_LENGTH:
+            raise ValueError(
+                f"environment value must be at most {MCP_ENV_VALUE_MAX_LENGTH} characters",
+            )
+    return value
+
+
+class McpServerCreate(BaseModel):
+    """Request body for creating an MCP server config; any non-empty command is accepted."""
+
+    name: str = Field(min_length=1, max_length=MCP_NAME_MAX_LENGTH)
+    command: str = Field(min_length=1, max_length=MCP_COMMAND_MAX_LENGTH)
+    args: list[str] = Field(default_factory=list, max_length=MCP_ARGS_MAX_ITEMS)
+    env: dict[str, str] = Field(default_factory=dict, max_length=MCP_ENV_MAX_ITEMS)
+    cwd: Optional[str] = Field(default=None, max_length=MCP_CWD_MAX_LENGTH)
+    enabled: bool = True
+
+    @field_validator("name", "command")
+    @classmethod
+    def _strip_required_text(cls, value: str) -> str:
+        """Strip and reject blank name/command."""
+        return _validate_mcp_text(value) or ""
+
+    @field_validator("args")
+    @classmethod
+    def _check_args(cls, value: list[str]) -> list[str]:
+        """Bound each arg's length."""
+        return _validate_mcp_args(value) or []
+
+    @field_validator("env")
+    @classmethod
+    def _check_env(cls, value: dict[str, str]) -> dict[str, str]:
+        """Validate env names and value lengths."""
+        return _validate_mcp_env(value) or {}
+
+
+class McpServerUpdate(BaseModel):
+    """Partial update for an MCP server config."""
+
+    name: Optional[str] = Field(default=None, min_length=1, max_length=MCP_NAME_MAX_LENGTH)
+    command: Optional[str] = Field(default=None, min_length=1, max_length=MCP_COMMAND_MAX_LENGTH)
+    args: Optional[list[str]] = Field(default=None, max_length=MCP_ARGS_MAX_ITEMS)
+    env: Optional[dict[str, str]] = Field(default=None, max_length=MCP_ENV_MAX_ITEMS)
+    cwd: Optional[str] = Field(default=None, max_length=MCP_CWD_MAX_LENGTH)
+    enabled: Optional[bool] = None
+
+    @field_validator("name", "command")
+    @classmethod
+    def _strip_optional_text(cls, value: str | None) -> str | None:
+        """Strip and reject blank name/command when supplied."""
+        return _validate_mcp_text(value)
+
+    @field_validator("args")
+    @classmethod
+    def _check_args(cls, value: list[str] | None) -> list[str] | None:
+        """Bound each arg's length when supplied."""
+        return _validate_mcp_args(value)
+
+    @field_validator("env")
+    @classmethod
+    def _check_env(cls, value: dict[str, str] | None) -> dict[str, str] | None:
+        """Validate env names and value lengths when supplied."""
+        return _validate_mcp_env(value)
+
+
+class McpServerResponse(BaseModel):
+    """Serialized MCP server config; env values are never exposed, only their names."""
+
+    id: int
+    name: str
+    command: str
+    args: list[str]
+    env_keys: list[str]
+    cwd: Optional[str] = None
+    enabled: bool
+    created_at: datetime
+    updated_at: datetime
+    connection: McpConnectResult
+
+
 class MessagePayload(BaseModel):
     """WebSocket inbound chat message."""
 
     content: str = Field(min_length=1, max_length=CONTENT_MAX_LENGTH)
     model: str = Field(min_length=1, max_length=200)
+
+
+class ToolCallEvent(BaseModel):
+    """WebSocket frame announcing one executed tool call."""
+
+    type: Literal["tool_call"] = "tool_call"
+    tool_call_id: str | None = None
+    name: str | None = None
+    server: str | None = None
+    tool: str | None = None
+    arguments: str
+    ok: bool
+    result: str
+    truncated: bool = False
 
 
 class ModelLoadRequest(BaseModel):

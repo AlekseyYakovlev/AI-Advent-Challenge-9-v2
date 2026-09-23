@@ -78,6 +78,26 @@ Returns real-time statistics for a chat.
 }
 ```
 
+**tool_call** (one frame per executed tool call, sent before the follow-up tokens):
+```json
+{
+  "type": "tool_call",
+  "tool_call_id": "call_1",
+  "name": "mcp__filesystem__list_allowed_directories",
+  "server": "Filesystem",
+  "tool": "list_allowed_directories",
+  "arguments": "{}",
+  "ok": true,
+  "result": "Allowed directories:\nC:\\Projects\\AiAdventAgentV2",
+  "truncated": false
+}
+```
+- `name`: the exposed name the model used; `server` is `null` and `tool` equals `name` for built-in tools.
+- `arguments` is capped at 2000 characters and `result` at 4000; `truncated` is true when the
+  MCP result or the preview was cut.
+- MCP failures (disconnected server, timeout, `isError`) are reported only here with `ok: false`;
+  no `TOOL_ERROR` frame is sent for them. Built-in tool failures still send `TOOL_ERROR`.
+
 **error (context overflow):**
 ```json
 {
@@ -86,3 +106,15 @@ Returns real-time statistics for a chat.
   "detail": "Context size (5200 tokens) exceeds context window (4096 tokens). Please change compression strategy or reduce conversation length."
 }
 ```
+
+## Environment Settings
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| MCP_TOOL_CALL_TIMEOUT | 30.0 | Seconds allowed for one MCP tool call made from a chat turn |
+| MCP_TOOL_RESULT_MAX_CHARS | 20000 | Maximum characters of an MCP tool result sent to the model |
+| MCP_AUTO_CONNECT | true | Connect the user's enabled, unconnected MCP servers at the start of a chat turn (failures not retried until manual reconnect/edit) |
+
+With `MCP_AUTO_CONNECT` on, the first chat turn may wait up to `MCP_CONNECT_TIMEOUT` for a server
+that hangs at handshake, and `GET /api/v1/mcp/servers` then reports auto-connected servers as
+`connected`.

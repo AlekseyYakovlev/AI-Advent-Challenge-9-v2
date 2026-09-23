@@ -54,15 +54,17 @@ The agent must demonstrably separate and manage distinct kinds of state — shor
 - ✓ **TRANS-01**: Task states have an explicit set of allowed transitions; illegal transitions (e.g. execution before an approved plan, done before validation) are rejected — v1.0
 - ✓ **TRANS-02**: Attempting an illegal transition produces a clear, explainable rejection rather than silently succeeding or crashing — v1.0
 - ✓ **TRANS-03**: Task execution correctly resumes from a paused state without violating the transition graph — v1.0
+- ✓ **MCP-01**: User can add, edit and delete MCP server configs (name, command, args) in Settings, stored per `user_id` — Phase 7 (v2.0)
+- ✓ **MCP-02**: User can press "Connect" in Settings; Agent opens a stdio MCP session (initialize) and UI shows status + serverInfo (name, version, protocol) — Phase 7 (v2.0)
+- ✓ **MCP-03**: After connecting, UI lists the server's tools (name, description, parameters from inputSchema) — Phase 7 (v2.0)
+- ✓ **MCP-04**: Connection failures (bad path, server crash, timeout) are shown clearly in UI; Agent does not crash — Phase 7 (v2.0)
+- ✓ **MCP-05**: `mcp` SDK pinned in requirements.txt; pytest covers connect + list_tools — Phase 7 (v2.0)
+- ✓ **MCP-06**: Standalone CLI `scripts/mcp_list_tools.py <command> <args…>` prints the tool list — Phase 7 (v2.0)
+- ✓ **MCP-F1**: LLM can call connected MCP tools during a chat turn; enabled servers auto-connect on first chat use — Phase 7 extension (quick tasks 260924-1ic, 260924-2n8)
 
 ### Active
 
-- [ ] **MCP-01**: User can add, edit and delete MCP server configs (name, command, args) in Settings, stored per `user_id`
-- [ ] **MCP-02**: User can press "Connect" in Settings; Agent opens a stdio MCP session (initialize) and UI shows status + serverInfo (name, version, protocol)
-- [ ] **MCP-03**: After connecting, UI lists the server's tools (name, description, parameters from inputSchema)
-- [ ] **MCP-04**: Connection failures (bad path, server crash, timeout) are shown clearly in UI; Agent does not crash
-- [ ] **MCP-05**: `mcp` SDK pinned in requirements.txt; pytest covers connect + list_tools
-- [ ] **MCP-06**: Standalone CLI `scripts/mcp_list_tools.py <command> <args…>` prints the tool list
+(No active requirements — start the next milestone to define more.)
 
 ### Out of Scope
 
@@ -75,6 +77,8 @@ The agent must demonstrably separate and manage distinct kinds of state — shor
 ## Current State
 
 Shipped **v1.0 Week 3: Agent Memory & Task State** (2026-09-23): auth, 3-layer memory, personalization, task FSM, invariants with conflict check, and hard-enforced task transitions — 6 phases / 25 plans, all merged to `main`. Known deferred item: Phase 01 VERIFICATION still flagged `human_needed` (auth exercised in every later live demo).
+
+Phase 7 (MCP Connection, Day 16) complete (2026-09-24): user-scoped MCP server configs in Settings, connect/disconnect with serverInfo and tool list, readable connection errors, standalone CLI, and — as an approved scope extension — chat tool calling with lazy auto-connect. Known deferred review findings: WR-01, 03, 04, 05, 06, 08 (see .planning/phases/07-mcp-connection-day-16/07-REVIEW.md).
 
 ## Context
 
@@ -123,4 +127,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-09-23 — started milestone v2.0 Week 4: MCP Integration*
+*Last updated: 2026-09-24 — Phase 7 (MCP Connection) complete*

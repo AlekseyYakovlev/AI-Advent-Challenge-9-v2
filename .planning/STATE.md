@@ -2,15 +2,16 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: "Week 4: MCP Integration"
-status: Defining requirements
-last_updated: "2026-09-23T19:41:56.075Z"
-last_activity: 2026-09-23 — Milestone v2.0 started
+status: milestone_complete
+last_updated: 2026-09-23T23:42:10.655Z
+last_activity: 2026-09-23 -- Phase 07 execution started
 progress:
   total_phases: 1
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 6
-  completed_plans: 0
-  percent: 0
+  completed_plans: 6
+  percent: 100
+stopped_at: Milestone complete (Phase 07 was final phase)
 ---
 
 # Project State
@@ -19,14 +20,14 @@ progress:
 
 **Project:** AiAdventAgentV2 — Week 4: MCP Integration
 **Core value:** The agent must demonstrably separate and manage distinct kinds of state — short-term dialog, working task data, long-term profile/knowledge, and task lifecycle — making explicit, inspectable decisions about what goes where.
-**Current focus:** Phase 06 — controlled-transitions-day-15
+**Current focus:** Milestone complete
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Defining requirements
-Last activity: 2026-09-23 — Milestone v2.0 started
+Phase: 07
+Plan: Not started
+Status: Milestone complete
+Last activity: 2026-09-23
 
 ## Performance Metrics
 
@@ -62,9 +63,13 @@ None.
 
 ### Quick Tasks Completed
 
-| # | Description | Date | Commit | Directory |
-|---|-------------|------|--------|-----------|
-| 260921-juu | Fix silent message-drop race (model/WS not ready) and delayed user-bubble rendering in ui/static/app.js | 2026-09-21 | 56224e1 | [260921-juu-fix-silent-message-drop-race-model-ws-no](./quick/260921-juu-fix-silent-message-drop-race-model-ws-no/) |
+| # | Description | Date | Commit | Status | Directory |
+|---|-------------|------|--------|--------|-----------|
+| 260921-juu | Fix silent message-drop race (model/WS not ready) and delayed user-bubble rendering in ui/static/app.js | 2026-09-21 | 56224e1 | | [260921-juu-fix-silent-message-drop-race-model-ws-no](./quick/260921-juu-fix-silent-message-drop-race-model-ws-no/) |
+| fast-fefd0de | Phase 7 UI gap: click MCP tool name in Settings tool list copies it to clipboard (toast; row still toggles elsewhere) | 2026-09-24 | fefd0de | | — |
+| 260924-1ic | MCP-F1: LLM can call MCP tools from a chat turn (namespaced tools, per-user live sessions, tool-call cards; Phase 7 scope extension) | 2026-09-24 | fff5f4a | Needs Review (UI cards not browser-verified; Playwright blocked by busy ports) | [260924-1ic-phase-7-extension-mcp-f1-llm-can-call-mc](./quick/260924-1ic-phase-7-extension-mcp-f1-llm-can-call-mc/) |
+| 260924-2n8 | MCP auto-connect: enabled servers connect lazily when the first chat turn builds its toolset (ensure_connected, MCP_AUTO_CONNECT flag, no retry after failure) | 2026-09-24 | 7708e58 | Tested (412 passed); not browser-verified | [260924-2n8-mcp-auto-connect-on-first-chat-use](./quick/260924-2n8-mcp-auto-connect-on-first-chat-use/) |
+| 260924-3cb | Fix review warnings WR-07 (masked env value on unknown key -> 422, no silent secret loss) and WR-02 (logout of last web session closes the user's MCP sessions) | 2026-09-24 | ec90af1 | Tested (420 passed) | [260924-3cb-fix-review-warnings-wr-07-and-wr-02](./quick/260924-3cb-fix-review-warnings-wr-07-and-wr-02/) |
 
 ## Deferred Items
 

@@ -387,3 +387,29 @@ class Session(SQLModel, table=True):
         default_factory=lambda: datetime.now(timezone.utc),
     )
     expires_at: datetime
+
+
+class McpServerConfig(SQLModel, table=True):
+    """User-scoped MCP stdio server launch config."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("user.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        ),
+    )
+    name: str = Field(max_length=100)
+    command: str = Field(max_length=1000)
+    args_json: str = Field(default="[]")
+    env_json: str = Field(default="{}")
+    cwd: Optional[str] = Field(default=None, max_length=1000)
+    enabled: bool = Field(default=True)
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+    )

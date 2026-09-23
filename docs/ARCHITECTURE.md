@@ -100,3 +100,45 @@ Statistics update after each message and are sent with WebSocket "done" message.
 - model_switch_lock prevents concurrent model loading
 - Emergency unload (5s timeout) on load timeout
 - Detection of "LM Studio not running" via ConnectError
+
+## Chat tool calls (built-in + MCP)
+
+Each chat turn sends the LLM one tool list: the six built-in tools (memory and task tools) plus
+the tools of the current user's MCP servers that are enabled and have a live session. The list is
+rebuilt per turn from the session registry (`agent/mcp_client.py::get_live_tools`), never with a
+ping, so a busy server is not probed on the chat path. A server that is disconnected, disabled or
+owned by another user adds nothing, and the registry is keyed by `(user_id, server_id)`.
+
+**Auto-connect:** when `MCP_AUTO_CONNECT` is true (default), each chat turn first connects, lazily
+and concurrently, the chat owner's enabled MCP servers that have no live session and no remembered
+failure (`agent/mcp_client.py::ensure_connected`). It never replaces a live session, so concurrent
+turns share it. A failed connect is remembered and not retried until the user presses "Подключить",
+edits, or disconnects the server; disabled servers and other users' servers are never touched. The
+first turn after app start may be delayed by up to `MCP_CONNECT_TIMEOUT` (10 s, plus a couple of
+seconds of process teardown) when a server hangs at handshake. Set it to false for manual connect
+only.
+
+- **Naming:** MCP tools are exposed as `mcp__<server-slug>__<tool>` (only `[a-zA-Z0-9_-]`, at most
+  64 characters). Duplicate server slugs get a `-<server_id>` suffix; sanitization or length
+  collisions get an 8-character sha1 suffix. Built-in names are reserved, so a server cannot shadow
+  one. Dispatch resolves a call only through the per-turn name-to-binding map.
+- **Single tool round:** the first LLM request carries the tools; after the calls run in order, the
+  follow-up request carries the results as `role=tool` messages and no tools. A second tool round
+  in the same turn (for example list, then read) needs another user message.
+- **Empty arguments:** a no-argument call can arrive with `arguments == ""`. MCP calls treat it as
+  `{}`, and the assistant message echoed to the follow-up request carries `"{}"` (on a copy),
+  because providers reject an empty string there.
+- **Limits:** `MCP_TOOL_CALL_TIMEOUT` (default 30 s) bounds one call; `MCP_TOOL_RESULT_MAX_CHARS`
+  (default 20000) caps the text sent to the model, with a `...[truncated N chars]` marker.
+- **Failures are tool results:** a disconnected server, a dead process, a timeout, invalid
+  arguments or `isError=true` all come back to the model as a tool result. The WebSocket turn still
+  ends with exactly one `done` frame. MCP failures are reported through the `tool_call` frame
+  (`ok=false`), not `TOOL_ERROR`. Each executed call is announced with a `tool_call` frame, which
+  the UI renders as a collapsed card; cards are not stored in the database and are lost on a full
+  page reload.
+
+**Known risks:** filesystem-style servers expose destructive tools (write, edit, move, create) and
+they run without a confirmation step; the server's allowed-directory list is the only bound. Tool
+descriptions and results are untrusted text from an external process and can carry prompt
+injection; results only reach the model as `role=tool` content and the follow-up request has no
+tools, which limits but does not remove that risk.
