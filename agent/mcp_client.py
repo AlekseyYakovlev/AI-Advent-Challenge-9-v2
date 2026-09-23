@@ -259,6 +259,58 @@ async def connect_server(
         return result
 
 
+def has_recorded_failure(user_id: int, server_id: int) -> bool:
+    """Return whether a failed connect (or a dead session) is remembered for the server."""
+    return (user_id, server_id) in _last_results
+
+
+async def ensure_connected(
+    user_id: int,
+    server_id: int,
+    command: str,
+    args: list[str],
+    env: dict[str, str] | None,
+    cwd: str | None,
+) -> McpConnectResult:
+    """Connect a server on demand without replacing a live session or retrying a failure.
+
+    A live session is returned untouched so concurrent chat turns share it. A remembered
+    failure is returned as is; only disconnect, edit or a manual connect clears it.
+    """
+    key: SessionKey = (user_id, server_id)
+    async with _lock_for(key):
+        handle = _sessions.get(key)
+        if handle is not None and is_connected(user_id, server_id) and handle.result is not None:
+            return handle.result
+
+        remembered = _last_results.get(key)
+        if remembered is not None:
+            return remembered
+
+        if handle is not None:
+            # The session is registered but its owner task is gone: record the death the same
+            # way the Settings status check does, instead of silently respawning the process.
+            _sessions.pop(key, None)
+            stderr_tail = read_stderr_tail(handle.errfile)
+            await close_handle(handle)
+            result = build_error_result(
+                McpErrorCode.PROCESS_EXITED,
+                "server exited",
+                stderr_tail,
+                settings.MCP_CONNECT_TIMEOUT,
+            )
+            _last_results[key] = result
+            logger.warning("mcp_session_dead", server_id=server_id, user_id=user_id)
+            return result
+
+        opened, result = await open_session(command, args, env, cwd)
+        if opened is not None:
+            _sessions[key] = opened
+        else:
+            _last_results[key] = result
+        return result
+
+
 async def disconnect_server(user_id: int, server_id: int) -> McpConnectResult:
     """Close a server's session and forget its last result; safe to call when idle."""
     key: SessionKey = (user_id, server_id)

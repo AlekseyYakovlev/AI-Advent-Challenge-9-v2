@@ -4,11 +4,13 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
 import respx
 from starlette.testclient import TestClient
 
 from agent.main import app
 from agent.tools import TOOL_REGISTRY
+from shared.config import settings
 from tests.conftest import login_test_client
 from tests.test_memory_ws import (
     BASE_URL,
@@ -142,7 +144,41 @@ def test_mcp_tool_failure_is_a_tool_result_not_an_error_frame() -> None:
 
 
 @respx.mock
-def test_disconnected_server_adds_no_tools_and_unknown_call_is_handled() -> None:
+def test_unconnected_server_is_auto_connected_on_first_turn() -> None:
+    route = respx.post(COMPLETIONS_URL).mock(
+        side_effect=_queue_responses(
+            [
+                _tool_calls_response(
+                    [("call_auto", "mcp__fixture__echo", json.dumps({"text": "auto-7"}))],
+                ),
+                _plain_content_response("The tool said auto-7."),
+            ],
+        ),
+    )
+
+    with TestClient(app) as client:
+        chat_id = _setup(client, connect=False)
+        frames = _run_turn(client, chat_id)
+        listing = client.get("/api/v1/mcp/servers")
+
+    tool_frames = [f for f in frames if f["type"] == "tool_call"]
+    assert len(tool_frames) == 1
+    assert tool_frames[0]["ok"] is True
+    assert "auto-7" in tool_frames[0]["result"]
+    assert "mcp__fixture__echo" in _tool_names(_request_body(route, 0))
+    assert [f["type"] for f in frames].count("done") == 1
+    assert not [f for f in frames if f["type"] == "error"]
+
+    assert listing.status_code == 200
+    (server,) = listing.json()
+    assert server["connection"]["status"] == "connected"
+
+
+@respx.mock
+def test_disconnected_server_adds_no_tools_and_unknown_call_is_handled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "MCP_AUTO_CONNECT", False)
     route = respx.post(COMPLETIONS_URL).mock(
         side_effect=_queue_responses(
             [

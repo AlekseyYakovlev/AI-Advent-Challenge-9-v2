@@ -13,10 +13,16 @@ from mcp.shared.exceptions import McpError
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from agent import mcp_config
-from agent.mcp_client import get_live_session, get_live_tools
+from agent.mcp_client import (
+    ensure_connected,
+    get_live_session,
+    get_live_tools,
+    has_recorded_failure,
+)
 from agent.schemas import McpToolInfo
 from shared.config import settings
 from shared.logger import get_logger
+from shared.models import McpServerConfig
 
 logger = get_logger(__name__)
 
@@ -152,13 +158,74 @@ def build_toolset_from_servers(
     return toolset
 
 
+async def _auto_connect_one(user_id: int, row: McpServerConfig) -> None:
+    """Connect one server on demand and log the outcome; exceptions surface to the caller."""
+    started = time.monotonic()
+    result = await ensure_connected(
+        user_id,
+        row.id,
+        row.command,
+        mcp_config.load_args(row),
+        mcp_config.load_env(row) or None,
+        row.cwd,
+    )
+    outcome = result.error_code.value if result.error_code else result.status.value
+    logger.info(
+        "mcp_auto_connect",
+        user_id=user_id,
+        server_id=row.id,
+        outcome=outcome,
+        duration_ms=int((time.monotonic() - started) * 1000),
+    )
+
+
+async def _auto_connect_missing(user_id: int, rows: list[McpServerConfig]) -> None:
+    """Concurrently connect enabled servers that have no live session and no recorded failure."""
+    candidates = [
+        row
+        for row in rows
+        if row.enabled
+        and row.id is not None
+        and get_live_tools(user_id, row.id) is None
+        and not has_recorded_failure(user_id, row.id)
+    ]
+    if not candidates:
+        return
+
+    outcomes = await asyncio.gather(
+        *(_auto_connect_one(user_id, row) for row in candidates),
+        return_exceptions=True,
+    )
+    cancelled: BaseException | None = None
+    for row, outcome in zip(candidates, outcomes):
+        if not isinstance(outcome, BaseException):
+            continue
+        # Log the exception type only: messages can echo args or environment values.
+        logger.warning(
+            "mcp_auto_connect_failed",
+            user_id=user_id,
+            server_id=row.id,
+            error_type=type(outcome).__name__,
+        )
+        if isinstance(outcome, asyncio.CancelledError):
+            cancelled = outcome
+    if cancelled is not None:
+        raise cancelled
+
+
 async def build_mcp_toolset(
     session: AsyncSession,
     user_id: int,
     reserved: set[str],
 ) -> McpToolset:
-    """Build the toolset from the user's enabled servers that currently have a live session."""
+    """Build the toolset from the user's enabled servers, connecting idle ones first.
+
+    With MCP_AUTO_CONNECT on, enabled servers without a live session or a recorded failure
+    are connected concurrently before their tools are read; failures add no tools.
+    """
     rows = await mcp_config.list_servers(session, user_id)
+    if settings.MCP_AUTO_CONNECT:
+        await _auto_connect_missing(user_id, rows)
     live: list[tuple[int, str, list[McpToolInfo]]] = []
     for row in rows:
         if not row.enabled or row.id is None:

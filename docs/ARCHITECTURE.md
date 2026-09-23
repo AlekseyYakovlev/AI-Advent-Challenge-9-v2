@@ -109,6 +109,15 @@ rebuilt per turn from the session registry (`agent/mcp_client.py::get_live_tools
 ping, so a busy server is not probed on the chat path. A server that is disconnected, disabled or
 owned by another user adds nothing, and the registry is keyed by `(user_id, server_id)`.
 
+**Auto-connect:** when `MCP_AUTO_CONNECT` is true (default), each chat turn first connects, lazily
+and concurrently, the chat owner's enabled MCP servers that have no live session and no remembered
+failure (`agent/mcp_client.py::ensure_connected`). It never replaces a live session, so concurrent
+turns share it. A failed connect is remembered and not retried until the user presses "Подключить",
+edits, or disconnects the server; disabled servers and other users' servers are never touched. The
+first turn after app start may be delayed by up to `MCP_CONNECT_TIMEOUT` (10 s, plus a couple of
+seconds of process teardown) when a server hangs at handshake. Set it to false for manual connect
+only.
+
 - **Naming:** MCP tools are exposed as `mcp__<server-slug>__<tool>` (only `[a-zA-Z0-9_-]`, at most
   64 characters). Duplicate server slugs get a `-<server_id>` suffix; sanitization or length
   collisions get an 8-character sha1 suffix. Built-in names are reserved, so a server cannot shadow
