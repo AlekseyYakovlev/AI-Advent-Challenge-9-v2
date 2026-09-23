@@ -67,6 +67,7 @@ None.
 | 260921-juu | Fix silent message-drop race (model/WS not ready) and delayed user-bubble rendering in ui/static/app.js | 2026-09-21 | 56224e1 | | [260921-juu-fix-silent-message-drop-race-model-ws-no](./quick/260921-juu-fix-silent-message-drop-race-model-ws-no/) |
 | fast-fefd0de | Phase 7 UI gap: click MCP tool name in Settings tool list copies it to clipboard (toast; row still toggles elsewhere) | 2026-09-24 | fefd0de | | — |
 | 260924-1ic | MCP-F1: LLM can call MCP tools from a chat turn (namespaced tools, per-user live sessions, tool-call cards; Phase 7 scope extension) | 2026-09-24 | fff5f4a | Needs Review (UI cards not browser-verified; Playwright blocked by busy ports) | [260924-1ic-phase-7-extension-mcp-f1-llm-can-call-mc](./quick/260924-1ic-phase-7-extension-mcp-f1-llm-can-call-mc/) |
+| 260924-2n8 | MCP auto-connect: enabled servers connect lazily when the first chat turn builds its toolset (ensure_connected, MCP_AUTO_CONNECT flag, no retry after failure) | 2026-09-24 | 7708e58 | Tested (412 passed); not browser-verified | [260924-2n8-mcp-auto-connect-on-first-chat-use](./quick/260924-2n8-mcp-auto-connect-on-first-chat-use/) |
 
 ## Deferred Items
 
