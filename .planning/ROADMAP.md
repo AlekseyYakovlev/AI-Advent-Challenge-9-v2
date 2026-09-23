@@ -23,7 +23,7 @@ Full details: [milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
 
 ### 🚧 v2.0 Week 4: MCP Integration (In Progress)
 
-- [ ] **Phase 7: MCP Connection (Day 16)** — The agent connects to an MCP server configured in Settings and shows the server's tool list
+- [x] **Phase 7: MCP Connection (Day 16)** — The agent connects to an MCP server configured in Settings and shows the server's tool list (completed 2026-09-23)
 
 ## Phase Details
 
@@ -61,7 +61,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 07-06-PLAN.md — End-to-end acceptance vs filesystem.exe + human UI walkthrough (wave 4, checkpoint)
+- [x] 07-06-PLAN.md — End-to-end acceptance vs filesystem.exe + human UI walkthrough (wave 4, checkpoint)
 
 ## Progress
 
@@ -73,7 +73,7 @@ Plans:
 | 4. Task State Machine (Day 13) | v1.0 | 4/4 | Complete | 2026-09-20 |
 | 5. Invariants (Day 14) | v1.0 | 4/4 | Complete | 2026-09-20 |
 | 6. Controlled Transitions (Day 15) | v1.0 | 4/4 | Complete | 2026-09-21 |
-| 7. MCP Connection (Day 16) | v2.0 | 5/6 | In Progress|  |
+| 7. MCP Connection (Day 16) | v2.0 | 6/6 | Complete   | 2026-09-23 |
 
 ---
 *Roadmap created: 2026-09-19*
