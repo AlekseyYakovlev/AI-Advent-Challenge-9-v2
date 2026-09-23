@@ -65,6 +65,7 @@ None.
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260921-juu | Fix silent message-drop race (model/WS not ready) and delayed user-bubble rendering in ui/static/app.js | 2026-09-21 | 56224e1 | [260921-juu-fix-silent-message-drop-race-model-ws-no](./quick/260921-juu-fix-silent-message-drop-race-model-ws-no/) |
+| fast-fefd0de | Phase 7 UI gap: click MCP tool name in Settings tool list copies it to clipboard (toast; row still toggles elsewhere) | 2026-09-24 | fefd0de | — |
 
 ## Deferred Items
 
