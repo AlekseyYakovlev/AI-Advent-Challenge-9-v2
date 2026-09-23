@@ -47,8 +47,8 @@ Full details: [milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
 Plans:
 **Wave 1**
 
-- [ ] 07-01-PLAN.md — MCP stdio client core: pin mcp, timeout config, result schemas, fixture server, owner-task registry + error classification (wave 1)
-- [ ] 07-02-PLAN.md — McpServerConfig table + user-scoped CRUD service with env masking/merge (wave 1)
+- [x] 07-01-PLAN.md — MCP stdio client core: pin mcp, timeout config, result schemas, fixture server, owner-task registry + error classification (wave 1)
+- [x] 07-02-PLAN.md — McpServerConfig table + user-scoped CRUD service with env masking/merge (wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -73,7 +73,7 @@ Plans:
 | 4. Task State Machine (Day 13) | v1.0 | 4/4 | Complete | 2026-09-20 |
 | 5. Invariants (Day 14) | v1.0 | 4/4 | Complete | 2026-09-20 |
 | 6. Controlled Transitions (Day 15) | v1.0 | 4/4 | Complete | 2026-09-21 |
-| 7. MCP Connection (Day 16) | v2.0 | 0/? | Not started | - |
+| 7. MCP Connection (Day 16) | v2.0 | 2/6 | In Progress|  |
 
 ---
 *Roadmap created: 2026-09-19*
