@@ -1482,6 +1482,27 @@ function renderMcpParamLine(param) {
     return line;
 }
 
+async function copyMcpToolName(name) {
+    try {
+        await navigator.clipboard.writeText(name);
+    } catch (err) {
+        // navigator.clipboard is unavailable outside secure contexts (e.g. opened via a LAN IP).
+        const area = document.createElement('textarea');
+        area.value = name;
+        area.style.position = 'fixed';
+        area.style.opacity = '0';
+        document.body.appendChild(area);
+        area.select();
+        const copied = document.execCommand('copy');
+        area.remove();
+        if (!copied) {
+            showToast('Не удалось скопировать в буфер обмена', 'error');
+            return;
+        }
+    }
+    showToast(`Скопировано: ${name}`, 'success');
+}
+
 function renderMcpToolRow(server, tool) {
     const toolKey = `tool-${server.id}-${tool.name}`;
     const jsonKey = `json-${server.id}-${tool.name}`;
@@ -1491,7 +1512,13 @@ function renderMcpToolRow(server, tool) {
     toggle.type = 'button';
     const caret = mcpEl('span', 'text-slate-500 text-xs', '▸');
     toggle.appendChild(caret);
-    toggle.appendChild(mcpEl('span', 'text-sm font-semibold', tool.name));
+    const nameEl = mcpEl('span', 'text-sm font-semibold cursor-copy hover:text-indigo-300', tool.name);
+    nameEl.title = 'Нажмите, чтобы скопировать имя';
+    nameEl.addEventListener('click', (event) => {
+        event.stopPropagation();
+        copyMcpToolName(tool.name);
+    });
+    toggle.appendChild(nameEl);
     toggle.appendChild(mcpEl('span', 'text-xs text-slate-400 truncate min-w-0 flex-1', tool.description || ''));
     row.appendChild(toggle);
 
