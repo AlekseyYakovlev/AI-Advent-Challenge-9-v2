@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
@@ -118,6 +118,51 @@ class ModelLoadResult(BaseModel):
     status: ModelLoadStatus
     message: str
     model_id: Optional[str] = None
+
+
+class McpConnectionStatus(str, Enum):
+    """Lifecycle status of an MCP server connection as reported by the API."""
+
+    NOT_CONNECTED = "not_connected"
+    CONNECTED = "connected"
+    ERROR = "error"
+
+
+class McpErrorCode(str, Enum):
+    """Fixed classification of MCP connection failures."""
+
+    COMMAND_NOT_FOUND = "COMMAND_NOT_FOUND"
+    PROCESS_EXITED = "PROCESS_EXITED"
+    HANDSHAKE_TIMEOUT = "HANDSHAKE_TIMEOUT"
+    PROTOCOL_ERROR = "PROTOCOL_ERROR"
+
+
+class McpServerInfo(BaseModel):
+    """Identity reported by an MCP server during the initialize handshake."""
+
+    name: str
+    version: str
+    protocol_version: str
+
+
+class McpToolInfo(BaseModel):
+    """A single tool advertised by an MCP server."""
+
+    name: str
+    description: Optional[str] = None
+    input_schema: dict[str, Any]
+
+
+class McpConnectResult(BaseModel):
+    """Result of an MCP connect, status check, or disconnect; never raised to callers."""
+
+    status: McpConnectionStatus
+    server_info: Optional[McpServerInfo] = None
+    tools: list[McpToolInfo] = Field(default_factory=list)
+    error_code: Optional[McpErrorCode] = None
+    error_message: Optional[str] = None
+    detail: Optional[str] = None
+    stderr_tail: Optional[str] = None
 
 
 class MessagePayload(BaseModel):
