@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     DEEPSEEK_API_KEY: str = ""
     LM_STUDIO_BASE_URL: str = "http://localhost:1234"
     LLM_TIMEOUT: float = 60.0
+    MCP_CONNECT_TIMEOUT: float = 10.0
 
 
 settings = Settings()
