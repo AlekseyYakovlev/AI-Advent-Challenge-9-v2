@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     MCP_CONNECT_TIMEOUT: float = 10.0
     MCP_TOOL_CALL_TIMEOUT: float = 30.0
     MCP_TOOL_RESULT_MAX_CHARS: int = 20000
+    MCP_AUTO_CONNECT: bool = True
 
 
 settings = Settings()

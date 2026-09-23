@@ -146,7 +146,10 @@ def test_exposed_names_never_shadow_builtins_and_match_pattern() -> None:
         assert name not in RESERVED
 
 
-async def test_toolset_empty_without_servers_or_connection() -> None:
+async def test_toolset_empty_without_servers_or_connection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "MCP_AUTO_CONNECT", False)
     user_id = await _create_user("nosrv", "pw")
     assert (await _toolset(user_id)).schemas == []
 
