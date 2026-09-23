@@ -457,6 +457,19 @@ async def login(
     return UserResponse(id=user.id, username=user.username)
 
 
+async def _has_live_web_session(session: AsyncSession, user_id: int) -> bool:
+    """Return True if the user still has a non-expired web session row."""
+    result = await session.exec(select(SessionRow).where(SessionRow.user_id == user_id))
+    now: datetime = datetime.now(timezone.utc)
+    for row in result.all():
+        expires_at: datetime = row.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        if expires_at >= now:
+            return True
+    return False
+
+
 @app.post("/api/v1/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
 async def logout(
     response: Response,
@@ -477,6 +490,18 @@ async def logout(
             except Exception:
                 await session.rollback()
                 raise
+    # A user with another live web session (other tab/device) keeps their MCP sessions.
+    # An expired web session that never calls logout is still not covered by this cleanup.
+    try:
+        if not await _has_live_web_session(session, current_user.id):
+            await mcp_client.cleanup_user_sessions(current_user.id)
+    except Exception as exc:
+        # MCP cleanup must never make logout fail.
+        logger.warning(
+            "logout_mcp_cleanup_failed",
+            user_id=current_user.id,
+            error_type=type(exc).__name__,
+        )
     response.delete_cookie(SESSION_COOKIE_NAME, path="/")
     logger.info("logout", user_id=current_user.id)
 
