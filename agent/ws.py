@@ -20,14 +20,20 @@ from agent.context_engine import (
 from agent.dependencies import get_current_user_ws
 from agent import invariants, tasks
 from agent.llm_client import llm_client
+from agent.mcp_tools import McpToolset, build_mcp_toolset
 from agent.state import (
     CORS_ORIGINS,
     active_streams,
     chat_locks,
     ws_rate_limiter,
 )
-from agent.schemas import MessagePayload
-from agent.tools import build_tool_schemas, dispatch_tool_calls
+from agent.schemas import (
+    TOOL_EVENT_ARGS_PREVIEW_CHARS,
+    TOOL_EVENT_PREVIEW_CHARS,
+    MessagePayload,
+    ToolCallEvent,
+)
+from agent.tools import TOOL_REGISTRY, build_tool_schemas, dispatch_tool_calls
 from shared.auth import SESSION_COOKIE_NAME
 from shared.database import async_session_factory
 from shared.logger import get_logger
@@ -41,6 +47,60 @@ RATE_LIMIT_WINDOW = 60.0
 TASK_TOOL_NAMES = ("create_task", "transition_task", "pause_task", "resume_task")
 
 active_connections: set[WebSocket] = set()
+
+
+def _normalize_tool_calls_for_echo(tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Copy tool calls for the follow-up request, replacing empty arguments with "{}".
+
+    Providers reject an empty string as function arguments, and a no-argument call
+    can legitimately arrive that way. The originals are left untouched.
+    """
+    normalized: list[dict[str, Any]] = []
+    for call in tool_calls:
+        call_copy = dict(call)
+        function = dict(call_copy.get("function") or {})
+        arguments = function.get("arguments")
+        if not isinstance(arguments, str) or not arguments.strip():
+            function["arguments"] = "{}"
+        call_copy["function"] = function
+        normalized.append(call_copy)
+    return normalized
+
+
+def _preview(text: str, limit: int) -> tuple[str, bool]:
+    """Cut text to the limit and report whether it was cut."""
+    if len(text) <= limit:
+        return text, False
+    return text[:limit], True
+
+
+def _tool_call_frame(result: dict[str, Any]) -> dict[str, Any]:
+    """Build the tool_call WebSocket frame for one dispatch result."""
+    mcp_info = result.get("mcp")
+    arguments, _ = _preview(result.get("arguments", ""), TOOL_EVENT_ARGS_PREVIEW_CHARS)
+    preview, cut = _preview(
+        result.get("result_text", result["content"]),
+        TOOL_EVENT_PREVIEW_CHARS,
+    )
+    return ToolCallEvent(
+        tool_call_id=result.get("tool_call_id"),
+        name=result.get("name"),
+        server=mcp_info["server_name"] if mcp_info else None,
+        tool=mcp_info["tool"] if mcp_info else result.get("name"),
+        arguments=arguments,
+        ok=result["ok"],
+        result=preview,
+        truncated=bool(result.get("truncated")) or cut,
+    ).model_dump()
+
+
+async def _load_mcp_toolset(session: AsyncSession, user_id: int, chat_id: int) -> McpToolset:
+    """Build the per-turn MCP toolset; an MCP problem must never break the chat turn."""
+    try:
+        return await build_mcp_toolset(session, user_id, set(TOOL_REGISTRY))
+    except Exception as exc:
+        logger.warning("mcp_toolset_failed", chat_id=chat_id, error=str(exc))
+        return McpToolset.empty()
 
 
 def _validate_origin(websocket: WebSocket) -> bool:
@@ -198,8 +258,10 @@ async def _handle_chat_message(
             temperature = effective.temperature
             max_tokens = effective.max_tokens
 
+            toolset = McpToolset.empty()
             if chat.user_id is not None:
-                tool_schemas = build_tool_schemas()
+                toolset = await _load_mcp_toolset(session, chat.user_id, chat_id)
+                tool_schemas = build_tool_schemas() + toolset.schemas
             else:
                 tool_schemas = None
                 logger.warning("tools_disabled_unowned_chat", chat_id=chat_id)
@@ -263,13 +325,16 @@ async def _handle_chat_message(
                     chat.user_id,
                     chat_id,
                     pending_tool_calls,
+                    mcp_bindings=toolset.bindings,
                 )
+                for result in tool_results:
+                    await websocket.send_json(_tool_call_frame(result))
 
                 llm_messages.append(
                     {
                         "role": "assistant",
                         "content": assistant_text,
-                        "tool_calls": pending_tool_calls,
+                        "tool_calls": _normalize_tool_calls_for_echo(pending_tool_calls),
                     },
                 )
                 for result in tool_results:
@@ -330,7 +395,9 @@ async def _handle_chat_message(
                         )
 
                 for result in tool_results:
-                    if not result["ok"]:
+                    # MCP failures are shown on their tool_call card; an error frame would
+                    # make the client stop streaming mid-turn.
+                    if not result["ok"] and result.get("mcp") is None:
                         try:
                             error_detail = json.loads(result["content"]).get(
                                 "error", result["content"],

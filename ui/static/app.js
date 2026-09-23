@@ -34,6 +34,8 @@ const state = {
     lastChatInvariants: null,
     editingChatInvariantId: null,
     lastConflicts: [],
+    pendingToolCalls: [],
+    toolCallsByMessage: {},
 };
 
 const TASK_STATE_LABELS = {
@@ -183,6 +185,11 @@ function renderMessages() {
         controls.innerHTML = branchControlsHtml(msg);
         bubble.appendChild(controls);
         wrapper.appendChild(bubble);
+        if (!isUser) {
+            (state.toolCallsByMessage[msg.id] || []).forEach((evt) => {
+                container.appendChild(wrapToolCard(buildToolCallCard(evt)));
+            });
+        }
         container.appendChild(wrapper);
         state.lastConflicts
             .filter((conflict) => conflict.message_id === msg.id)
@@ -931,6 +938,55 @@ function appendTokenToStream(token) {
     $('messages').scrollTop = $('messages').scrollHeight;
 }
 
+function buildToolCallCard(evt) {
+    const card = document.createElement('details');
+    card.className = 'tool-call-card max-w-[75%] rounded-lg border border-slate-700 '
+        + 'bg-slate-900 text-xs text-slate-300 px-3 py-2';
+    if (evt.tool_call_id) card.dataset.toolCallId = evt.tool_call_id;
+
+    const summary = document.createElement('summary');
+    summary.className = `cursor-pointer select-none ${evt.ok ? '' : 'text-red-400'}`;
+    summary.textContent = '🔧 ' + (evt.server ? evt.server + ' · ' : '')
+        + (evt.tool || evt.name || '?') + (evt.ok ? ' — ok' : ' — ошибка');
+    card.appendChild(summary);
+
+    const argsLabel = document.createElement('div');
+    argsLabel.className = 'mt-2 text-slate-500';
+    argsLabel.textContent = 'Аргументы';
+    const argsPre = document.createElement('pre');
+    argsPre.className = 'whitespace-pre-wrap break-all';
+    argsPre.textContent = evt.arguments || '{}';
+
+    const resultLabel = document.createElement('div');
+    resultLabel.className = `mt-2 ${evt.ok ? 'text-slate-500' : 'text-red-400'}`;
+    resultLabel.textContent = (evt.ok ? 'Результат' : 'Ошибка') + (evt.truncated ? ' (обрезано)' : '');
+    const resultPre = document.createElement('pre');
+    resultPre.className = 'whitespace-pre-wrap break-all';
+    resultPre.textContent = evt.result || '';
+
+    card.append(argsLabel, argsPre, resultLabel, resultPre);
+    return card;
+}
+
+function wrapToolCard(card) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'flex justify-start';
+    wrapper.appendChild(card);
+    return wrapper;
+}
+
+function appendToolCallCard(evt) {
+    const container = $('messages');
+    const wrapper = wrapToolCard(buildToolCallCard(evt));
+    const streaming = container.querySelector('[data-streaming="true"]');
+    if (streaming) {
+        container.insertBefore(wrapper, streaming);
+    } else {
+        container.appendChild(wrapper);
+    }
+    container.scrollTop = container.scrollHeight;
+}
+
 function removeLoadingBubble() {
     const el = document.querySelector('[data-streaming="true"]');
     if (el) el.remove();
@@ -1186,7 +1242,15 @@ function handleWsMessage(data) {
         case 'token':
             appendTokenToStream(data.content || '');
             break;
+        case 'tool_call':
+            state.pendingToolCalls.push(data);
+            appendToolCallCard(data);
+            break;
         case 'done':
+            if (data.message_id && state.pendingToolCalls.length) {
+                state.toolCallsByMessage[data.message_id] = state.pendingToolCalls;
+            }
+            state.pendingToolCalls = [];
             setStreaming(false);
             removeLoadingBubble();
             unblockInput();
@@ -1204,6 +1268,7 @@ function handleWsMessage(data) {
             }
             break;
         case 'error':
+            if (data.code !== 'TOOL_ERROR') state.pendingToolCalls = [];
             setStreaming(false);
             removeLoadingBubble();
 

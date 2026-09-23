@@ -3,7 +3,7 @@
 import re
 from datetime import datetime
 from enum import Enum
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -35,6 +35,8 @@ MCP_ENV_MAX_ITEMS = 50
 MCP_ENV_VALUE_MAX_LENGTH = 4000
 MCP_CWD_MAX_LENGTH = 1000
 MCP_ENV_KEY_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+TOOL_EVENT_PREVIEW_CHARS = 4000
+TOOL_EVENT_ARGS_PREVIEW_CHARS = 2000
 
 
 class HealthResponse(BaseModel):
@@ -286,6 +288,20 @@ class MessagePayload(BaseModel):
 
     content: str = Field(min_length=1, max_length=CONTENT_MAX_LENGTH)
     model: str = Field(min_length=1, max_length=200)
+
+
+class ToolCallEvent(BaseModel):
+    """WebSocket frame announcing one executed tool call."""
+
+    type: Literal["tool_call"] = "tool_call"
+    tool_call_id: str | None = None
+    name: str | None = None
+    server: str | None = None
+    tool: str | None = None
+    arguments: str
+    ok: bool
+    result: str
+    truncated: bool = False
 
 
 class ModelLoadRequest(BaseModel):
