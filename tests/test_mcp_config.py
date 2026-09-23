@@ -3,14 +3,18 @@
 from collections.abc import Callable, Coroutine
 from typing import Any
 
+import pytest
+
 from agent.mcp_config import (
     ENV_MASK,
+    EnvMaskError,
     create_server,
     delete_server,
     get_server,
     list_servers,
     load_args,
     load_env,
+    merge_env,
     update_server,
 )
 from shared.database import async_session_factory, engine
@@ -92,16 +96,51 @@ async def test_update_env_merge_preserves_masked_values(seed_user: SeedUser) -> 
     assert load_env(row) == {"API_KEY": "secret1", "NEW": "v"}
 
 
-async def test_update_env_never_persists_mask_for_unknown_key(seed_user: SeedUser) -> None:
-    """A masked value for a key with nothing stored is skipped, not saved literally."""
+def test_merge_env_keeps_known_masked_and_rejects_unknown_masked() -> None:
+    """A mask on a stored key keeps its value; a mask on an unknown key raises with the key."""
+    assert merge_env({"A": "s"}, {"A": ENV_MASK, "B": "2"}) == {"A": "s", "B": "2"}
+
+    with pytest.raises(EnvMaskError) as exc_info:
+        merge_env({}, {"GHOST": ENV_MASK})
+    assert exc_info.value.key == "GHOST"
+
+
+async def test_update_env_rejects_mask_for_unknown_key_and_persists_nothing(
+    seed_user: SeedUser,
+) -> None:
+    """A rejected masked-unknown-key update leaves the name, env and row untouched."""
     user = await seed_user("alice", "pw")
-    created = await _create(user.id, env={})
+    created = await _create(user.id, "orig", env={})
 
     async with async_session_factory() as session:
         row = await get_server(session, user.id, created.id)
         assert row is not None
-        await update_server(session, row, env={"GHOST": ENV_MASK})
+        with pytest.raises(EnvMaskError) as exc_info:
+            await update_server(session, row, name="changed", env={"GHOST": ENV_MASK})
+        assert exc_info.value.key == "GHOST"
+        assert row.name == "orig"
         assert load_env(row) == {}
+
+    async with async_session_factory() as session:
+        row = await get_server(session, user.id, created.id)
+
+    assert row is not None
+    assert row.name == "orig"
+    assert load_env(row) == {}
+
+
+async def test_create_rejects_masked_env_value_and_persists_nothing(
+    seed_user: SeedUser,
+) -> None:
+    """A masked value on a brand-new server can never refer to a stored one, so it is rejected."""
+    user = await seed_user("alice", "pw")
+
+    with pytest.raises(EnvMaskError) as exc_info:
+        await _create(user.id, env={"K": ENV_MASK})
+    assert exc_info.value.key == "K"
+
+    async with async_session_factory() as session:
+        assert await list_servers(session, user.id) == []
 
 
 async def test_update_partial_fields_and_clear_cwd(seed_user: SeedUser) -> None:
