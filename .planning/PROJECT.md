@@ -1,8 +1,18 @@
-# AiAdventAgentV2 — Week 3: Agent Memory & Task State
+# AiAdventAgentV2 — Week 4: MCP Integration
 
 ## What This Is
 
 A local-first, two-process AI chat application (FastAPI UI + Agent servers, vanilla JS frontend) that is being extended with an explicit agent memory model, personalization, and a formal task state machine with invariant enforcement. This is coursework for the "AI Advent Challenge" (9th cohort) — Week 3, Days 11-15 — where each day is a self-contained assignment building on the previous one's output, implemented in its own git branch and merged to `main` once its acceptance criteria pass.
+
+## Current Milestone: v2.0 Week 4: MCP Integration
+
+**Goal:** Connect the agent to external tools via the Model Context Protocol — starting with establishing an MCP connection and listing the server's tools (Day 16), then (later days) letting the LLM use them.
+
+**Target features:**
+- MCP server configuration in the Settings UI (per user)
+- Agent-side MCP client (official `mcp` Python SDK, stdio transport) that connects and lists tools
+- Visible connection status, server info, tool list, and clear errors
+- Standalone CLI proof script that prints the tool list
 
 ## Core Value
 
@@ -47,7 +57,12 @@ The agent must demonstrably separate and manage distinct kinds of state — shor
 
 ### Active
 
-(Defined at next milestone start)
+- [ ] **MCP-01**: User can add, edit and delete MCP server configs (name, command, args) in Settings, stored per `user_id`
+- [ ] **MCP-02**: User can press "Connect" in Settings; Agent opens a stdio MCP session (initialize) and UI shows status + serverInfo (name, version, protocol)
+- [ ] **MCP-03**: After connecting, UI lists the server's tools (name, description, parameters from inputSchema)
+- [ ] **MCP-04**: Connection failures (bad path, server crash, timeout) are shown clearly in UI; Agent does not crash
+- [ ] **MCP-05**: `mcp` SDK pinned in requirements.txt; pytest covers connect + list_tools
+- [ ] **MCP-06**: Standalone CLI `scripts/mcp_list_tools.py <command> <args…>` prints the tool list
 
 ### Out of Scope
 
@@ -74,7 +89,8 @@ Shipped **v1.0 Week 3: Agent Memory & Task State** (2026-09-23): auth, 3-layer m
 - **Process model**: No Docker, no `multiprocessing`/`os.fork`, no Redis/RabbitMQ/Celery — UI/Agent split stays `asyncio.create_subprocess_exec` only; IPC stays REST + WebSocket.
 - **Auth mechanism**: HTTP-only session cookie (not JWT/localStorage) — matches local-first, single-deployment nature of the app and works uniformly for REST + WebSocket.
 - **Data scope**: All new data (memory layers, profiles, tasks, per-chat invariants) is scoped by `user_id`; only global project invariants remain shared across users.
-- **Branching**: One branch per phase, named after the day (`Day11`...`Day15`) except the auth foundation phase, which is named `Auth`. Branches are pushed and merged to `main`, never deleted.
+- **MCP servers**: External MCP servers run as separate stdio subprocesses spawned via the SDK (asyncio/anyio subprocess — no `multiprocessing`). Native binaries (e.g. the Go `portertech/filesystem-mcp-server` at `C:\Users\Aleksey\go\bin\filesystem.exe`) are allowed; Node/npx-based servers are not.
+- **Branching**: One branch per phase, named after the day (`Day11`...`Day16`...) except the auth foundation phase, which is named `Auth`. Branches are pushed and merged to `main`, never deleted.
 
 ## Key Decisions
 
@@ -107,4 +123,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-09-23 after v1.0 milestone*
+*Last updated: 2026-09-23 — started milestone v2.0 Week 4: MCP Integration*
