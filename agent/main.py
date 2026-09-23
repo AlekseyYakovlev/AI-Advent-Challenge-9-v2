@@ -28,6 +28,12 @@ from agent.schemas import (
     HealthResponse,
     InvariantConflictResponse,
     LoginRequest,
+    McpConnectionStatus,
+    McpConnectResult,
+    McpErrorCode,
+    McpServerCreate,
+    McpServerResponse,
+    McpServerUpdate,
     MemoryEntryResponse,
     MessageResponse,
     ModelLoadRequest,
@@ -43,7 +49,7 @@ from agent.schemas import (
 from agent.llm_client import LMStudioClient
 from agent.state import CORS_ORIGINS, chat_locks, cleanup_chat_caches
 from agent.context_engine import compute_chat_stats
-from agent import invariants, memory, profile, tasks
+from agent import invariants, mcp_client, mcp_config, memory, profile, tasks
 from agent.ws import ws_chat
 from shared.auth import (
     SESSION_COOKIE_NAME,
@@ -53,6 +59,7 @@ from shared.auth import (
     hash_session_token,
     verify_password,
 )
+from shared.config import settings as app_config
 from shared.database import engine, get_session, init_db
 from shared.logger import get_logger
 from shared.models import (
@@ -61,6 +68,7 @@ from shared.models import (
     ContextStrategy,
     GlobalInvariant,
     InvariantConflict,
+    McpServerConfig,
     Message,
     Profile,
     Session as SessionRow,
@@ -141,6 +149,41 @@ async def _get_chat_invariant_or_404(
             detail=f"Invariant {invariant_id} not found",
         )
     return invariant
+
+
+async def _get_mcp_server_or_404(
+    session: AsyncSession,
+    user_id: int,
+    server_id: int,
+) -> McpServerConfig:
+    """Load an MCP server config owned by user_id or raise HTTP 404 (never 403)."""
+    row = await mcp_config.get_server(session, user_id, server_id)
+    if row is None:
+        logger.warning("mcp_server_access_denied", user_id=user_id, server_id=server_id)
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"MCP server {server_id} not found",
+        )
+    return row
+
+
+def _mcp_server_to_response(
+    row: McpServerConfig,
+    connection: McpConnectResult,
+) -> McpServerResponse:
+    """Serialize a config with its connection state; env values are reduced to key names."""
+    return McpServerResponse(
+        id=row.id,
+        name=row.name,
+        command=row.command,
+        args=mcp_config.load_args(row),
+        env_keys=sorted(mcp_config.load_env(row).keys()),
+        cwd=row.cwd,
+        enabled=row.enabled,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+        connection=connection,
+    )
 
 
 async def _resolve_settings(
@@ -322,6 +365,7 @@ async def lifespan(_app: FastAPI):
     await init_db()
     yield
     logger.info("agent_shutting_down")
+    await mcp_client.cleanup_all_sessions()
     await engine.dispose()
 
 
@@ -890,6 +934,145 @@ async def delete_global_invariant(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Invariant {invariant_id} not found",
         )
+
+
+@app.get("/api/v1/mcp/servers", response_model=list[McpServerResponse])
+async def list_mcp_servers(
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> list[McpServerResponse]:
+    """List the user's MCP servers, checking liveness of connected ones."""
+    rows = await mcp_config.list_servers(session, current_user.id)
+    responses: list[McpServerResponse] = []
+    for row in rows:
+        connection = await mcp_client.get_status(current_user.id, row.id)
+        responses.append(_mcp_server_to_response(row, connection))
+    return responses
+
+
+@app.post(
+    "/api/v1/mcp/servers",
+    response_model=McpServerResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_mcp_server(
+    body: McpServerCreate,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> McpServerResponse:
+    """Create an MCP server config for the current user."""
+    row = await mcp_config.create_server(
+        session,
+        current_user.id,
+        body.name,
+        body.command,
+        body.args,
+        body.env,
+        body.cwd,
+        body.enabled,
+    )
+    connection = McpConnectResult(status=McpConnectionStatus.NOT_CONNECTED)
+    return _mcp_server_to_response(row, connection)
+
+
+@app.put("/api/v1/mcp/servers/{server_id}", response_model=McpServerResponse)
+async def update_mcp_server(
+    server_id: int,
+    body: McpServerUpdate,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> McpServerResponse:
+    """Update an MCP server config; a connected server is disconnected first."""
+    row = await _get_mcp_server_or_404(session, current_user.id, server_id)
+    # Unconditional: also drops a remembered connect error that the edit makes stale.
+    await mcp_client.disconnect_server(current_user.id, row.id)
+    updates = body.model_dump(exclude_unset=True)
+    row = await mcp_config.update_server(
+        session,
+        row,
+        name=updates.get("name"),
+        command=updates.get("command"),
+        args=updates.get("args"),
+        env=updates.get("env"),
+        cwd=updates.get("cwd"),
+        cwd_set="cwd" in body.model_fields_set,
+        enabled=updates.get("enabled"),
+    )
+    connection = await mcp_client.get_status(current_user.id, row.id)
+    return _mcp_server_to_response(row, connection)
+
+
+@app.delete("/api/v1/mcp/servers/{server_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_mcp_server(
+    server_id: int,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    """Delete an MCP server config after closing its live session."""
+    row = await _get_mcp_server_or_404(session, current_user.id, server_id)
+    await mcp_client.cleanup_server(current_user.id, row.id)
+    await mcp_config.delete_server(session, row)
+
+
+@app.post("/api/v1/mcp/servers/{server_id}/connect", response_model=McpServerResponse)
+async def connect_mcp_server(
+    server_id: int,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> McpServerResponse:
+    """Connect to an MCP server; connect failures are reported in the body, not as HTTP errors."""
+    row = await _get_mcp_server_or_404(session, current_user.id, server_id)
+    if not row.enabled:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="MCP server is disabled",
+        )
+    logger.info("mcp_connect_requested", user_id=current_user.id, server_id=row.id)
+    try:
+        result = await mcp_client.connect_server(
+            current_user.id,
+            row.id,
+            row.command,
+            mcp_config.load_args(row),
+            mcp_config.load_env(row) or None,
+            row.cwd,
+        )
+    except Exception as exc:
+        # Last-resort guard: a connect problem must never take the Agent down.
+        logger.error("mcp_connect_unexpected_error", user_id=current_user.id,
+                     server_id=row.id, error=str(exc))
+        result = mcp_client.build_error_result(
+            McpErrorCode.PROTOCOL_ERROR,
+            str(exc),
+            "",
+            app_config.MCP_CONNECT_TIMEOUT,
+        )
+    return _mcp_server_to_response(row, result)
+
+
+@app.post("/api/v1/mcp/servers/{server_id}/disconnect", response_model=McpServerResponse)
+async def disconnect_mcp_server(
+    server_id: int,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> McpServerResponse:
+    """Close the live session of an MCP server."""
+    row = await _get_mcp_server_or_404(session, current_user.id, server_id)
+    logger.info("mcp_disconnect_requested", user_id=current_user.id, server_id=row.id)
+    result = await mcp_client.disconnect_server(current_user.id, row.id)
+    return _mcp_server_to_response(row, result)
+
+
+@app.get("/api/v1/mcp/servers/{server_id}/status", response_model=McpServerResponse)
+async def get_mcp_server_status(
+    server_id: int,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> McpServerResponse:
+    """Return an MCP server's connection state after a liveness check."""
+    row = await _get_mcp_server_or_404(session, current_user.id, server_id)
+    result = await mcp_client.get_status(current_user.id, row.id)
+    return _mcp_server_to_response(row, result)
 
 
 @app.get("/api/v1/lm-studio/models")
