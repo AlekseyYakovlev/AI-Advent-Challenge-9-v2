@@ -12,7 +12,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from agent.dependencies import get_current_user
+from agent.dependencies import (
+    get_current_user,
+    require_allowed_origin,
+    require_json_content_type,
+)
 from agent.schemas import (
     BranchRequest,
     ChatCreate,
@@ -1016,6 +1020,7 @@ async def list_mcp_servers(
     "/api/v1/mcp/servers",
     response_model=McpServerResponse,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_allowed_origin), Depends(require_json_content_type)],
 )
 async def create_mcp_server(
     body: McpServerCreate,
@@ -1040,7 +1045,11 @@ async def create_mcp_server(
     return _mcp_server_to_response(row, connection)
 
 
-@app.put("/api/v1/mcp/servers/{server_id}", response_model=McpServerResponse)
+@app.put(
+    "/api/v1/mcp/servers/{server_id}",
+    response_model=McpServerResponse,
+    dependencies=[Depends(require_allowed_origin), Depends(require_json_content_type)],
+)
 async def update_mcp_server(
     server_id: int,
     body: McpServerUpdate,
@@ -1076,7 +1085,11 @@ async def update_mcp_server(
     return _mcp_server_to_response(row, connection)
 
 
-@app.delete("/api/v1/mcp/servers/{server_id}", status_code=status.HTTP_204_NO_CONTENT)
+@app.delete(
+    "/api/v1/mcp/servers/{server_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_allowed_origin)],
+)
 async def delete_mcp_server(
     server_id: int,
     session: AsyncSession = Depends(get_session),
@@ -1088,7 +1101,11 @@ async def delete_mcp_server(
     await mcp_config.delete_server(session, row)
 
 
-@app.post("/api/v1/mcp/servers/{server_id}/connect", response_model=McpServerResponse)
+@app.post(
+    "/api/v1/mcp/servers/{server_id}/connect",
+    response_model=McpServerResponse,
+    dependencies=[Depends(require_allowed_origin)],
+)
 async def connect_mcp_server(
     server_id: int,
     session: AsyncSession = Depends(get_session),
@@ -1124,7 +1141,11 @@ async def connect_mcp_server(
     return _mcp_server_to_response(row, result)
 
 
-@app.post("/api/v1/mcp/servers/{server_id}/disconnect", response_model=McpServerResponse)
+@app.post(
+    "/api/v1/mcp/servers/{server_id}/disconnect",
+    response_model=McpServerResponse,
+    dependencies=[Depends(require_allowed_origin)],
+)
 async def disconnect_mcp_server(
     server_id: int,
     session: AsyncSession = Depends(get_session),
