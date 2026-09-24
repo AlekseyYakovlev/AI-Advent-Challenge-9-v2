@@ -3,9 +3,12 @@
 import asyncio
 import os
 import sys
+import tempfile
 import time
 from pathlib import Path
+from typing import IO
 
+import psutil
 import pytest
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData
@@ -21,6 +24,7 @@ from agent.mcp_client import (
     get_live_session,
     get_status,
     is_connected,
+    spawn_failure_reason,
 )
 from agent.schemas import McpConnectionStatus, McpErrorCode
 
@@ -124,6 +128,154 @@ def test_classify_mcp_error_unwraps_nested_groups() -> None:
         classify_mcp_error(RuntimeError("Unsupported protocol version from the server: x"))[0]
         == McpErrorCode.PROTOCOL_ERROR
     )
+    assert classify_mcp_error(PermissionError(13, "Access is denied"))[0] == (
+        McpErrorCode.SPAWN_FAILED
+    )
+    assert classify_mcp_error(OSError(193, "%1 is not a valid Win32 application"))[0] == (
+        McpErrorCode.SPAWN_FAILED
+    )
+    assert classify_mcp_error(NotADirectoryError(20, "Not a directory"))[0] == (
+        McpErrorCode.SPAWN_FAILED
+    )
+    assert classify_mcp_error(ConnectionResetError())[0] == McpErrorCode.PROCESS_EXITED
+    wrapped = ExceptionGroup("outer", [PermissionError(13, "Access is denied")])
+    assert classify_mcp_error(wrapped)[0] == McpErrorCode.SPAWN_FAILED
+
+
+def test_spawn_failure_reason_uses_errno_and_strerror_only() -> None:
+    """The reason carries errno/strerror, never the filename."""
+    reason = spawn_failure_reason(PermissionError(13, "Access is denied", "C:/secret/path.exe"))
+    assert "13" in reason
+    assert "Access is denied" in reason
+    assert "secret" not in reason
+    assert spawn_failure_reason(OSError()) == "OSError"
+    assert spawn_failure_reason(RuntimeError("x")) == "RuntimeError"
+
+
+def _fixture_children_pids() -> set[int]:
+    """Return pids of this test process's descendants that run the fixture script."""
+    pids: set[int] = set()
+    for child in psutil.Process().children(recursive=True):
+        try:
+            if FIXTURE in child.cmdline():
+                pids.add(child.pid)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    return pids
+
+
+@pytest.mark.parametrize("kind", ["missing", "file"])
+async def test_bad_cwd_gives_cwd_specific_error_without_spawning(
+    tmp_path: Path, kind: str
+) -> None:
+    """A cwd that is missing or not a directory fails up front and starts no process."""
+    cwd = tmp_path / "missing"
+    if kind == "file":
+        cwd.write_text("not a directory", encoding="utf-8")
+    before = _fixture_children_pids()
+
+    result = await connect_once_and_list(sys.executable, _fixture_args("ok"), cwd=str(cwd))
+
+    assert result.status == McpConnectionStatus.ERROR
+    assert result.error_code == McpErrorCode.SPAWN_FAILED
+    assert result.error_message is not None
+    assert "Рабочая папка" in result.error_message
+    assert str(cwd) in result.error_message
+    assert _fixture_children_pids() == before
+
+
+async def test_missing_command_with_valid_cwd_is_still_command_not_found(tmp_path: Path) -> None:
+    """A missing command keeps its own message even when cwd is a real directory."""
+    result = await connect_once_and_list(
+        "C:/definitely/not/here/nope.exe", [], cwd=str(tmp_path)
+    )
+
+    assert result.error_code == McpErrorCode.COMMAND_NOT_FOUND
+    assert result.error_message == MCP_ERROR_MESSAGES[McpErrorCode.COMMAND_NOT_FOUND]
+
+
+async def test_unspawnable_file_is_spawn_failed_without_leaking_env(tmp_path: Path) -> None:
+    """A file that cannot be executed reports errno/strerror and never the env values."""
+    not_executable = tmp_path / "not_a_program.txt"
+    not_executable.write_text("plain text", encoding="utf-8")
+    secret = "supersecret123"
+
+    result = await connect_once_and_list(
+        str(not_executable), [], env={"SECRET_TOKEN": secret}
+    )
+
+    assert result.status == McpConnectionStatus.ERROR
+    assert result.error_code == McpErrorCode.SPAWN_FAILED
+    assert result.error_message is not None
+    assert "errno" in result.error_message
+    for text in (result.error_message, result.detail or "", result.stderr_tail or ""):
+        assert secret not in text
+
+
+def _stderr_file(content: bytes) -> IO[str]:
+    """Create a text-mode stderr capture file pre-filled with raw bytes."""
+    errfile = tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace")
+    errfile.buffer.write(content)
+    errfile.buffer.flush()
+    return errfile
+
+
+class _SpyErrFile:
+    """Stand-in stderr file that records the size of every read on its binary layer."""
+
+    def __init__(self, inner: IO[str]) -> None:
+        self._inner = inner
+        self.read_sizes: list[int] = []
+        self.buffer = self
+
+    def flush(self) -> None:
+        self._inner.flush()
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        return self._inner.buffer.seek(offset, whence)
+
+    def read(self, size: int = -1) -> bytes:
+        self.read_sizes.append(size)
+        return self._inner.buffer.read(size)
+
+
+def test_read_stderr_tail_is_bounded_to_last_64_kib() -> None:
+    """A huge capture file yields the last 20 whole lines from a bounded read."""
+    lines = [f"line {index:06d} " + "x" * 40 for index in range(5000)]
+    content = ("\n".join(lines) + "\n").encode("utf-8")
+    assert len(content) > 2 * mcp_client.STDERR_TAIL_MAX_BYTES
+    inner = _stderr_file(content)
+    spy = _SpyErrFile(inner)
+
+    tail = mcp_client.read_stderr_tail(spy)  # type: ignore[arg-type]
+
+    assert tail.splitlines() == lines[-20:]
+    assert spy.read_sizes
+    assert all(0 <= size <= mcp_client.STDERR_TAIL_MAX_BYTES for size in spy.read_sizes)
+    inner.close()
+
+
+def test_read_stderr_tail_drops_partial_first_line_of_a_window() -> None:
+    """When only a window is read, the cut-off first line is discarded, not returned."""
+    body = "".join(f"row {index:05d}\n" for index in range(20000))
+    errfile = _stderr_file(body.encode("utf-8"))
+
+    tail = mcp_client.read_stderr_tail(errfile, max_lines=100000)
+
+    parsed = tail.splitlines()
+    assert parsed[-1] == "row 19999"
+    assert all(row.startswith("row ") and len(row) == 9 for row in parsed)
+    assert len(body) > mcp_client.STDERR_TAIL_MAX_BYTES
+    assert len(tail.encode("utf-8")) <= mcp_client.STDERR_TAIL_MAX_BYTES
+    errfile.close()
+
+
+def test_read_stderr_tail_small_and_closed_files() -> None:
+    """A small file returns all its lines; a closed file returns an empty string."""
+    errfile = _stderr_file(b"a\nb\nc\n")
+    assert mcp_client.read_stderr_tail(errfile) == "a\nb\nc"
+    errfile.close()
+    assert mcp_client.read_stderr_tail(errfile) == ""
 
 
 async def test_connect_server_registry_and_disconnect() -> None:

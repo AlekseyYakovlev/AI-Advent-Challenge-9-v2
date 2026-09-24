@@ -146,6 +146,7 @@ class McpErrorCode(str, Enum):
     PROCESS_EXITED = "PROCESS_EXITED"
     HANDSHAKE_TIMEOUT = "HANDSHAKE_TIMEOUT"
     PROTOCOL_ERROR = "PROTOCOL_ERROR"
+    SPAWN_FAILED = "SPAWN_FAILED"
 
 
 class McpServerInfo(BaseModel):

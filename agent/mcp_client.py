@@ -2,11 +2,14 @@
 
 import asyncio
 import contextlib
+import os
 import tempfile
-from typing import IO
+from typing import IO, Literal
 
+import anyio
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from mcp.shared.exceptions import McpError
 
 from agent.schemas import (
     McpConnectionStatus,
@@ -21,6 +24,7 @@ from shared.logger import get_logger
 logger = get_logger(__name__)
 
 STDERR_TAIL_LINES = 20
+STDERR_TAIL_MAX_BYTES = 64 * 1024
 LIVENESS_TIMEOUT = 2.0
 CLOSE_TIMEOUT = 5.0
 READY_GRACE_SECONDS = 5.0
@@ -31,9 +35,20 @@ MCP_ERROR_MESSAGES: dict[McpErrorCode, str] = {
     McpErrorCode.PROCESS_EXITED: "Процесс сервера неожиданно завершился.",
     McpErrorCode.HANDSHAKE_TIMEOUT: "Превышено время ожидания подключения ({timeout} с).",
     McpErrorCode.PROTOCOL_ERROR: "Ошибка протокола MCP при подключении к серверу.",
+    McpErrorCode.SPAWN_FAILED: "Не удалось запустить процесс сервера: {reason}.",
 }
+CWD_INVALID_MESSAGE = "Рабочая папка (cwd) не найдена или не является папкой: {cwd}"
 
 _PROCESS_GONE_ERRORS = (BrokenPipeError, ConnectionResetError, EOFError)
+# A ping that fails with one of these means the transport streams are gone, i.e. the process died.
+_DEAD_STREAM_ERRORS = (
+    anyio.ClosedResourceError,
+    anyio.BrokenResourceError,
+    anyio.EndOfStream,
+    *_PROCESS_GONE_ERRORS,
+)
+
+ProbeResult = Literal["alive", "unresponsive", "dead"]
 
 SessionKey = tuple[int, int]
 
@@ -79,22 +94,53 @@ def classify_mcp_error(exc: BaseException) -> tuple[McpErrorCode, str]:
         return McpErrorCode.HANDSHAKE_TIMEOUT, detail
     if any(isinstance(leaf, _PROCESS_GONE_ERRORS) for leaf in leaves):
         return McpErrorCode.PROCESS_EXITED, detail
-    if any(isinstance(leaf, OSError) for leaf in leaves):
+    # cwd is validated before spawning, so a FileNotFoundError left here is the command itself.
+    if any(isinstance(leaf, FileNotFoundError) for leaf in leaves):
         return McpErrorCode.COMMAND_NOT_FOUND, detail
+    if any(isinstance(leaf, OSError) for leaf in leaves):
+        return McpErrorCode.SPAWN_FAILED, detail
     if any("Connection closed" in str(leaf) for leaf in leaves):
         return McpErrorCode.PROCESS_EXITED, detail
     return McpErrorCode.PROTOCOL_ERROR, detail
 
 
+def spawn_failure_reason(exc: BaseException) -> str:
+    """Describe the first OSError behind a failed spawn by errno and strerror only.
+
+    Deliberately omits filename and env, which could carry user data or secrets.
+    """
+    for leaf in _flatten_exception_group(exc):
+        if not isinstance(leaf, OSError):
+            continue
+        if leaf.errno is None and not leaf.strerror:
+            return type(leaf).__name__
+        reason = f"[errno {leaf.errno}] {leaf.strerror}"
+        winerror = getattr(leaf, "winerror", None)
+        if winerror is not None and winerror != leaf.errno:
+            reason += f" (winerror {winerror})"
+        return reason
+    return type(exc).__name__
+
+
 def read_stderr_tail(errfile: IO[str], max_lines: int = STDERR_TAIL_LINES) -> str:
-    """Return the last lines the child process wrote to its stderr capture file."""
+    """Return the last lines the child process wrote to its stderr capture file.
+
+    Reads at most STDERR_TAIL_MAX_BYTES from the end, working on the binary layer because
+    text-mode seek offsets are opaque cookies.
+    """
     try:
         errfile.flush()
-        errfile.seek(0)
-        lines = errfile.read().splitlines()
-    except (OSError, ValueError):
+        raw = errfile.buffer
+        size = raw.seek(0, os.SEEK_END)
+        start = max(0, size - STDERR_TAIL_MAX_BYTES)
+        raw.seek(start)
+        text = raw.read(size - start).decode("utf-8", errors="replace")
+    except (OSError, ValueError, AttributeError):
         return ""
-    return "\n".join(lines[-max_lines:])
+    if start > 0:
+        # The read began mid-line, so the first line is partial.
+        _, _, text = text.partition("\n")
+    return "\n".join(text.splitlines()[-max_lines:])
 
 
 def _format_timeout(timeout_seconds: float) -> str:
@@ -109,9 +155,12 @@ def build_error_result(
     detail: str,
     stderr_tail: str,
     timeout_seconds: float,
+    reason: str = "",
 ) -> McpConnectResult:
     """Build an ERROR result carrying the localized message for the given code."""
-    message = MCP_ERROR_MESSAGES[code].format(timeout=_format_timeout(timeout_seconds))
+    message = MCP_ERROR_MESSAGES[code].format(
+        timeout=_format_timeout(timeout_seconds), reason=reason
+    )
     return McpConnectResult(
         status=McpConnectionStatus.ERROR,
         error_code=code,
@@ -191,6 +240,15 @@ async def open_session(
 ) -> tuple[SessionHandle | None, McpConnectResult]:
     """Spawn the server, run the handshake and list tools; never raises to the caller."""
     timeout = settings.MCP_CONNECT_TIMEOUT if timeout_seconds is None else timeout_seconds
+    if cwd and not os.path.isdir(cwd):
+        logger.warning("mcp_connect_failed", command=command, error_code="SPAWN_FAILED")
+        return None, McpConnectResult(
+            status=McpConnectionStatus.ERROR,
+            error_code=McpErrorCode.SPAWN_FAILED,
+            error_message=CWD_INVALID_MESSAGE.format(cwd=cwd),
+            detail="cwd is not a directory",
+            stderr_tail="",
+        )
     # The SDK merges env over its safe default environment, so PATH and friends survive.
     params = StdioServerParameters(command=command, args=args, env=env or None, cwd=cwd or None)
     handle = SessionHandle()
@@ -198,6 +256,14 @@ async def open_session(
 
     try:
         await asyncio.wait_for(handle.ready.wait(), timeout + READY_GRACE_SECONDS)
+    except asyncio.CancelledError:
+        # Nothing is registered yet, so nobody else could close this half-open session.
+        handle.task.cancel()
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            await handle.task
+        with contextlib.suppress(OSError):
+            handle.errfile.close()
+        raise
     except TimeoutError:
         handle.task.cancel()
         with contextlib.suppress(asyncio.CancelledError, Exception):
@@ -213,7 +279,8 @@ async def open_session(
     stderr_tail = read_stderr_tail(handle.errfile)
     await close_handle(handle)
     logger.warning("mcp_connect_failed", command=command, error_code=code.value)
-    return None, build_error_result(code, detail, stderr_tail, timeout)
+    reason = spawn_failure_reason(error) if code == McpErrorCode.SPAWN_FAILED else ""
+    return None, build_error_result(code, detail, stderr_tail, timeout, reason=reason)
 
 
 async def connect_once_and_list(
@@ -311,14 +378,19 @@ async def ensure_connected(
         return result
 
 
+async def _disconnect_locked(key: SessionKey) -> None:
+    """Close a server's session and forget its last result; the caller holds the key's lock."""
+    handle = _sessions.pop(key, None)
+    if handle is not None:
+        await close_handle(handle)
+    _last_results.pop(key, None)
+
+
 async def disconnect_server(user_id: int, server_id: int) -> McpConnectResult:
     """Close a server's session and forget its last result; safe to call when idle."""
     key: SessionKey = (user_id, server_id)
     async with _lock_for(key):
-        handle = _sessions.pop(key, None)
-        if handle is not None:
-            await close_handle(handle)
-        _last_results.pop(key, None)
+        await _disconnect_locked(key)
     return McpConnectResult(status=McpConnectionStatus.NOT_CONNECTED)
 
 
@@ -348,47 +420,92 @@ def get_live_tools(user_id: int, server_id: int) -> list[McpToolInfo] | None:
     return list(result.tools)
 
 
-async def _is_alive(handle: SessionHandle) -> bool:
-    """Check that the owner task is running and the server still answers a ping."""
+def _handle_is_finished(handle: SessionHandle) -> bool:
+    """Return whether the owner task ended or the session was closed."""
+    return handle.task is None or handle.task.done() or handle.closed.is_set()
+
+
+async def _probe(handle: SessionHandle, *, user_id: int, server_id: int) -> ProbeResult:
+    """Classify a session as alive, unresponsive (slow to answer) or dead.
+
+    Only evidence that the transport is gone counts as dead. A ping that merely times out
+    means a busy single-threaded server, which must not be killed.
+    """
     session = handle.session
-    if handle.task is None or handle.task.done() or handle.closed.is_set() or session is None:
-        return False
+    if _handle_is_finished(handle) or session is None:
+        return "dead"
     try:
         await asyncio.wait_for(session.send_ping(), LIVENESS_TIMEOUT)
-    except Exception:
-        return False
-    return True
+    except _DEAD_STREAM_ERRORS:
+        return "dead"
+    except McpError as exc:
+        if "Connection closed" in str(exc):
+            return "dead"
+        failure = type(exc).__name__
+    except Exception as exc:
+        failure = type(exc).__name__
+    else:
+        return "alive"
+
+    # A transport failure ends the owner task, so give it one loop turn before judging.
+    await asyncio.sleep(0)
+    if _handle_is_finished(handle):
+        return "dead"
+    logger.warning(
+        "mcp_ping_unresponsive", user_id=user_id, server_id=server_id, error=failure
+    )
+    return "unresponsive"
+
+
+def _registry_status(key: SessionKey) -> McpConnectResult:
+    """Return a server's status from the registry alone, without pinging."""
+    handle = _sessions.get(key)
+    if handle is not None and is_connected(*key) and handle.result is not None:
+        return handle.result
+    return _last_results.get(key) or McpConnectResult(status=McpConnectionStatus.NOT_CONNECTED)
 
 
 async def get_status(user_id: int, server_id: int) -> McpConnectResult:
-    """Report a server's status, flipping to PROCESS_EXITED if its process died."""
+    """Report a server's status, flipping to PROCESS_EXITED if its process died.
+
+    The healthy path takes no lock so Settings polling never waits on a connect; only the
+    dead-handle branch serializes with connect and disconnect.
+    """
     key: SessionKey = (user_id, server_id)
     handle = _sessions.get(key)
     if handle is None:
         return _last_results.get(key) or McpConnectResult(status=McpConnectionStatus.NOT_CONNECTED)
 
-    if await _is_alive(handle) and handle.result is not None:
-        return handle.result
+    if await _probe(handle, user_id=user_id, server_id=server_id) != "dead":
+        if handle.result is not None:
+            return handle.result
 
-    stderr_tail = read_stderr_tail(handle.errfile)
-    if _sessions.get(key) is handle:
+    async with _lock_for(key):
+        if _sessions.get(key) is not handle:
+            # A concurrent disconnect or reconnect already replaced this handle and wins.
+            return _registry_status(key)
         _sessions.pop(key, None)
-    await close_handle(handle)
-    result = build_error_result(
-        McpErrorCode.PROCESS_EXITED,
-        "server exited",
-        stderr_tail,
-        settings.MCP_CONNECT_TIMEOUT,
-    )
-    _last_results[key] = result
-    logger.warning("mcp_session_dead", server_id=server_id, user_id=user_id)
-    return result
+        stderr_tail = read_stderr_tail(handle.errfile)
+        await close_handle(handle)
+        result = build_error_result(
+            McpErrorCode.PROCESS_EXITED,
+            "server exited",
+            stderr_tail,
+            settings.MCP_CONNECT_TIMEOUT,
+        )
+        _last_results[key] = result
+        logger.warning("mcp_session_dead", server_id=server_id, user_id=user_id)
+        return result
 
 
 async def cleanup_server(user_id: int, server_id: int) -> None:
-    """Disconnect a server and drop its lock."""
-    await disconnect_server(user_id, server_id)
-    _locks.pop((user_id, server_id), None)
+    """Disconnect a server and drop its lock while still holding it."""
+    key: SessionKey = (user_id, server_id)
+    lock = _lock_for(key)
+    async with lock:
+        await _disconnect_locked(key)
+        if _locks.get(key) is lock:
+            del _locks[key]
 
 
 async def cleanup_user_sessions(user_id: int) -> None:

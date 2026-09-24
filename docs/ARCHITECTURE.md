@@ -142,3 +142,23 @@ they run without a confirmation step; the server's allowed-directory list is the
 descriptions and results are untrusted text from an external process and can carry prompt
 injection; results only reach the model as `role=tool` content and the follow-up request has no
 tools, which limits but does not remove that risk.
+
+**Child processes on Agent restart:** the supervisor stops the Agent with `terminate()`, which is a
+hard kill on Windows, so the lifespan shutdown (`cleanup_all_sessions`) does not run. MCP servers
+are still not orphaned: the mcp SDK (1.30, `mcp/os/win32/utilities.py`, `create_windows_process`)
+starts each stdio server inside a Job Object created with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`
+(`_create_job_object`, `_maybe_assign_process_to_job`). The Agent holds the only handle to that
+job, so when Windows tears the Agent down it kills the servers too, even ones that ignore their
+stdin closing. The guard depends on pywin32 (`win32job`, a Windows dependency of `mcp`); if
+creating or assigning the job fails, the SDK only logs a warning and runs without it.
+`tests/test_mcp_orphan.py` hard-terminates a helper process that holds a session and checks that
+its server child disappears.
+
+**Residual risk (REST origin check):** any authenticated user can register and start an arbitrary
+executable through the MCP routes; that is by design under the equal-admin model. The mutating MCP
+routes (create, update, delete, connect, disconnect) now reject a foreign `Origin` with 403
+(`agent/dependencies.py::require_allowed_origin`, allowed origins are `CORS_ORIGINS`), and create
+and update also reject a body that is not `application/json` with 415. A request without an
+`Origin` header is allowed, so curl and other non-browser clients keep working. Mutating routes
+outside MCP are not covered by this dependency and still rely on `SameSite=Lax` cookies plus CORS.
+An origin check does not stop script running inside the app's own origin (XSS).
