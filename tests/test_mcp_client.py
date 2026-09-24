@@ -322,8 +322,12 @@ async def test_get_status_detects_exited_process() -> None:
     result = await connect_server(1, 1, sys.executable, _fixture_args("die_after"), None, None)
     assert result.status == McpConnectionStatus.CONNECTED
 
-    await asyncio.sleep(2.5)
-    status = await get_status(1, 1)
+    deadline: float = time.monotonic() + 10.0
+    while True:
+        status = await get_status(1, 1)
+        if status.status == McpConnectionStatus.ERROR or time.monotonic() >= deadline:
+            break
+        await asyncio.sleep(0.1)
 
     assert status.status == McpConnectionStatus.ERROR
     assert status.error_code == McpErrorCode.PROCESS_EXITED

@@ -1482,6 +1482,7 @@ const MCP_PRE_CLASSES = 'text-xs text-slate-400 bg-black/30 rounded-md p-2 overf
 state.mcpServers = [];
 state.mcpEditingId = null;
 state.mcpConnecting = new Set();
+state.mcpSaving = false;
 state.mcpExpanded = new Set();
 
 function mcpEl(tag, className, text) {
@@ -1671,7 +1672,7 @@ function renderMcpServerRow(server) {
         btn.disabled = connecting || !server.enabled;
         if (!server.enabled) btn.classList.add('opacity-50', 'cursor-not-allowed');
         btn.addEventListener('click', () => {
-            connectMcpServer(server).catch((err) => showToast(err.message, 'error'));
+            connectMcpServer(server);
         });
         actions.appendChild(btn);
     }
@@ -1748,49 +1749,58 @@ function parseMcpEnv(text) {
 }
 
 async function saveMcpServer() {
-    const name = $('mcp-name').value.trim();
-    const command = $('mcp-command').value.trim();
-    const errorEl = $('mcp-form-error');
-    errorEl.textContent = '';
-    if (!name || !command) {
-        errorEl.textContent = 'Заполните название и команду';
-        return;
-    }
-    let env;
+    if (state.mcpSaving) return;
+    const saveBtn = $('btn-mcp-save');
+    state.mcpSaving = true;
+    saveBtn.disabled = true;
     try {
-        env = parseMcpEnv($('mcp-env').value);
-    } catch (err) {
-        errorEl.textContent = err.message;
-        return;
-    }
-    const body = {
-        name,
-        command,
-        args: parseMcpArgs($('mcp-args').value),
-        env,
-        cwd: $('mcp-cwd').value.trim() || null,
-        enabled: $('mcp-enabled').checked,
-    };
-    const editingId = state.mcpEditingId;
-    const previous = editingId === null ? null : state.mcpServers.find((s) => s.id === editingId);
-    const wasConnected = Boolean(previous && previous.connection.status === 'connected');
-    try {
-        if (editingId === null) {
-            await apiFetch('/api/v1/mcp/servers', { method: 'POST', body: JSON.stringify(body) });
-        } else {
-            await apiFetch(`/api/v1/mcp/servers/${editingId}`, { method: 'PUT', body: JSON.stringify(body) });
+        const name = $('mcp-name').value.trim();
+        const command = $('mcp-command').value.trim();
+        const errorEl = $('mcp-form-error');
+        errorEl.textContent = '';
+        if (!name || !command) {
+            errorEl.textContent = 'Заполните название и команду';
+            return;
         }
-    } catch (err) {
-        errorEl.textContent = err.message;
-        return;
+        let env;
+        try {
+            env = parseMcpEnv($('mcp-env').value);
+        } catch (err) {
+            errorEl.textContent = err.message;
+            return;
+        }
+        const body = {
+            name,
+            command,
+            args: parseMcpArgs($('mcp-args').value),
+            env,
+            cwd: $('mcp-cwd').value.trim() || null,
+            enabled: $('mcp-enabled').checked,
+        };
+        const editingId = state.mcpEditingId;
+        const previous = editingId === null ? null : state.mcpServers.find((s) => s.id === editingId);
+        const wasConnected = Boolean(previous && previous.connection.status === 'connected');
+        try {
+            if (editingId === null) {
+                await apiFetch('/api/v1/mcp/servers', { method: 'POST', body: JSON.stringify(body) });
+            } else {
+                await apiFetch(`/api/v1/mcp/servers/${editingId}`, { method: 'PUT', body: JSON.stringify(body) });
+            }
+        } catch (err) {
+            errorEl.textContent = err.message;
+            return;
+        }
+        if (wasConnected) {
+            showToast(`Сервер «${name}» отключён из-за изменения настроек. Подключите заново.`, 'info');
+        } else {
+            showToast('Сервер сохранён', 'success');
+        }
+        closeMcpForm();
+        await loadMcpServers();
+    } finally {
+        state.mcpSaving = false;
+        saveBtn.disabled = false;
     }
-    if (wasConnected) {
-        showToast(`Сервер «${name}» отключён из-за изменения настроек. Подключите заново.`, 'info');
-    } else {
-        showToast('Сервер сохранён', 'success');
-    }
-    closeMcpForm();
-    await loadMcpServers();
 }
 
 async function deleteMcpServer(server) {
