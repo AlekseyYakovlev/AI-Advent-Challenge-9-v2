@@ -260,6 +260,16 @@ async def drive_browser(username: str, password: str, scratch: Path) -> None:
         context = await browser.new_context()
         try:
             page = await context.new_page()
+            browser_errors: list[str] = []
+            page.on("console", lambda msg: browser_errors.append(f"{msg.type}: {msg.text}") if msg.type == "error" else None)
+            page.on("pageerror", lambda exc: browser_errors.append(f"pageerror: {exc}"))
+            ws_frames: list[str] = []
+            page.on("websocket", lambda ws: (
+                ws_frames.append(f"OPEN {ws.url}"),
+                ws.on("framereceived", lambda payload: ws_frames.append(f"RECV {str(payload)[:140]}")),
+                ws.on("framesent", lambda payload: ws_frames.append(f"SENT {str(payload)[:140]}")),
+                ws.on("close", lambda _ws: ws_frames.append(f"CLOSE {ws.url}")),
+            ))
             await page.goto(f"{UI_URL}/static/login.html")
             await page.fill("#login-username", username)
             await page.fill("#login-password", password)
@@ -291,6 +301,14 @@ async def drive_browser(username: str, password: str, scratch: Path) -> None:
                 "document.querySelector('#model-select') && document.querySelector('#model-select').value",
                 timeout=15000,
             )
+            # Sending before the UI has switched to the new chat sends over the old chat's socket
+            # and the switch then closes it mid-turn; wait until the socket belongs to the new chat.
+            await page.wait_for_function(
+                "() => state.chats.length >= 2 && state.currentChatId === state.chats[0].id"
+                " && state.ws && state.ws.readyState === WebSocket.OPEN"
+                " && state.ws.url.endsWith('/ws/chat/' + state.currentChatId)",
+                timeout=15000,
+            )
             await page.fill("#message-input", "используй инструмент list_allowed_directories")
             await page.click("#btn-send")
 
@@ -313,6 +331,31 @@ async def drive_browser(username: str, password: str, scratch: Path) -> None:
                 "aiadventagentv2" in card_text.lower(),
             )
             await page.screenshot(path=str(scratch / "e2e.png"))
+        except Exception:
+            # Keep evidence of what the page actually showed, then let the failure propagate.
+            await page.screenshot(path=str(scratch / "e2e-failure.png"))
+            shown = await page.locator("#messages").inner_text()
+            page_state = await page.evaluate(
+                "() => ({chat: state.currentChatId, chats: state.chats.map(c => c.id),"
+                " messages: state.messages.length, streaming: state.isStreaming})"
+            )
+            sep = chr(10)
+            report_text = sep.join(
+                [
+                    "messages text:",
+                    shown,
+                    "",
+                    "browser errors:",
+                    *browser_errors,
+                    "",
+                    f"page state: {page_state}",
+                    "",
+                    "websocket frames:",
+                    *ws_frames,
+                ],
+            )
+            (scratch / "e2e-failure.txt").write_text(report_text, encoding="utf-8")
+            raise
         finally:
             if server_id is not None:
                 try:
