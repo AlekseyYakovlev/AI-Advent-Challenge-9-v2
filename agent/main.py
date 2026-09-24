@@ -1056,17 +1056,15 @@ async def update_mcp_server(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> McpServerResponse:
-    """Update an MCP server config; a connected server is disconnected first."""
+    """Update an MCP server config; a connected server is disconnected once the edit is saved."""
     row = await _get_mcp_server_or_404(session, current_user.id, server_id)
     updates = body.model_dump(exclude_unset=True)
     if updates.get("env") is not None:
-        # Reject before disconnecting so a refused edit does not drop a live connection.
+        # Reject before changing anything so a refused edit leaves the connection untouched.
         try:
             mcp_config.merge_env(mcp_config.load_env(row), updates["env"])
         except mcp_config.EnvMaskError as exc:
             raise _env_mask_error(current_user.id, row.id, exc) from exc
-    # Unconditional: also drops a remembered connect error that the edit makes stale.
-    await mcp_client.disconnect_server(current_user.id, row.id)
     try:
         row = await mcp_config.update_server(
             session,
@@ -1081,6 +1079,9 @@ async def update_mcp_server(
         )
     except mcp_config.EnvMaskError as exc:
         raise _env_mask_error(current_user.id, row.id, exc) from exc
+    # Unconditional, after a successful commit: also drops a remembered connect error
+    # that the edit makes stale.
+    await mcp_client.disconnect_server(current_user.id, row.id)
     connection = await mcp_client.get_status(current_user.id, row.id)
     return _mcp_server_to_response(row, connection)
 
@@ -1130,8 +1131,12 @@ async def connect_mcp_server(
         )
     except Exception as exc:
         # Last-resort guard: a connect problem must never take the Agent down.
-        logger.error("mcp_connect_unexpected_error", user_id=current_user.id,
-                     server_id=row.id, error=str(exc))
+        logger.error(
+            "mcp_connect_unexpected_error",
+            user_id=current_user.id,
+            server_id=row.id,
+            error=str(exc),
+        )
         result = mcp_client.build_error_result(
             McpErrorCode.PROTOCOL_ERROR,
             str(exc),

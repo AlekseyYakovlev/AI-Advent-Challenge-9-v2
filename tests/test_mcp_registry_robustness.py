@@ -255,3 +255,15 @@ async def test_list_survives_one_failing_status_check(
     assert rows[ids[0]]["connection"]["status"] == "error"
     assert rows[ids[0]]["connection"]["error_code"] == McpErrorCode.PROTOCOL_ERROR.value
     assert rows[ids[1]]["connection"]["status"] == "connected"
+
+
+async def test_disconnect_server_drops_idle_lock() -> None:
+    """disconnect_server leaves no lock entry, for an idle key and after a real session."""
+    await mcp_client.disconnect_server(*KEY)
+    assert KEY not in mcp_client._locks
+
+    await mcp_client.connect_server(*KEY, sys.executable, _fixture_args("ok"), None, None)
+    await mcp_client.disconnect_server(*KEY)
+
+    assert KEY not in mcp_client._locks
+    assert KEY not in mcp_client._sessions

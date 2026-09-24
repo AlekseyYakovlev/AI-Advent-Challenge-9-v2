@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
 from httpx import AsyncClient
 
 from agent import mcp_client, mcp_config
@@ -312,3 +313,60 @@ async def test_status_after_failed_connect_shows_error(
     listed = (await authenticated_client.get(BASE)).json()
     row = next(item for item in listed if item["id"] == created["id"])
     assert row["connection"]["status"] == "error"
+
+
+async def test_update_commit_failure_keeps_connection(
+    authenticated_client: AsyncClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A PUT whose DB commit fails leaves the live connection and stored config alone."""
+    created = await _create(authenticated_client)
+    user_id: int = authenticated_client.seeded_user_id
+    await authenticated_client.post(f"{BASE}/{created['id']}/connect")
+    assert mcp_client.is_connected(user_id, created["id"])
+
+    async def failing_update(*args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("commit failed")
+
+    monkeypatch.setattr(mcp_config, "update_server", failing_update)
+    with pytest.raises(RuntimeError):
+        await authenticated_client.put(f"{BASE}/{created['id']}", json={"name": "edited"})
+
+    assert mcp_client.is_connected(user_id, created["id"])
+    async with async_session_factory() as session:
+        row = await session.get(McpServerConfig, created["id"])
+        assert row is not None
+        assert row.name == "fixture"
+
+
+async def test_update_clears_remembered_connect_failure(
+    authenticated_client: AsyncClient,
+) -> None:
+    """A successful edit forgets a connect error that the edit makes stale."""
+    created = await _create(
+        authenticated_client, command="C:/definitely/not/here/nope.exe", args=[],
+    )
+    user_id: int = authenticated_client.seeded_user_id
+    connected = await authenticated_client.post(f"{BASE}/{created['id']}/connect")
+    assert connected.json()["connection"]["status"] == "error"
+    assert mcp_client.has_recorded_failure(user_id, created["id"])
+
+    resp = await authenticated_client.put(f"{BASE}/{created['id']}", json={"name": "x"})
+    assert resp.status_code == 200
+    assert resp.json()["connection"]["status"] == "not_connected"
+    assert not mcp_client.has_recorded_failure(user_id, created["id"])
+
+
+async def test_repeated_edits_do_not_grow_locks(authenticated_client: AsyncClient) -> None:
+    """Editing a never-connected server leaves no lock entry behind."""
+    created = await _create(authenticated_client)
+    key: mcp_client.SessionKey = (authenticated_client.seeded_user_id, created["id"])
+    before: int = len(mcp_client._locks)
+
+    for index in range(3):
+        resp = await authenticated_client.put(
+            f"{BASE}/{created['id']}", json={"name": f"edit-{index}"},
+        )
+        assert resp.status_code == 200
+
+    assert key not in mcp_client._locks
+    assert len(mcp_client._locks) == before

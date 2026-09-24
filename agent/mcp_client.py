@@ -386,11 +386,21 @@ async def _disconnect_locked(key: SessionKey) -> None:
     _last_results.pop(key, None)
 
 
+def _drop_lock_if_idle(key: SessionKey, lock: asyncio.Lock) -> None:
+    """Delete a key's lock entry once nothing is registered for it; the caller holds the lock."""
+    if key not in _sessions and key not in _last_results and _locks.get(key) is lock:
+        del _locks[key]
+
+
 async def disconnect_server(user_id: int, server_id: int) -> McpConnectResult:
     """Close a server's session and forget its last result; safe to call when idle."""
     key: SessionKey = (user_id, server_id)
-    async with _lock_for(key):
+    lock = _lock_for(key)
+    async with lock:
         await _disconnect_locked(key)
+        # Mirrors cleanup_server: a waiter on the dropped lock still serializes with the
+        # holder, the same accepted trade-off as WR-05.
+        _drop_lock_if_idle(key, lock)
     return McpConnectResult(status=McpConnectionStatus.NOT_CONNECTED)
 
 
@@ -504,8 +514,7 @@ async def cleanup_server(user_id: int, server_id: int) -> None:
     lock = _lock_for(key)
     async with lock:
         await _disconnect_locked(key)
-        if _locks.get(key) is lock:
-            del _locks[key]
+        _drop_lock_if_idle(key, lock)
 
 
 async def cleanup_user_sessions(user_id: int) -> None:
