@@ -70,6 +70,7 @@ None.
 | 260924-1ic | MCP-F1: LLM can call MCP tools from a chat turn (namespaced tools, per-user live sessions, tool-call cards; Phase 7 scope extension) | 2026-09-24 | fff5f4a | Needs Review (UI cards not browser-verified; Playwright blocked by busy ports) | [260924-1ic-phase-7-extension-mcp-f1-llm-can-call-mc](./quick/260924-1ic-phase-7-extension-mcp-f1-llm-can-call-mc/) |
 | 260924-2n8 | MCP auto-connect: enabled servers connect lazily when the first chat turn builds its toolset (ensure_connected, MCP_AUTO_CONNECT flag, no retry after failure) | 2026-09-24 | 7708e58 | Tested (412 passed); not browser-verified | [260924-2n8-mcp-auto-connect-on-first-chat-use](./quick/260924-2n8-mcp-auto-connect-on-first-chat-use/) |
 | 260924-3cb | Fix review warnings WR-07 (masked env value on unknown key -> 422, no silent secret loss) and WR-02 (logout of last web session closes the user's MCP sessions) | 2026-09-24 | ec90af1 | Tested (420 passed) | [260924-3cb-fix-review-warnings-wr-07-and-wr-02](./quick/260924-3cb-fix-review-warnings-wr-07-and-wr-02/) |
+| 260924-4xr | Fix review INFO findings IN-01..IN-06 (disconnect after commit + idle locks, save double-submit guard, Python 3.11+ guard, polish) | 2026-09-24 | 10c7444 | Tested (477 passed; e2e Playwright exit 0) | [260924-4xr-fix-review-info-findings-in-01-to-in-06](./quick/260924-4xr-fix-review-info-findings-in-01-to-in-06/) |
 
 ## Deferred Items
 
