@@ -7,6 +7,8 @@ ok, tools_extra, die_after, garbage, stderr_exit, hang, bad_protocol, slow_ping.
 and noargs, which exercise error, timeout, oversized-result and no-argument tool calls.
 ``slow_ping`` completes the handshake but answers each ping only after a blocking delay
 (``argv[2]`` seconds, default 3), like a single-threaded server busy with long work.
+``stubborn`` completes the handshake and then keeps running for up to 60 seconds after
+its stdin closes, like a server that does not notice its parent dying.
 """
 
 import asyncio
@@ -18,7 +20,7 @@ import time
 
 USAGE = (
     "usage: mcp_stdio_server.py "
-    "<ok|tools_extra|die_after|garbage|stderr_exit|hang|bad_protocol|slow_ping [delay]>\n"
+    "<ok|tools_extra|die_after|garbage|stderr_exit|hang|bad_protocol|slow_ping [delay]|stubborn>\n"
 )
 
 
@@ -116,9 +118,12 @@ def _mode_bad_protocol() -> None:
         pass
 
 
-def _mode_slow_ping() -> None:
-    """Serve a raw JSON-RPC loop whose ping reply is delayed by a blocking sleep."""
-    delay = float(sys.argv[2]) if len(sys.argv) > 2 else 3.0
+def _serve_raw_jsonrpc(ping_delay: float, linger_after_eof: float) -> None:
+    """Serve a minimal line-delimited JSON-RPC loop over stdin/stdout.
+
+    ping_delay blocks each ping reply. linger_after_eof keeps the process alive that many
+    seconds after stdin closes, like a server that ignores its parent going away.
+    """
     for line in sys.stdin:
         if not line.strip():
             continue
@@ -137,12 +142,24 @@ def _mode_slow_ping() -> None:
         elif method == "tools/list":
             reply["result"] = {"tools": []}
         elif method == "ping":
-            time.sleep(delay)
+            time.sleep(ping_delay)
             reply["result"] = {}
         else:
             reply["error"] = {"code": -32601, "message": "Method not found"}
         sys.stdout.write(json.dumps(reply) + "\n")
         sys.stdout.flush()
+    time.sleep(linger_after_eof)
+
+
+def _mode_slow_ping() -> None:
+    """Answer every ping only after argv[2] seconds (default 3), like a busy server."""
+    delay = float(sys.argv[2]) if len(sys.argv) > 2 else 3.0
+    _serve_raw_jsonrpc(ping_delay=delay, linger_after_eof=0.0)
+
+
+def _mode_stubborn() -> None:
+    """Handshake normally but survive stdin closing for up to a minute, then exit."""
+    _serve_raw_jsonrpc(ping_delay=0.0, linger_after_eof=60.0)
 
 
 def main() -> None:
@@ -157,6 +174,7 @@ def main() -> None:
         "hang": _mode_hang,
         "bad_protocol": _mode_bad_protocol,
         "slow_ping": _mode_slow_ping,
+        "stubborn": _mode_stubborn,
     }
     handler = handlers.get(mode)
     if handler is None:
