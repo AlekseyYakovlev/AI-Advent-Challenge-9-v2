@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import os
 import tempfile
 from typing import IO, Literal
 
@@ -23,6 +24,7 @@ from shared.logger import get_logger
 logger = get_logger(__name__)
 
 STDERR_TAIL_LINES = 20
+STDERR_TAIL_MAX_BYTES = 64 * 1024
 LIVENESS_TIMEOUT = 2.0
 CLOSE_TIMEOUT = 5.0
 READY_GRACE_SECONDS = 5.0
@@ -33,7 +35,9 @@ MCP_ERROR_MESSAGES: dict[McpErrorCode, str] = {
     McpErrorCode.PROCESS_EXITED: "Процесс сервера неожиданно завершился.",
     McpErrorCode.HANDSHAKE_TIMEOUT: "Превышено время ожидания подключения ({timeout} с).",
     McpErrorCode.PROTOCOL_ERROR: "Ошибка протокола MCP при подключении к серверу.",
+    McpErrorCode.SPAWN_FAILED: "Не удалось запустить процесс сервера: {reason}.",
 }
+CWD_INVALID_MESSAGE = "Рабочая папка (cwd) не найдена или не является папкой: {cwd}"
 
 _PROCESS_GONE_ERRORS = (BrokenPipeError, ConnectionResetError, EOFError)
 # A ping that fails with one of these means the transport streams are gone, i.e. the process died.
@@ -90,22 +94,53 @@ def classify_mcp_error(exc: BaseException) -> tuple[McpErrorCode, str]:
         return McpErrorCode.HANDSHAKE_TIMEOUT, detail
     if any(isinstance(leaf, _PROCESS_GONE_ERRORS) for leaf in leaves):
         return McpErrorCode.PROCESS_EXITED, detail
-    if any(isinstance(leaf, OSError) for leaf in leaves):
+    # cwd is validated before spawning, so a FileNotFoundError left here is the command itself.
+    if any(isinstance(leaf, FileNotFoundError) for leaf in leaves):
         return McpErrorCode.COMMAND_NOT_FOUND, detail
+    if any(isinstance(leaf, OSError) for leaf in leaves):
+        return McpErrorCode.SPAWN_FAILED, detail
     if any("Connection closed" in str(leaf) for leaf in leaves):
         return McpErrorCode.PROCESS_EXITED, detail
     return McpErrorCode.PROTOCOL_ERROR, detail
 
 
+def spawn_failure_reason(exc: BaseException) -> str:
+    """Describe the first OSError behind a failed spawn by errno and strerror only.
+
+    Deliberately omits filename and env, which could carry user data or secrets.
+    """
+    for leaf in _flatten_exception_group(exc):
+        if not isinstance(leaf, OSError):
+            continue
+        if leaf.errno is None and not leaf.strerror:
+            return type(leaf).__name__
+        reason = f"[errno {leaf.errno}] {leaf.strerror}"
+        winerror = getattr(leaf, "winerror", None)
+        if winerror is not None and winerror != leaf.errno:
+            reason += f" (winerror {winerror})"
+        return reason
+    return type(exc).__name__
+
+
 def read_stderr_tail(errfile: IO[str], max_lines: int = STDERR_TAIL_LINES) -> str:
-    """Return the last lines the child process wrote to its stderr capture file."""
+    """Return the last lines the child process wrote to its stderr capture file.
+
+    Reads at most STDERR_TAIL_MAX_BYTES from the end, working on the binary layer because
+    text-mode seek offsets are opaque cookies.
+    """
     try:
         errfile.flush()
-        errfile.seek(0)
-        lines = errfile.read().splitlines()
-    except (OSError, ValueError):
+        raw = errfile.buffer
+        size = raw.seek(0, os.SEEK_END)
+        start = max(0, size - STDERR_TAIL_MAX_BYTES)
+        raw.seek(start)
+        text = raw.read(size - start).decode("utf-8", errors="replace")
+    except (OSError, ValueError, AttributeError):
         return ""
-    return "\n".join(lines[-max_lines:])
+    if start > 0:
+        # The read began mid-line, so the first line is partial.
+        _, _, text = text.partition("\n")
+    return "\n".join(text.splitlines()[-max_lines:])
 
 
 def _format_timeout(timeout_seconds: float) -> str:
@@ -120,9 +155,12 @@ def build_error_result(
     detail: str,
     stderr_tail: str,
     timeout_seconds: float,
+    reason: str = "",
 ) -> McpConnectResult:
     """Build an ERROR result carrying the localized message for the given code."""
-    message = MCP_ERROR_MESSAGES[code].format(timeout=_format_timeout(timeout_seconds))
+    message = MCP_ERROR_MESSAGES[code].format(
+        timeout=_format_timeout(timeout_seconds), reason=reason
+    )
     return McpConnectResult(
         status=McpConnectionStatus.ERROR,
         error_code=code,
@@ -202,6 +240,15 @@ async def open_session(
 ) -> tuple[SessionHandle | None, McpConnectResult]:
     """Spawn the server, run the handshake and list tools; never raises to the caller."""
     timeout = settings.MCP_CONNECT_TIMEOUT if timeout_seconds is None else timeout_seconds
+    if cwd and not os.path.isdir(cwd):
+        logger.warning("mcp_connect_failed", command=command, error_code="SPAWN_FAILED")
+        return None, McpConnectResult(
+            status=McpConnectionStatus.ERROR,
+            error_code=McpErrorCode.SPAWN_FAILED,
+            error_message=CWD_INVALID_MESSAGE.format(cwd=cwd),
+            detail="cwd is not a directory",
+            stderr_tail="",
+        )
     # The SDK merges env over its safe default environment, so PATH and friends survive.
     params = StdioServerParameters(command=command, args=args, env=env or None, cwd=cwd or None)
     handle = SessionHandle()
@@ -232,7 +279,8 @@ async def open_session(
     stderr_tail = read_stderr_tail(handle.errfile)
     await close_handle(handle)
     logger.warning("mcp_connect_failed", command=command, error_code=code.value)
-    return None, build_error_result(code, detail, stderr_tail, timeout)
+    reason = spawn_failure_reason(error) if code == McpErrorCode.SPAWN_FAILED else ""
+    return None, build_error_result(code, detail, stderr_tail, timeout, reason=reason)
 
 
 async def connect_once_and_list(
