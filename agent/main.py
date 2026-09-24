@@ -81,6 +81,10 @@ from shared.models import (
     TaskTransition,
     User,
 )
+from shared.runtime import check_python_version
+
+# The Agent is spawned by the supervisor, so it guards its own interpreter too.
+check_python_version()
 
 logger = get_logger(__name__)
 

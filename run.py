@@ -9,6 +9,7 @@ import uvicorn
 from shared.config import settings
 from shared.database import bootstrap_admin_if_needed
 from shared.logger import get_logger
+from shared.runtime import check_python_version
 
 logger = get_logger(__name__)
 
@@ -37,6 +38,7 @@ def cleanup_port(port: int) -> None:
 
 def main() -> None:
     """Clean orphan ports and start the UI server."""
+    check_python_version()
     cleanup_port(settings.UI_PORT)
     cleanup_port(settings.AGENT_PORT)
 

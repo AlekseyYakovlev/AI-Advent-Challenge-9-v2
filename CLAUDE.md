@@ -143,11 +143,11 @@ A local-first, two-process AI chat application (FastAPI UI + Agent servers, vani
 - `pytest.ini` - Test configuration (asyncio_mode=auto, testpaths=tests)
 - `.env.example` - Template for environment variables
 ## Platform Requirements
-- Python 3.8+ (with asyncio support)
+- Python 3.11+ (with asyncio support)
 - pip for dependency installation
 - SQLite3 (usually bundled with Python)
 - Chrome browser (for UI interaction)
-- Python 3.8+ runtime
+- Python 3.11+ runtime
 - SQLite3
 - Accessible DeepSeek API endpoint (cloud LLM) OR LM Studio running on localhost:1234 (local LLM)
 - HTTP port 8000 (UI) and 8001 (Agent) available
