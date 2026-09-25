@@ -89,9 +89,27 @@ async def migrate_add_context_length(conn: Any) -> None:
         logger.info("migrating_settings_add_context_length")
         await conn.execute(
             text(
-                "ALTER TABLE settings ADD COLUMN context_length INTEGER DEFAULT 4096",
+                "ALTER TABLE settings ADD COLUMN context_length INTEGER DEFAULT 16384",
             ),
         )
+
+
+async def migrate_add_message_tool_trace(conn: Any) -> None:
+    """Add tool_trace column to message when missing (idempotent)."""
+    table_check = await conn.execute(
+        text(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='table' AND name='message'",
+        ),
+    )
+    if table_check.fetchone() is None:
+        return
+
+    result = await conn.execute(text("PRAGMA table_info(message)"))
+    columns = [row[1] for row in result.fetchall()]
+    if "tool_trace" not in columns:
+        logger.info("migrating_message_add_tool_trace")
+        await conn.execute(text("ALTER TABLE message ADD COLUMN tool_trace TEXT"))
 
 
 async def migrate_add_user_id_columns(conn: Any) -> None:
@@ -209,6 +227,7 @@ async def init_db() -> None:
         await migrate_add_context_length(conn)
         await migrate_add_user_id_columns(conn)
         await migrate_add_task_transition_rejection_columns(conn)
+        await migrate_add_message_tool_trace(conn)
         await conn.run_sync(SQLModel.metadata.create_all)
         await _migrate_legacy_strategies(conn)
 
