@@ -430,7 +430,7 @@ async def compute_chat_stats(
     session: AsyncSession,
     chat_id: int,
     model: str | None = None,
-    context_window: int = 4096,
+    context_window: int = 16384,
 ) -> dict[str, Any]:
     """Calculate context usage statistics for the active chat branch."""
     default_stats: dict[str, Any] = {

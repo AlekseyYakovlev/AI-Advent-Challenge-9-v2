@@ -197,7 +197,7 @@
                     </div>
                     <div>
                         <div class="text-slate-500">Текущий контекст</div>
-                        <div id="stats-current-context" class="text-white font-semibold">0 / 4096</div>
+                        <div id="stats-current-context" class="text-white font-semibold">0 / 16384</div>
                     </div>
                     <div>
                         <div class="text-slate-500">Использование</div>
@@ -256,15 +256,15 @@
                 <div>
                     <label for="settings-context-length" class="block text-sm text-slate-400 mb-1">
                         Context Length (tokens)
-                        <span id="context-length-value" class="text-indigo-400">4096</span>
+                        <span id="context-length-value" class="text-indigo-400">16384</span>
                     </label>
                     <input type="range" id="settings-context-length"
-                           min="512" max="16384" step="512" value="4096"
+                           min="512" max="32768" step="512" value="16384"
                            class="w-full accent-indigo-500">
                     <div class="flex justify-between text-xs text-slate-500 mt-1">
                         <span>512</span>
-                        <span>8192</span>
                         <span>16384</span>
+                        <span>32768</span>
                     </div>
                     <p class="text-xs text-slate-500 mt-1">
                         Максимальный размер контекстного окна. Рекомендуется не превышать лимит вашей модели.

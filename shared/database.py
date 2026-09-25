@@ -89,7 +89,7 @@ async def migrate_add_context_length(conn: Any) -> None:
         logger.info("migrating_settings_add_context_length")
         await conn.execute(
             text(
-                "ALTER TABLE settings ADD COLUMN context_length INTEGER DEFAULT 4096",
+                "ALTER TABLE settings ADD COLUMN context_length INTEGER DEFAULT 16384",
             ),
         )
 
