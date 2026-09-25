@@ -3,6 +3,7 @@
 import asyncio
 import json
 import time
+from dataclasses import dataclass, field
 from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
@@ -36,6 +37,7 @@ from agent.schemas import (
 )
 from agent.tool_guard import (
     ACTION_CLAIM_REMINDER,
+    MAX_TOOL_ROUNDS,
     TOOL_USE_RULE,
     TraceLeakFilter,
     looks_like_action_claim,
@@ -272,6 +274,245 @@ async def _stream_action_claim_retry(
     return retry_text, retry_tool_calls
 
 
+@dataclass
+class _ToolTurn:
+    """Per-turn context shared by the tool-round helpers."""
+
+    websocket: WebSocket
+    session: AsyncSession
+    chat: Chat
+    chat_id: int
+    payload: MessagePayload
+    llm_messages: list[dict[str, Any]]
+    tool_schemas: list[dict[str, Any]]
+    toolset: McpToolset
+    temperature: float
+    max_tokens: int
+
+
+@dataclass
+class _ToolRoundsResult:
+    """Everything the tool rounds of one turn produced."""
+
+    results: list[dict[str, Any]] = field(default_factory=list)
+    calls: list[dict[str, Any]] = field(default_factory=list)
+    text: str = ""
+    rounds: int = 0
+    error: Exception | None = None
+
+
+async def _stream_follow_up(
+    turn: _ToolTurn,
+    tools: list[dict[str, Any]] | None,
+) -> tuple[str, list[dict[str, Any]]]:
+    """Stream one follow-up; with tools it may return further tool calls, without it is text only."""
+    text = ""
+    tool_calls: list[dict[str, Any]] = []
+    trace_filter = TraceLeakFilter()
+    async for event in llm_client.stream_chat(
+        turn.llm_messages,
+        turn.payload.model,
+        turn.temperature,
+        turn.max_tokens,
+        tools=tools,
+    ):
+        if not tools:
+            text += await _emit_filtered(turn.websocket, trace_filter, event)
+        elif event["type"] == "content":
+            text += await _emit_filtered(turn.websocket, trace_filter, event["content"])
+        elif event["type"] == "tool_calls":
+            tool_calls = event["tool_calls"]
+    text += await _flush_filtered(turn.websocket, trace_filter)
+    return text, tool_calls
+
+
+def _call_signatures(tool_calls: list[dict[str, Any]]) -> set[tuple[str, str]]:
+    """Return (name, canonical arguments) pairs used to spot a repeated call."""
+    signatures: set[tuple[str, str]] = set()
+    for call in tool_calls:
+        function = call.get("function") or {}
+        arguments = function.get("arguments")
+        if not isinstance(arguments, str) or not arguments.strip():
+            canonical = "{}"
+        else:
+            try:
+                canonical = json.dumps(json.loads(arguments), sort_keys=True)
+            except json.JSONDecodeError:
+                canonical = arguments.strip()
+        signatures.add((str(function.get("name")), canonical))
+    return signatures
+
+
+async def _dispatch_round(
+    turn: _ToolTurn,
+    calls: list[dict[str, Any]],
+    echo_text: str,
+    acc: _ToolRoundsResult,
+) -> None:
+    """Run one round of tool calls, report them to the client and extend the LLM context."""
+    results = await dispatch_tool_calls(
+        turn.session,
+        turn.chat.user_id,
+        turn.chat_id,
+        calls,
+        mcp_bindings=turn.toolset.bindings,
+    )
+    for result in results:
+        await turn.websocket.send_json(_tool_call_frame(result))
+
+    turn.llm_messages.append(
+        {
+            "role": "assistant",
+            "content": echo_text,
+            "tool_calls": _normalize_tool_calls_for_echo(calls),
+        },
+    )
+    for result in results:
+        turn.llm_messages.append(
+            {
+                "role": "tool",
+                "tool_call_id": result["tool_call_id"],
+                "content": result["content"],
+            },
+        )
+    acc.results.extend(results)
+    acc.calls.extend(calls)
+    acc.rounds += 1
+
+
+async def _run_tool_rounds(
+    turn: _ToolTurn,
+    first_calls: list[dict[str, Any]],
+    first_echo_text: str,
+) -> _ToolRoundsResult:
+    """Dispatch tool calls round by round until the model answers in text or a bound is hit."""
+    acc = _ToolRoundsResult()
+    calls = first_calls
+    echo_text = first_echo_text
+    while True:
+        await _dispatch_round(turn, calls, echo_text, acc)
+        tools = turn.tool_schemas if acc.rounds < MAX_TOOL_ROUNDS else None
+        if tools is None:
+            logger.warning("tool_rounds_capped", chat_id=turn.chat_id, rounds=acc.rounds)
+        try:
+            text, next_calls = await _stream_follow_up(turn, tools)
+            acc.text += text
+            if next_calls and _call_signatures(next_calls) & _call_signatures(calls):
+                logger.warning("tool_loop_detected", chat_id=turn.chat_id, rounds=acc.rounds)
+                # The repeated call is not dispatched; the text-only stream ends the turn.
+                text, next_calls = await _stream_follow_up(turn, None)
+                acc.text += text
+                next_calls = []
+        except Exception as exc:
+            acc.error = exc
+            return acc
+        if not next_calls:
+            return acc
+        calls = next_calls
+        echo_text = text
+
+
+def _collect_memory_writes(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return the successful non-task memory writes among the tool results."""
+    return [
+        r["write"]
+        for r in results
+        if r["ok"] and r["write"] is not None and r["name"] not in TASK_TOOL_NAMES
+    ]
+
+
+def _collect_task_writes(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return id/title/state of the tasks touched by successful task tool calls."""
+    task_writes: list[dict[str, Any]] = []
+    for result in results:
+        if result["ok"] and result["name"] in TASK_TOOL_NAMES:
+            try:
+                task_result = json.loads(result["content"])
+            except json.JSONDecodeError:
+                continue
+            task_writes.append(
+                {
+                    "id": task_result.get("id"),
+                    "title": task_result.get("title"),
+                    "state": task_result.get("state"),
+                },
+            )
+    return task_writes
+
+
+async def _send_tool_error_frames(
+    websocket: WebSocket,
+    results: list[dict[str, Any]],
+) -> None:
+    """Send a TOOL_ERROR frame for every failed non-MCP tool call."""
+    for result in results:
+        # MCP failures are shown on their tool_call card; an error frame would
+        # make the client stop streaming mid-turn.
+        if not result["ok"] and result.get("mcp") is None:
+            try:
+                error_detail = json.loads(result["content"]).get(
+                    "error", result["content"],
+                )
+            except json.JSONDecodeError:
+                error_detail = result["content"]
+            await websocket.send_json(
+                {
+                    "type": "error",
+                    "detail": error_detail,
+                    "code": "TOOL_ERROR",
+                },
+            )
+
+
+def _collect_rejected_transitions(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return the parsed illegal_transition errors among the tool results."""
+    rejected: list[dict[str, Any]] = []
+    for result in results:
+        if result["ok"] or result.get("name") != "transition_task":
+            continue
+        try:
+            parsed = json.loads(result["content"])
+        except json.JSONDecodeError:
+            continue
+        if parsed.get("code") != "illegal_transition":
+            continue
+        rejected.append(parsed)
+    return rejected
+
+
+async def _reprompt_rejected_transitions(
+    turn: _ToolTurn,
+    rejected: list[dict[str, Any]],
+) -> str:
+    """Ask the model to explain rejected task transitions and return the streamed text."""
+    if not rejected:
+        return ""
+    turn.llm_messages.append(
+        {
+            "role": "user",
+            "content": tasks.build_transition_illegal_prompt(rejected),
+        },
+    )
+    text = ""
+    trace_filter = TraceLeakFilter()
+    try:
+        async for token in llm_client.stream_chat(
+            turn.llm_messages,
+            turn.payload.model,
+            turn.temperature,
+            turn.max_tokens,
+        ):
+            text += await _emit_filtered(turn.websocket, trace_filter, token)
+    except Exception as exc:
+        logger.warning(
+            "transition_illegal_reprompt_failed",
+            chat_id=turn.chat_id,
+            error=str(exc),
+        )
+    text += await _flush_filtered(turn.websocket, trace_filter)
+    return text
+
+
 async def _handle_chat_message(
     websocket: WebSocket,
     chat_id: int,
@@ -418,53 +659,29 @@ async def _handle_chat_message(
             task_writes: list[dict[str, Any]] = []
             tool_trace: str | None = None
             if pending_tool_calls:
-                tool_results = await dispatch_tool_calls(
-                    session,
-                    chat.user_id,
-                    chat_id,
-                    pending_tool_calls,
-                    mcp_bindings=toolset.bindings,
+                turn = _ToolTurn(
+                    websocket=websocket,
+                    session=session,
+                    chat=chat,
+                    chat_id=chat_id,
+                    payload=payload,
+                    llm_messages=llm_messages,
+                    tool_schemas=tool_schemas,
+                    toolset=toolset,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
                 )
-                tool_trace = serialize_tool_trace(tool_results)
-                for result in tool_results:
-                    await websocket.send_json(_tool_call_frame(result))
-
-                llm_messages.append(
-                    {
-                        "role": "assistant",
-                        "content": echo_text,
-                        "tool_calls": _normalize_tool_calls_for_echo(pending_tool_calls),
-                    },
-                )
-                for result in tool_results:
-                    llm_messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": result["tool_call_id"],
-                            "content": result["content"],
-                        },
-                    )
-
-                trace_filter = TraceLeakFilter()
-                try:
-                    async for token in llm_client.stream_chat(
-                        llm_messages,
-                        payload.model,
-                        temperature,
-                        max_tokens,
-                    ):
-                        assistant_text += await _emit_filtered(websocket, trace_filter, token)
-                    assistant_text += await _flush_filtered(websocket, trace_filter)
-                except Exception as exc:
+                rounds = await _run_tool_rounds(turn, pending_tool_calls, echo_text)
+                if rounds.error is not None:
                     logger.error(
                         "llm_stream_failed",
                         chat_id=chat_id,
-                        error=str(exc),
+                        error=str(rounds.error),
                     )
                     await websocket.send_json(
                         {
                             "type": "error",
-                            "detail": f"LLM error: {str(exc)}",
+                            "detail": f"LLM error: {str(rounds.error)}",
                             "code": "LLM_ERROR",
                         },
                     )
@@ -472,81 +689,16 @@ async def _handle_chat_message(
                     await session.commit()
                     return
 
-                memory_writes = [
-                    r["write"]
-                    for r in tool_results
-                    if r["ok"] and r["write"] is not None and r["name"] not in TASK_TOOL_NAMES
-                ]
-
-                for result in tool_results:
-                    if result["ok"] and result["name"] in TASK_TOOL_NAMES:
-                        try:
-                            task_result = json.loads(result["content"])
-                        except json.JSONDecodeError:
-                            continue
-                        task_writes.append(
-                            {
-                                "id": task_result.get("id"),
-                                "title": task_result.get("title"),
-                                "state": task_result.get("state"),
-                            },
-                        )
-
-                for result in tool_results:
-                    # MCP failures are shown on their tool_call card; an error frame would
-                    # make the client stop streaming mid-turn.
-                    if not result["ok"] and result.get("mcp") is None:
-                        try:
-                            error_detail = json.loads(result["content"]).get(
-                                "error", result["content"],
-                            )
-                        except json.JSONDecodeError:
-                            error_detail = result["content"]
-                        await websocket.send_json(
-                            {
-                                "type": "error",
-                                "detail": error_detail,
-                                "code": "TOOL_ERROR",
-                            },
-                        )
-
-                rejected_transitions: list[dict[str, Any]] = []
-                for result in tool_results:
-                    if result["ok"] or result.get("name") != "transition_task":
-                        continue
-                    try:
-                        parsed = json.loads(result["content"])
-                    except json.JSONDecodeError:
-                        continue
-                    if parsed.get("code") != "illegal_transition":
-                        continue
-                    rejected_transitions.append(parsed)
-
-                if rejected_transitions:
-                    llm_messages.append(
-                        {
-                            "role": "user",
-                            "content": tasks.build_transition_illegal_prompt(
-                                rejected_transitions,
-                            ),
-                        },
-                    )
-                    trace_filter = TraceLeakFilter()
-                    try:
-                        async for token in llm_client.stream_chat(
-                            llm_messages,
-                            payload.model,
-                            temperature,
-                            max_tokens,
-                        ):
-                            assistant_text += await _emit_filtered(websocket, trace_filter, token)
-                    except Exception as exc:
-                        logger.warning(
-                            "transition_illegal_reprompt_failed",
-                            chat_id=chat_id,
-                            error=str(exc),
-                        )
-                    assistant_text += await _flush_filtered(websocket, trace_filter)
+                assistant_text += rounds.text
+                tool_trace = serialize_tool_trace(rounds.results)
+                memory_writes = _collect_memory_writes(rounds.results)
+                task_writes = _collect_task_writes(rounds.results)
+                await _send_tool_error_frames(websocket, rounds.results)
+                assistant_text += await _reprompt_rejected_transitions(
+                    turn,
+                    _collect_rejected_transitions(rounds.results),
+                )
+                pending_tool_calls = rounds.calls
 
             active_invariants = await invariants.resolve_active_invariants(session, chat_id)
             flagged: dict[str, Any] | None = None

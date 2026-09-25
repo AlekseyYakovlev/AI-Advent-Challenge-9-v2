@@ -4,6 +4,9 @@ import re
 
 TOOL_TRACE_HEADER = "[Tool calls actually executed for this reply]"
 
+# Caps dispatched tool rounds per chat turn so a model cannot loop forever.
+MAX_TOOL_ROUNDS = 5
+
 TOOL_USE_RULE = (
     "Tool use rule: never say an action was performed unless you called the "
     "corresponding tool in this reply. Past actions mentioned in the history are not a "
