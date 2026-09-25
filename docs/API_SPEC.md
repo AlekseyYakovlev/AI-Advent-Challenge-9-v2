@@ -29,7 +29,7 @@ Returns real-time statistics for a chat.
   "total_request_tokens": 2450,
   "total_response_tokens": 5120,
   "current_context_size": 3500,
-  "context_window_size": 4096,
+  "context_window_size": 16384,
   "context_usage_percent": 85.4,
   "message_count": 20
 }
@@ -47,7 +47,7 @@ Returns real-time statistics for a chat.
 - chat_id: int | null (null for global settings)
 - system_prompt: str
 - temperature: float (0.0-2.0)
-- context_length: int (512-131072, default 4096)
+- context_length: int (512-32768, default 16384)
 - max_tokens: int (256-128000)
 - strategy: ContextStrategy (sliding | sticky | truncate_middle | no_compression)
 - facts_json: str (JSON object with extracted facts)
@@ -72,7 +72,7 @@ Returns real-time statistics for a chat.
     "total_request_tokens": 2450,
     "total_response_tokens": 5120,
     "current_context_size": 3500,
-    "context_window_size": 4096,
+    "context_window_size": 16384,
     "context_usage_percent": 85.4
   }
 }

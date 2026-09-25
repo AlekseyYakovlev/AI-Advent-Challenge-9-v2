@@ -19,6 +19,9 @@ logger = get_logger(__name__)
 SUMMARY_TRIGGER_RATIO = 0.75
 RECENT_MESSAGE_COUNT = 10  # Number of recent messages to keep in all strategies
 FACTS_DEBOUNCE_SECONDS = 2.0
+TOOL_TRACE_ARGS_CHARS = 200
+TOOL_TRACE_RESULT_CHARS = 300
+TOOL_TRACE_HEADER = "[Tool calls actually executed for this reply]"
 
 _pending_messages: dict[int, str] = {}
 _debounce_tasks: dict[int, asyncio.Task] = {}
@@ -32,6 +35,51 @@ def _message_tokens(messages: list[dict[str, str]]) -> int:
         logger.warning("token_count_failed", error=str(e))
         # Fallback: ~4 characters per token approximation
         return sum(len(msg["content"]) // 4 for msg in messages)
+
+
+def _cut(text: str, limit: int) -> str:
+    """Cut text to the limit, marking a cut with an ellipsis."""
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "…"
+
+
+def serialize_tool_trace(results: list[dict[str, Any]]) -> str | None:
+    """Serialize dispatch results into a compact JSON trace; None when nothing was called."""
+    if not results:
+        return None
+    entries = [
+        {
+            "name": str(result.get("name", "")),
+            "arguments": _cut(str(result.get("arguments", "")), TOOL_TRACE_ARGS_CHARS),
+            "ok": bool(result.get("ok")),
+            "result": _cut(
+                str(result.get("result_text", result.get("content", ""))),
+                TOOL_TRACE_RESULT_CHARS,
+            ),
+        }
+        for result in results
+    ]
+    return json.dumps(entries, ensure_ascii=False)
+
+
+def render_tool_trace(raw: str | None) -> str:
+    """Render a stored tool trace as plain text for later-turn context; '' when unusable."""
+    if not raw:
+        return ""
+    try:
+        entries = json.loads(raw)
+        lines = [
+            f"- {entry['name']}({entry['arguments']}) -> "
+            f"{'ok' if entry['ok'] else 'error'}: {entry['result']}"
+            for entry in entries
+        ]
+    except (json.JSONDecodeError, TypeError, KeyError) as exc:
+        logger.warning("tool_trace_parse_failed", error=str(exc))
+        return ""
+    if not lines:
+        return ""
+    return "\n".join([TOOL_TRACE_HEADER, *lines])
 
 
 async def get_effective_settings(session: AsyncSession, chat_id: int) -> Settings:
@@ -193,14 +241,19 @@ async def _load_branch_messages(
             break
         path.append(message)
         current_id = message.parent_id
-    return [
-        {
-            "role": msg.role,
-            "content": msg.content,
-            "token_count": msg.token_count,
-        }
-        for msg in reversed(path)
-    ]
+    return [_message_to_dict(msg) for msg in reversed(path)]
+
+
+def _message_to_dict(msg: Message) -> dict[str, Any]:
+    """Convert a stored message to an LLM history dict, replaying any tool trace as text."""
+    content = msg.content
+    token_count = msg.token_count
+    if msg.role == "assistant" and msg.tool_trace:
+        rendered = render_tool_trace(msg.tool_trace)
+        if rendered:
+            content = f"{content}\n\n{rendered}" if content else rendered
+            token_count += llm_client.count_tokens(rendered)
+    return {"role": msg.role, "content": content, "token_count": token_count}
 
 
 async def summarize_if_needed(
@@ -377,7 +430,7 @@ async def compute_chat_stats(
     session: AsyncSession,
     chat_id: int,
     model: str | None = None,
-    context_window: int = 4096,
+    context_window: int = 16384,
 ) -> dict[str, Any]:
     """Calculate context usage statistics for the active chat branch."""
     default_stats: dict[str, Any] = {

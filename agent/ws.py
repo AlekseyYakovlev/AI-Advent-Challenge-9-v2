@@ -16,6 +16,7 @@ from agent.context_engine import (
     compute_chat_stats,
     extract_and_update_facts,
     get_effective_settings,
+    serialize_tool_trace,
 )
 from agent.dependencies import get_current_user_ws
 from agent import invariants, tasks
@@ -32,6 +33,11 @@ from agent.schemas import (
     TOOL_EVENT_PREVIEW_CHARS,
     MessagePayload,
     ToolCallEvent,
+)
+from agent.tool_guard import (
+    ACTION_CLAIM_REMINDER,
+    TOOL_USE_RULE,
+    looks_like_action_claim,
 )
 from agent.tools import TOOL_REGISTRY, build_tool_schemas, dispatch_tool_calls
 from shared.auth import SESSION_COOKIE_NAME
@@ -183,6 +189,8 @@ async def _persist_assistant_message(
     chat: Chat,
     parent_id: int,
     content: str,
+    *,
+    tool_trace: str | None = None,
 ) -> Message:
     """Insert an assistant message and advance the chat leaf."""
     assistant_msg = Message(
@@ -191,6 +199,7 @@ async def _persist_assistant_message(
         role="assistant",
         content=content,
         token_count=llm_client.count_tokens(content),
+        tool_trace=tool_trace,
     )
     session.add(assistant_msg)
     await session.flush()
@@ -199,6 +208,41 @@ async def _persist_assistant_message(
     await session.commit()
     await session.refresh(assistant_msg)
     return assistant_msg
+
+
+async def _stream_action_claim_retry(
+    websocket: WebSocket,
+    llm_messages: list[dict[str, Any]],
+    payload: MessagePayload,
+    temperature: float,
+    max_tokens: int,
+    tool_schemas: list[dict[str, Any]],
+    chat_id: int,
+) -> tuple[str, list[dict[str, Any]]]:
+    """Stream the single corrective re-prompt; a failure keeps whatever was already sent."""
+    retry_text = ""
+    retry_tool_calls: list[dict[str, Any]] = []
+    active_streams[chat_id] = asyncio.current_task()
+    try:
+        async for event in llm_client.stream_chat(
+            llm_messages,
+            payload.model,
+            temperature,
+            max_tokens,
+            tools=tool_schemas,
+        ):
+            if event["type"] == "content":
+                if not retry_text:
+                    await websocket.send_json({"type": "token", "content": "\n\n"})
+                retry_text += event["content"]
+                await websocket.send_json({"type": "token", "content": event["content"]})
+            elif event["type"] == "tool_calls":
+                retry_tool_calls = event["tool_calls"]
+    except Exception as exc:
+        logger.warning("action_claim_reprompt_failed", chat_id=chat_id, error=str(exc))
+    finally:
+        active_streams.pop(chat_id, None)
+    return retry_text, retry_tool_calls
 
 
 async def _handle_chat_message(
@@ -266,6 +310,12 @@ async def _handle_chat_message(
                 tool_schemas = None
                 logger.warning("tools_disabled_unowned_chat", chat_id=chat_id)
 
+            if tool_schemas and llm_messages and llm_messages[0]["role"] == "system":
+                llm_messages[0] = {
+                    **llm_messages[0],
+                    "content": llm_messages[0]["content"] + "\n\n" + TOOL_USE_RULE,
+                }
+
             assistant_text = ""
             pending_tool_calls: list[dict[str, Any]] = []
             stream_task = asyncio.current_task()
@@ -317,8 +367,29 @@ async def _handle_chat_message(
             finally:
                 active_streams.pop(chat_id, None)
 
+            echo_text = assistant_text
+            if tool_schemas and not pending_tool_calls and looks_like_action_claim(assistant_text):
+                # One bounded retry: never re-checked, so a stubborn model cannot loop.
+                logger.info("action_claim_without_tool", chat_id=chat_id)
+                llm_messages.append({"role": "assistant", "content": assistant_text})
+                llm_messages.append({"role": "user", "content": ACTION_CLAIM_REMINDER})
+                retry_text, pending_tool_calls = await _stream_action_claim_retry(
+                    websocket,
+                    llm_messages,
+                    payload,
+                    temperature,
+                    max_tokens,
+                    tool_schemas,
+                    chat_id,
+                )
+                if retry_text:
+                    assistant_text += "\n\n" + retry_text
+                if pending_tool_calls:
+                    echo_text = retry_text
+
             memory_writes: list[dict[str, Any]] = []
             task_writes: list[dict[str, Any]] = []
+            tool_trace: str | None = None
             if pending_tool_calls:
                 tool_results = await dispatch_tool_calls(
                     session,
@@ -327,13 +398,14 @@ async def _handle_chat_message(
                     pending_tool_calls,
                     mcp_bindings=toolset.bindings,
                 )
+                tool_trace = serialize_tool_trace(tool_results)
                 for result in tool_results:
                     await websocket.send_json(_tool_call_frame(result))
 
                 llm_messages.append(
                     {
                         "role": "assistant",
-                        "content": assistant_text,
+                        "content": echo_text,
                         "tool_calls": _normalize_tool_calls_for_echo(pending_tool_calls),
                     },
                 )
@@ -495,6 +567,7 @@ async def _handle_chat_message(
                 chat,
                 user_msg.id,
                 assistant_text,
+                tool_trace=tool_trace,
             )
 
             conflict_payload: dict[str, Any] | None = None

@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
-from sqlalchemy import Column, Enum as SAEnum, ForeignKey, Integer, UniqueConstraint
+from sqlalchemy import Column, Enum as SAEnum, ForeignKey, Integer, Text, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 
@@ -65,6 +65,7 @@ class Message(SQLModel, table=True):
     role: str
     content: str
     token_count: int = Field(default=0)
+    tool_trace: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
     )
@@ -85,7 +86,7 @@ class Settings(SQLModel, table=True):
     )
     system_prompt: str = Field(default="You are a helpful assistant.")
     temperature: float = Field(default=0.7)
-    context_length: int = Field(default=4096, ge=512, le=131072)
+    context_length: int = Field(default=16384, ge=512, le=32768)
     max_tokens: int = Field(default=4096)
     strategy: ContextStrategy = Field(
         default=ContextStrategy.SLIDING_WINDOW,

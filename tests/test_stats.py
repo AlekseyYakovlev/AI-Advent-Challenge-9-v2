@@ -49,7 +49,7 @@ async def test_stats_endpoint_returns_correct_context_size(authenticated_client:
     assert stats_resp.status_code == 200
     stats = stats_resp.json()
     assert stats["current_context_size"] > 0
-    assert stats["context_window_size"] == 4096
+    assert stats["context_window_size"] == 16384
     assert stats["usage_percent"] >= 0
     assert stats["message_count"] >= 2
 
@@ -64,7 +64,7 @@ async def test_stats_handles_empty_chat(authenticated_client: AsyncClient) -> No
     assert stats_resp.status_code == 200
     stats = stats_resp.json()
     assert stats["current_context_size"] >= 0
-    assert stats["context_window_size"] == 4096
+    assert stats["context_window_size"] == 16384
     assert stats["message_count"] == 1
 
 
