@@ -73,6 +73,7 @@ None.
 | 260924-4xr | Fix review INFO findings IN-01..IN-06 (disconnect after commit + idle locks, save double-submit guard, Python 3.11+ guard, polish) | 2026-09-24 | 10c7444 | Tested (477 passed; e2e Playwright exit 0) | [260924-4xr-fix-review-info-findings-in-01-to-in-06](./quick/260924-4xr-fix-review-info-findings-in-01-to-in-06/) |
 | 260925-nv3 | Fix LLM hallucinated tool actions: tool trace persisted+replayed in history, tool-use rule + one-shot claim guard, context_length max 32768 / default 16384 | 2026-09-25 | 35a8f6c | Tested (514 passed; real LM Studio/UI slider not browser-verified) | [260925-nv3-fix-llm-hallucinated-tool-actions-persis](./quick/260925-nv3-fix-llm-hallucinated-tool-actions-persis/) |
 | 260925-ocp | Fix LLM copying the replayed tool-trace block into its reply (streaming TraceLeakFilter in all 6 ws.py stream sites); found by real-model check of 260925-nv3 | 2026-09-25 | b5d4b28 | Tested (529 passed; real-model recheck pending) | [260925-ocp-fix-llm-copying-the-replayed-tool-trace-](./quick/260925-ocp-fix-llm-copying-the-replayed-tool-trace-/) |
+| 260925-oya | Replace text tool-trace history replay with OpenAI-format tool_calls/tool messages (expanded after compression); real-model replay: text trace 0/8 tool calls vs 8/8 structured | 2026-09-25 | e90517c | Tested (533 passed; real-model e2e recheck pending) | [260925-oya-replace-text-tool-trace-history-replay-w](./quick/260925-oya-replace-text-tool-trace-history-replay-w/) |
 
 ## Deferred Items
 
