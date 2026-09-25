@@ -1,12 +1,14 @@
 """Tool-use rule text and a heuristic detecting claimed-but-not-performed actions."""
 
 import re
+from datetime import datetime, timedelta
 from typing import Any
 
 TOOL_TRACE_HEADER = "[Tool calls actually executed for this reply]"
 
 # Caps dispatched tool rounds per chat turn so a model cannot loop forever.
-MAX_TOOL_ROUNDS = 5
+# Ten rounds because "commit, push to a branch, open an MR" alone takes about six.
+MAX_TOOL_ROUNDS = 10
 
 TOOL_USE_RULE = (
     "Tool use rule: never say an action was performed unless you called the "
@@ -19,6 +21,31 @@ ACTION_CLAIM_REMINDER = (
     "If the request needs a tool, call it now. Otherwise, tell the user plainly that you "
     "did not perform the action."
 )
+
+ACTION_ANNOUNCE_REMINDER = (
+    "You described the next step but did not call any tool, so nothing was done. "
+    "Call the needed tool now, and keep going until every step of the user's request is done."
+)
+
+TOOL_ERROR_REMINDER = (
+    "A tool call above returned an error. Read the error message, fix the arguments or try a "
+    "different tool or approach, and continue the task. Do not give up after one error."
+)
+
+MULTI_STEP_TOOL_HINT = (
+    "Finish ALL steps of a multi-step request by calling tools one after another before "
+    "the final answer. Filesystem tools act on the LOCAL disk; GitLab tools act on the REMOTE "
+    "repository. A local folder that contains .git is a clone of a GitLab project: read "
+    "<folder>/.git/config to find its remote URL and project. Remote file paths are relative "
+    "to the repository root and are never local folder names. To commit local changes, read "
+    "the local files, then call the GitLab commit tool (commit_files with branch, commit "
+    "message, actions), then create_merge_request. When a tool returns an error, read it and "
+    "try another approach."
+)
+
+_CYRILLIC_RE = re.compile(r"[А-Яа-яЁё]")
+_PREVIEW_MAX_CHARS = 200
+
 
 def strip_tool_use_rule(messages: list[dict[str, Any]]) -> None:
     """Drop the appended TOOL_USE_RULE suffix from a leading system message, in place."""
@@ -97,6 +124,90 @@ def looks_like_action_claim(text: str) -> bool:
     if not text:
         return False
     return any(_sentence_claims_action(sentence) for sentence in _SENTENCE_SPLIT_RE.split(text))
+
+
+_FUTURE_VERB_RE = re.compile(
+    r"(?<!\w)(?:создам|запишу|прочитаю|проверю|выполню|сделаю|отображу|покажу|открою|посмотрю"
+    r"|получу|закоммичу|запушу|отправлю|удалю|сохраню|перемещу|скопирую|выведу|найду|начну"
+    r"|создаю)(?!\w)",
+    re.IGNORECASE,
+)
+
+_SEQUENCED_FIRST_PERSON_RE = re.compile(
+    r"(?<!\w)(?:сначала|сейчас|теперь|далее|затем|потом)(?!\w)[^.!?\n]*?(?<!\w)[а-яё]+[ую](?!\w)",
+    re.IGNORECASE,
+)
+
+_ENGLISH_INTENT_RE = re.compile(
+    r"(?<!\w)(?:I['’]ll|I will|I['’]m going to|I am going to|let me)\s+(?!know\b)\w+",
+    re.IGNORECASE,
+)
+
+
+def _sentence_announces_action(sentence: str) -> bool:
+    """Return True when one non-question sentence states a next step the speaker will take."""
+    stripped = sentence.strip()
+    if not stripped or stripped.endswith("?"):
+        return False
+    return (
+        _FUTURE_VERB_RE.search(stripped) is not None
+        or _SEQUENCED_FIRST_PERSON_RE.search(stripped) is not None
+        or _ENGLISH_INTENT_RE.search(stripped) is not None
+    )
+
+
+def looks_like_action_announcement(text: str) -> bool:
+    """Return True when the reply announces a next step but calls no tool for it.
+
+    A cheap heuristic, the counterpart of looks_like_action_claim: a first-person future
+    action phrase in a non-question sentence, in a reply that does not end with a question.
+    """
+    if not text or text.rstrip().endswith("?"):
+        return False
+    return any(
+        _sentence_announces_action(sentence) for sentence in _SENTENCE_SPLIT_RE.split(text)
+    )
+
+
+def build_clock_line(now: datetime) -> str:
+    """Return the system-message line giving the current local date, time and UTC offset."""
+    offset: timedelta = now.utcoffset() or timedelta(0)
+    total_minutes = int(offset.total_seconds() // 60)
+    sign = "-" if total_minutes < 0 else "+"
+    hours, minutes = divmod(abs(total_minutes), 60)
+    return (
+        f"Current local date and time: {now.strftime('%Y-%m-%d %H:%M')} "
+        f"(UTC{sign}{hours:02d}:{minutes:02d})"
+    )
+
+
+def _preview(text: str) -> str:
+    """Collapse whitespace to single spaces and cut to the preview length."""
+    collapsed = re.sub(r"\s+", " ", text).strip()
+    if len(collapsed) > _PREVIEW_MAX_CHARS:
+        return collapsed[: _PREVIEW_MAX_CHARS - 1] + "…"
+    return collapsed
+
+
+def build_tool_fallback_summary(results: list[dict[str, Any]], user_text: str) -> str:
+    """Return a fixed summary of tool results for a turn whose final model text was empty."""
+    russian = _CYRILLIC_RE.search(user_text) is not None
+    header = (
+        "Инструменты выполнены, но модель не дала ответа. Результаты:"
+        if russian
+        else "Tools ran but the model gave no answer. Results:"
+    )
+    lines: list[str] = [header]
+    for result in results:
+        mcp = result.get("mcp")
+        label = f"{mcp['server_name']}/{mcp['tool']}" if mcp else result.get("name", "?")
+        if result.get("ok"):
+            status = "OK"
+        else:
+            status = "ошибка" if russian else "error"
+        body = result.get("result_text") or result.get("content") or ""
+        lines.append(f"- {label}: {status} — {_preview(str(body))}")
+    return "\n".join(lines)
 
 
 def _hold_start(buf: str) -> int:

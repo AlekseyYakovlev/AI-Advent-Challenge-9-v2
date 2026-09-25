@@ -1,13 +1,22 @@
 """Unit tests for the claimed-action heuristic and the trace-leak streaming filter."""
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from agent import context_engine
 from agent import tool_guard
 from agent.tool_guard import (
+    ACTION_ANNOUNCE_REMINDER,
+    MAX_TOOL_ROUNDS,
+    MULTI_STEP_TOOL_HINT,
+    TOOL_ERROR_REMINDER,
     TOOL_TRACE_HEADER,
     TOOL_USE_RULE,
     TraceLeakFilter,
+    build_clock_line,
+    build_tool_fallback_summary,
+    looks_like_action_announcement,
     looks_like_action_claim,
     strip_tool_use_rule,
 )
@@ -246,3 +255,125 @@ def test_strip_rule_removes_one_suffix_per_call() -> None:
     assert messages[0]["content"] == "Base"
     strip_tool_use_rule(messages)
     assert messages[0]["content"] == "Base"
+
+
+def test_round_cap_allows_ten_rounds() -> None:
+    """Multi-step requests such as commit + push + MR need up to ten tool rounds."""
+    assert MAX_TOOL_ROUNDS == 10
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Сначала создам её.",
+        "Сейчас создам файл 12.txt",
+        "Теперь запишу дату в 13.txt",
+        "Далее создам ветку Test.",
+        "Let me check the branches.",
+        "I'll create the file now.",
+        "I will commit the changes.",
+        "I'm going to open the MR.",
+    ],
+)
+def test_announcements_are_detected(text: str) -> None:
+    """A stated next step with no tool call is flagged."""
+    assert looks_like_action_announcement(text) is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",
+        "Привет! Чем могу помочь?",
+        "Хотите, чтобы я создал файл?",
+        "Сейчас 15:00.",
+        "Готово.",
+        "Финал.",
+        "The tool failed.",
+        "Task created and set to planning.",
+        "Trying to finish it.",
+        "Файл создан.",
+        "Не вышло.",
+        "Sorry, something went wrong, but here is my answer.",
+        "Сначала создам её. Хотите продолжить?",
+        "Let me know if you want more?",
+        "Let me know if you need anything else.",
+    ],
+)
+def test_non_announcements_are_ignored(text: str) -> None:
+    """Final answers, questions and completed-action statements are not flagged."""
+    assert looks_like_action_announcement(text) is False
+
+
+def test_clock_line_has_date_time_and_offset() -> None:
+    """The clock line carries the local date, HH:MM and the UTC offset."""
+    now = datetime(2026, 9, 26, 14, 5, tzinfo=timezone(timedelta(hours=3)))
+
+    line = build_clock_line(now)
+
+    assert "2026-09-26" in line
+    assert "14:05" in line
+    assert "UTC+03:00" in line
+
+
+def test_clock_line_negative_offset() -> None:
+    """A negative half-hour offset is rendered with a minus sign."""
+    now = datetime(2026, 1, 2, 3, 4, tzinfo=timezone(-timedelta(hours=3, minutes=30)))
+
+    assert "UTC-03:30" in build_clock_line(now)
+
+
+def test_reminders_and_hint_are_nonempty() -> None:
+    """The new prompt fragments exist and the hint stays short for a small local model."""
+    assert ACTION_ANNOUNCE_REMINDER
+    assert TOOL_ERROR_REMINDER
+    assert 0 < len(MULTI_STEP_TOOL_HINT.split()) <= 130
+
+
+_RESULTS = [
+    {
+        "name": "mcp__filesystem__write_file",
+        "ok": True,
+        "content": '{"ok": true}',
+        "result_text": "Successfully wrote to Sandbox/12.txt",
+        "mcp": {"server_name": "filesystem", "tool": "write_file"},
+    },
+    {"name": "save_working_memory", "ok": False, "content": '{"error": "boom"}', "mcp": None},
+    {
+        "name": "mcp__x__long",
+        "ok": True,
+        "content": "a\n" * 300,
+        "mcp": {"server_name": "x", "tool": "long"},
+    },
+]
+
+
+def test_fallback_summary_russian() -> None:
+    """A Cyrillic user message gets the Russian header and one marked line per result."""
+    summary = build_tool_fallback_summary(_RESULTS, "создай файл")
+
+    lines = summary.split("\n")
+    assert lines[0].startswith("Инструменты выполнены")
+    body = [line for line in lines if line.startswith("- ")]
+    assert len(body) == 3
+    assert "filesystem/write_file: OK" in body[0]
+    assert "Successfully wrote to Sandbox/12.txt" in body[0]
+    assert "save_working_memory: ошибка" in body[1]
+    assert all("\n" not in line for line in body)
+    preview = body[2].split(" — ", 1)[1]
+    assert len(preview) <= 200
+    assert preview.endswith("…")
+
+
+def test_fallback_summary_english() -> None:
+    """A non-Cyrillic user message gets the English header and error marker."""
+    summary = build_tool_fallback_summary(_RESULTS, "create a file")
+
+    assert summary.startswith("Tools ran but the model gave no answer.")
+    assert "save_working_memory: error" in summary
+
+
+def test_fallback_summary_empty_results_still_has_header() -> None:
+    """No results still returns a non-empty header line."""
+    assert build_tool_fallback_summary([], "create a file").strip()
+    assert build_tool_fallback_summary([], "создай файл").strip()
