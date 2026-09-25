@@ -235,3 +235,133 @@ def test_tool_errors_are_aggregated_after_all_rounds() -> None:
     assert len(tool_idx) == 2
     assert min(error_idx) > max(tool_idx)
     assert max(error_idx) < types.index("done")
+
+
+def _token_text(frames: list[dict[str, Any]]) -> str:
+    """Concatenate the content of all token frames."""
+    return "".join(f.get("content", "") for f in frames if f.get("type") == "token")
+
+
+@respx.mock
+def test_empty_followup_with_tools_retries_once_without_tools() -> None:
+    """An empty tools-enabled follow-up is retried once without tools and that text is the answer."""
+    route = respx.post(f"{BASE_URL}/v1/chat/completions").mock(
+        side_effect=_stream_queue(
+            [
+                _tool_calls_response([_memory_call("c1", "save_working_memory", "k1")]),
+                _plain_content_response(""),
+                _plain_content_response("Содержимое файла."),
+            ],
+        ),
+    )
+    with TestClient(app) as client:
+        login_test_client(client)
+        chat_id = client.post("/api/v1/chats", json={"title": "EmptyRetry"}).json()["id"]
+        with client.websocket_connect(
+            f"/ws/chat/{chat_id}", headers={"Origin": WS_ORIGIN},
+        ) as ws:
+            frames = _send_and_drain(ws, "read the file")
+        message = client.portal.call(_get_message, frames[-1]["message_id"])
+
+    bodies = _stream_bodies(route)
+    assert len(bodies) == 3
+    assert "tools" in bodies[1]
+    assert "tools" not in bodies[2]
+    assert frames[-1]["type"] == "done"
+    assert "Содержимое файла." in _token_text(frames)
+    assert message.content == "Содержимое файла."
+    assert len(json.loads(message.tool_trace)) == 1
+
+
+@respx.mock
+def test_empty_toolless_retry_ends_turn_without_error() -> None:
+    """When the tools-less retry is empty too the turn ends normally with no further requests."""
+    route = respx.post(f"{BASE_URL}/v1/chat/completions").mock(
+        side_effect=_stream_queue(
+            [
+                _tool_calls_response([_memory_call("c1", "save_working_memory", "k1")]),
+                _plain_content_response(""),
+                _plain_content_response(""),
+            ],
+        ),
+    )
+    with TestClient(app) as client:
+        login_test_client(client)
+        chat_id = client.post("/api/v1/chats", json={"title": "EmptyTwice"}).json()["id"]
+        with client.websocket_connect(
+            f"/ws/chat/{chat_id}", headers={"Origin": WS_ORIGIN},
+        ) as ws:
+            frames = _send_and_drain(ws, "read the file")
+        message = client.portal.call(_get_message, frames[-1]["message_id"])
+
+    bodies = _stream_bodies(route)
+    assert len(bodies) == 3
+    assert "tools" not in bodies[2]
+    assert frames[-1]["type"] == "done"
+    assert not [f for f in frames if f.get("type") == "error"]
+    assert message.content == ""
+    assert message.tool_trace is not None
+    assert len(json.loads(message.tool_trace)) == 1
+
+
+@respx.mock
+def test_text_followup_does_not_trigger_empty_retry() -> None:
+    """A follow-up that returns text is used as is, without an extra request."""
+    route = respx.post(f"{BASE_URL}/v1/chat/completions").mock(
+        side_effect=_stream_queue(
+            [
+                _tool_calls_response([_memory_call("c1", "save_working_memory", "k1")]),
+                _plain_content_response("Готово."),
+            ],
+        ),
+    )
+    with TestClient(app) as client:
+        login_test_client(client)
+        chat_id = client.post("/api/v1/chats", json={"title": "NoRetry"}).json()["id"]
+        with client.websocket_connect(
+            f"/ws/chat/{chat_id}", headers={"Origin": WS_ORIGIN},
+        ) as ws:
+            frames = _send_and_drain(ws, "save it")
+        message = client.portal.call(_get_message, frames[-1]["message_id"])
+
+    bodies = _stream_bodies(route)
+    assert len(bodies) == 2
+    assert "tools" in bodies[1]
+    assert frames[-1]["type"] == "done"
+    assert message.content == "Готово."
+
+
+@respx.mock
+def test_empty_followup_in_round_two_retries_and_keeps_trace() -> None:
+    """An empty follow-up after round two is retried once and both rounds stay in the trace."""
+    route = respx.post(f"{BASE_URL}/v1/chat/completions").mock(
+        side_effect=_stream_queue(
+            [
+                _tool_calls_response([_memory_call("c1", "save_working_memory", "k1")]),
+                _tool_calls_response([_memory_call("c2", "save_long_term_memory", "k2")]),
+                _plain_content_response(""),
+                _plain_content_response("Итог."),
+            ],
+        ),
+    )
+    with TestClient(app) as client:
+        login_test_client(client)
+        chat_id = client.post("/api/v1/chats", json={"title": "EmptyR2"}).json()["id"]
+        with client.websocket_connect(
+            f"/ws/chat/{chat_id}", headers={"Origin": WS_ORIGIN},
+        ) as ws:
+            frames = _send_and_drain(ws, "save two things")
+        message = client.portal.call(_get_message, frames[-1]["message_id"])
+
+    bodies = _stream_bodies(route)
+    assert len(bodies) == 4
+    assert "tools" in bodies[1] and "tools" in bodies[2]
+    assert "tools" not in bodies[3]
+    assert [f["name"] for f in _tool_frames(frames)] == [
+        "save_working_memory", "save_long_term_memory",
+    ]
+    assert len(frames[-1]["memory_writes"]) == 2
+    assert [e["name"] for e in json.loads(message.tool_trace)] == [
+        "save_working_memory", "save_long_term_memory",
+    ]
+    assert message.content == "Итог."
