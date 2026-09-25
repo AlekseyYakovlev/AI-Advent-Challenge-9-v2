@@ -75,6 +75,7 @@ None.
 | 260925-ocp | Fix LLM copying the replayed tool-trace block into its reply (streaming TraceLeakFilter in all 6 ws.py stream sites); found by real-model check of 260925-nv3 | 2026-09-25 | b5d4b28 | Tested (529 passed; real-model recheck pending) | [260925-ocp-fix-llm-copying-the-replayed-tool-trace-](./quick/260925-ocp-fix-llm-copying-the-replayed-tool-trace-/) |
 | 260925-oya | Replace text tool-trace history replay with OpenAI-format tool_calls/tool messages (expanded after compression); real-model replay: text trace 0/8 tool calls vs 8/8 structured | 2026-09-25 | e90517c | Tested (533 passed; real-model e2e recheck pending) | [260925-oya-replace-text-tool-trace-history-replay-w](./quick/260925-oya-replace-text-tool-trace-history-replay-w/) |
 | 260925-q0s | Multi-round tool-call loop in chat turn (up to 5 rounds, tools kept on follow-up, loop detection, cap with final tools-less answer, aggregated tool_trace) | 2026-09-25 | 081106f | Tested (538 passed; real-model e2e recheck pending) | [260925-q0s-multi-round-tool-call-loop-in-chat-turn-](./quick/260925-q0s-multi-round-tool-call-loop-in-chat-turn-/) |
+| 260925-qj5 | Fix empty reply when a follow-up with tools returns nothing after a tool round: one extra tools-less follow-up (regression of q0s found by real-model run: 6/6 empty replies on read-file) | 2026-09-25 | 2d1a97d | Tested (542 passed; real-model recheck pending) | [260925-qj5-fix-empty-reply-when-follow-up-with-tool](./quick/260925-qj5-fix-empty-reply-when-follow-up-with-tool/) |
 
 ## Deferred Items
 
