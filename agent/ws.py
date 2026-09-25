@@ -299,6 +299,7 @@ class _ToolRoundsResult:
     text: str = ""
     rounds: int = 0
     error: Exception | None = None
+    empty_retry_used: bool = False
 
 
 async def _stream_follow_up(
@@ -324,6 +325,24 @@ async def _stream_follow_up(
             tool_calls = event["tool_calls"]
     text += await _flush_filtered(turn.websocket, trace_filter)
     return text, tool_calls
+
+
+async def _stream_follow_up_with_empty_retry(
+    turn: _ToolTurn,
+    tools: list[dict[str, Any]] | None,
+    acc: _ToolRoundsResult,
+) -> tuple[str, list[dict[str, Any]]]:
+    """Stream a follow-up into acc.text; retry once without tools if it came back empty."""
+    text, tool_calls = await _stream_follow_up(turn, tools)
+    acc.text += text
+    # Some local models answer nothing when tools are offered right after a tool result.
+    if not tools or tool_calls or text.strip() or acc.empty_retry_used:
+        return text, tool_calls
+    acc.empty_retry_used = True
+    logger.info("tool_followup_empty_retry", chat_id=turn.chat_id, round=acc.rounds)
+    retry_text, _ = await _stream_follow_up(turn, None)
+    acc.text += retry_text
+    return retry_text, []
 
 
 def _call_signatures(tool_calls: list[dict[str, Any]]) -> set[tuple[str, str]]:
@@ -395,8 +414,7 @@ async def _run_tool_rounds(
         if tools is None:
             logger.warning("tool_rounds_capped", chat_id=turn.chat_id, rounds=acc.rounds)
         try:
-            text, next_calls = await _stream_follow_up(turn, tools)
-            acc.text += text
+            text, next_calls = await _stream_follow_up_with_empty_retry(turn, tools, acc)
             if next_calls and _call_signatures(next_calls) & _call_signatures(calls):
                 logger.warning("tool_loop_detected", chat_id=turn.chat_id, rounds=acc.rounds)
                 # The repeated call is not dispatched; the text-only stream ends the turn.
