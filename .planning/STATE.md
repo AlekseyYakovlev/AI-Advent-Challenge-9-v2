@@ -71,6 +71,7 @@ None.
 | 260924-2n8 | MCP auto-connect: enabled servers connect lazily when the first chat turn builds its toolset (ensure_connected, MCP_AUTO_CONNECT flag, no retry after failure) | 2026-09-24 | 7708e58 | Tested (412 passed); not browser-verified | [260924-2n8-mcp-auto-connect-on-first-chat-use](./quick/260924-2n8-mcp-auto-connect-on-first-chat-use/) |
 | 260924-3cb | Fix review warnings WR-07 (masked env value on unknown key -> 422, no silent secret loss) and WR-02 (logout of last web session closes the user's MCP sessions) | 2026-09-24 | ec90af1 | Tested (420 passed) | [260924-3cb-fix-review-warnings-wr-07-and-wr-02](./quick/260924-3cb-fix-review-warnings-wr-07-and-wr-02/) |
 | 260924-4xr | Fix review INFO findings IN-01..IN-06 (disconnect after commit + idle locks, save double-submit guard, Python 3.11+ guard, polish) | 2026-09-24 | 10c7444 | Tested (477 passed; e2e Playwright exit 0) | [260924-4xr-fix-review-info-findings-in-01-to-in-06](./quick/260924-4xr-fix-review-info-findings-in-01-to-in-06/) |
+| 260925-nv3 | Fix LLM hallucinated tool actions: tool trace persisted+replayed in history, tool-use rule + one-shot claim guard, context_length max 32768 / default 16384 | 2026-09-25 | 35a8f6c | Tested (514 passed; real LM Studio/UI slider not browser-verified) | [260925-nv3-fix-llm-hallucinated-tool-actions-persis](./quick/260925-nv3-fix-llm-hallucinated-tool-actions-persis/) |
 
 ## Deferred Items
 
