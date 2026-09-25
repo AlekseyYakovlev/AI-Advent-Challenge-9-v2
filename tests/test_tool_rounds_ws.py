@@ -388,7 +388,9 @@ def test_empty_toolless_retry_ends_turn_without_error() -> None:
     assert "tools" not in bodies[2]
     assert frames[-1]["type"] == "done"
     assert not [f for f in frames if f.get("type") == "error"]
-    assert message.content == ""
+    assert message.content.startswith("Tools ran but the model gave no answer.")
+    assert "- save_working_memory: OK" in message.content
+    assert _token_text(frames) == message.content
     assert message.tool_trace is not None
     assert len(json.loads(message.tool_trace)) == 1
 
