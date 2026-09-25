@@ -161,6 +161,7 @@ def test_tool_call_turn_never_gets_reminder() -> None:
 
     bodies = _stream_bodies(route)
     assert len(bodies) == 2
+    assert "tools" in bodies[1]
     assert all(ACTION_CLAIM_REMINDER not in json.dumps(body) for body in bodies)
 
 
