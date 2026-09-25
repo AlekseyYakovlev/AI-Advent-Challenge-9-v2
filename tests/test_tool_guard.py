@@ -4,7 +4,13 @@ import pytest
 
 from agent import context_engine
 from agent import tool_guard
-from agent.tool_guard import TOOL_TRACE_HEADER, TraceLeakFilter, looks_like_action_claim
+from agent.tool_guard import (
+    TOOL_TRACE_HEADER,
+    TOOL_USE_RULE,
+    TraceLeakFilter,
+    looks_like_action_claim,
+    strip_tool_use_rule,
+)
 
 
 @pytest.mark.parametrize(
@@ -142,3 +148,101 @@ def test_filter_instances_are_independent() -> None:
 def test_trace_header_single_source_of_truth() -> None:
     """context_engine re-exports the very same header constant."""
     assert context_engine.TOOL_TRACE_HEADER is tool_guard.TOOL_TRACE_HEADER
+
+
+SUFFIX = "\n\n" + TOOL_USE_RULE
+
+
+def test_strip_rule_removes_suffix_and_keeps_other_keys() -> None:
+    """The rule suffix is dropped from the leading system message; later messages stay."""
+    tail = {"role": "user", "content": "hi" + SUFFIX}
+    messages = [{"role": "system", "content": "You are helpful." + SUFFIX, "name": "sys"}, tail]
+
+    strip_tool_use_rule(messages)
+
+    assert messages[0] == {"role": "system", "content": "You are helpful.", "name": "sys"}
+    assert messages[1] is tail
+
+
+def test_strip_rule_replaces_dict_instead_of_mutating() -> None:
+    """A shared reference to the original system dict keeps its content."""
+    original = {"role": "system", "content": "Base" + SUFFIX}
+    messages = [original]
+
+    strip_tool_use_rule(messages)
+
+    assert original["content"] == "Base" + SUFFIX
+    assert messages[0] is not original
+
+
+def test_strip_rule_without_suffix_is_noop() -> None:
+    """A system message that never had the rule is left as the same object."""
+    original = {"role": "system", "content": "Plain prompt"}
+    messages = [original]
+
+    strip_tool_use_rule(messages)
+
+    assert messages[0] is original
+    assert original["content"] == "Plain prompt"
+
+
+def test_strip_rule_keeps_remainder_byte_identical() -> None:
+    """Whitespace, newlines and unicode of the base prompt survive untouched."""
+    base = "Line1\n  Правило  \n"
+    messages = [{"role": "system", "content": base + SUFFIX}]
+
+    strip_tool_use_rule(messages)
+
+    assert messages[0]["content"] == base
+
+
+def test_strip_rule_ignores_rule_not_at_the_end() -> None:
+    """The rule in the middle of the content is not the appended suffix and stays."""
+    original = {"role": "system", "content": "A" + SUFFIX + "\n\nextra"}
+    messages = [original]
+
+    strip_tool_use_rule(messages)
+
+    assert messages[0] is original
+
+
+def test_strip_rule_ignores_non_system_first_message() -> None:
+    """Only a leading system message is touched."""
+    original = {"role": "user", "content": "hi" + SUFFIX}
+    messages = [original]
+
+    strip_tool_use_rule(messages)
+
+    assert messages[0] is original
+
+
+@pytest.mark.parametrize("content", [None, [{"type": "text", "text": "x"}]])
+def test_strip_rule_ignores_non_str_content(content: object) -> None:
+    """Non-string system content is left alone without raising."""
+    original = {"role": "system", "content": content}
+    messages = [original]
+
+    strip_tool_use_rule(messages)
+
+    assert messages[0] is original
+
+
+def test_strip_rule_handles_empty_list() -> None:
+    """An empty message list is a no-op."""
+    messages: list[dict[str, object]] = []
+
+    strip_tool_use_rule(messages)
+
+    assert messages == []
+
+
+def test_strip_rule_removes_one_suffix_per_call() -> None:
+    """Repeated calls remove one suffix each and never eat into the base text."""
+    messages = [{"role": "system", "content": "Base" + SUFFIX + SUFFIX}]
+
+    strip_tool_use_rule(messages)
+    assert messages[0]["content"] == "Base" + SUFFIX
+    strip_tool_use_rule(messages)
+    assert messages[0]["content"] == "Base"
+    strip_tool_use_rule(messages)
+    assert messages[0]["content"] == "Base"

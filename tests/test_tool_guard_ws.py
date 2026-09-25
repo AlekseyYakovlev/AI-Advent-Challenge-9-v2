@@ -76,6 +76,8 @@ def test_claim_without_tool_triggers_single_retry_with_reminder() -> None:
     bodies = _stream_bodies(route)
     assert len(bodies) == 2
     retry = bodies[1]
+    assert _system_content(bodies[0]).endswith(TOOL_USE_RULE)
+    assert _system_content(retry).endswith(TOOL_USE_RULE)
     assert "tools" in retry
     assert retry["messages"][-2]["role"] == "assistant"
     assert retry["messages"][-2]["content"] == CLAIM
@@ -98,7 +100,11 @@ def test_retry_tool_call_is_dispatched() -> None:
         ],
     )
 
-    assert len(_stream_bodies(route)) == 3
+    bodies = _stream_bodies(route)
+    assert len(bodies) == 3
+    assert _system_content(bodies[0]).endswith(TOOL_USE_RULE)
+    assert _system_content(bodies[1]).endswith(TOOL_USE_RULE)
+    assert TOOL_USE_RULE not in _system_content(bodies[2])
     assert [f for f in frames if f.get("type") == "tool_call"]
     assert frames[-1]["type"] == "done"
     assert len(frames[-1]["memory_writes"]) == 1
