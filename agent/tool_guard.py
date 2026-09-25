@@ -2,6 +2,8 @@
 
 import re
 
+TOOL_TRACE_HEADER = "[Tool calls actually executed for this reply]"
+
 TOOL_USE_RULE = (
     "Tool use rule: never say an action was performed unless you called the "
     "corresponding tool in this reply. Past actions mentioned in the history are not a "
@@ -75,3 +77,45 @@ def looks_like_action_claim(text: str) -> bool:
     if not text:
         return False
     return any(_sentence_claims_action(sentence) for sentence in _SENTENCE_SPLIT_RE.split(text))
+
+
+def _hold_start(buf: str) -> int:
+    """Return the index from which buf may still turn into a header and must be withheld."""
+    start = len(buf)
+    for length in range(min(len(TOOL_TRACE_HEADER) - 1, len(buf)), 0, -1):
+        if TOOL_TRACE_HEADER.startswith(buf[-length:]):
+            start = len(buf) - length
+            break
+    while start > 0 and buf[start - 1].isspace():
+        start -= 1
+    return start
+
+
+class TraceLeakFilter:
+    """Streaming filter that drops a model-imitated tool-trace block and what follows it."""
+
+    def __init__(self) -> None:
+        self._pending: str = ""
+        self._dropped: bool = False
+
+    def feed(self, chunk: str) -> str:
+        """Return the part of the chunk that is safe to emit now."""
+        if self._dropped:
+            return ""
+        buf: str = self._pending + chunk
+        idx: int = buf.find(TOOL_TRACE_HEADER)
+        if idx != -1:
+            self._dropped = True
+            self._pending = ""
+            return buf[:idx].rstrip()
+        start: int = _hold_start(buf)
+        self._pending = buf[start:]
+        return buf[:start]
+
+    def flush(self) -> str:
+        """Return any withheld text once the stream ends."""
+        if self._dropped:
+            return ""
+        tail: str = self._pending
+        self._pending = ""
+        return tail

@@ -9,6 +9,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from agent.llm_client import llm_client
 from agent import invariants, memory, profile, tasks
+from agent.tool_guard import TOOL_TRACE_HEADER
 from shared.database import async_session_factory
 from shared.logger import get_logger
 from shared.models import Chat, ContextStrategy, Message, Profile, Settings
@@ -21,7 +22,6 @@ RECENT_MESSAGE_COUNT = 10  # Number of recent messages to keep in all strategies
 FACTS_DEBOUNCE_SECONDS = 2.0
 TOOL_TRACE_ARGS_CHARS = 200
 TOOL_TRACE_RESULT_CHARS = 300
-TOOL_TRACE_HEADER = "[Tool calls actually executed for this reply]"
 
 _pending_messages: dict[int, str] = {}
 _debounce_tasks: dict[int, asyncio.Task] = {}

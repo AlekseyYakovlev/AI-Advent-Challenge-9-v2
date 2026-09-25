@@ -1,4 +1,4 @@
-"""Unit tests for the claimed-action heuristic."""
+"""Unit tests for the claimed-action heuristic and the trace-leak streaming filter."""
 
 import pytest
 
@@ -66,19 +66,14 @@ def _all_chunkings(text: str) -> list[list[str]]:
     return [[text], _chunks(text, 1), _chunks(text, 3), _word_chunks(text)]
 
 
-LEAKY = "Done.
-
-" + TOOL_TRACE_HEADER + "
-- x() -> ok: y"
+LEAKY = "Done.\n\n" + TOOL_TRACE_HEADER + "\n- x() -> ok: y"
 
 
 @pytest.mark.parametrize(
     "text",
     [
         "Plain reply without any marker.",
-        "Trailing whitespace stays.  
-
-",
+        "Trailing whitespace stays.  \n\n",
         "Array [0] and [Tool use] mid sentence, then more text.",
         "Says [Tool calls are useful] and continues",
         "",
@@ -98,9 +93,7 @@ def test_filter_drops_split_header_and_preceding_whitespace() -> None:
 
 def test_filter_header_at_end_after_blank_line() -> None:
     """A header at the very end leaves only the reply text."""
-    text = "Reply text
-
-" + TOOL_TRACE_HEADER
+    text = "Reply text\n\n" + TOOL_TRACE_HEADER
     for chunks in _all_chunkings(text):
         assert _run_filter(chunks) == "Reply text"
 
@@ -108,15 +101,16 @@ def test_filter_header_at_end_after_blank_line() -> None:
 def test_filter_drops_everything_after_header() -> None:
     """Once dropped, later chunks and flush emit nothing."""
     trace_filter = TraceLeakFilter()
-    assert trace_filter.feed("Hi " + TOOL_TRACE_HEADER + "
-- a() -> ok") == "Hi"
+    assert trace_filter.feed("Hi " + TOOL_TRACE_HEADER + "\n- a() -> ok") == "Hi"
     assert trace_filter.feed("more text") == ""
     assert trace_filter.feed(TOOL_TRACE_HEADER) == ""
     assert trace_filter.flush() == ""
 
 
-@pytest.mark.parametrize("text", ["Answer [Tool", "Answer [Tool calls", "Answer  
-[Tool calls actually"])
+@pytest.mark.parametrize(
+    "text",
+    ["Answer [Tool", "Answer [Tool calls", "Answer  \n[Tool calls actually"],
+)
 def test_filter_incomplete_prefix_is_flushed_unchanged(text: str) -> None:
     """A never-completed header prefix is withheld by feed but returned by flush."""
     trace_filter = TraceLeakFilter()
