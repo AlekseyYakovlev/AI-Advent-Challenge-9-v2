@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
-from sqlalchemy import Column, Enum as SAEnum, ForeignKey, Integer, UniqueConstraint
+from sqlalchemy import Column, Enum as SAEnum, ForeignKey, Integer, Text, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 
@@ -65,6 +65,7 @@ class Message(SQLModel, table=True):
     role: str
     content: str
     token_count: int = Field(default=0)
+    tool_trace: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
     )

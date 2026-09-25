@@ -16,6 +16,7 @@ from agent.context_engine import (
     compute_chat_stats,
     extract_and_update_facts,
     get_effective_settings,
+    serialize_tool_trace,
 )
 from agent.dependencies import get_current_user_ws
 from agent import invariants, tasks
@@ -183,6 +184,8 @@ async def _persist_assistant_message(
     chat: Chat,
     parent_id: int,
     content: str,
+    *,
+    tool_trace: str | None = None,
 ) -> Message:
     """Insert an assistant message and advance the chat leaf."""
     assistant_msg = Message(
@@ -191,6 +194,7 @@ async def _persist_assistant_message(
         role="assistant",
         content=content,
         token_count=llm_client.count_tokens(content),
+        tool_trace=tool_trace,
     )
     session.add(assistant_msg)
     await session.flush()
@@ -319,6 +323,7 @@ async def _handle_chat_message(
 
             memory_writes: list[dict[str, Any]] = []
             task_writes: list[dict[str, Any]] = []
+            tool_trace: str | None = None
             if pending_tool_calls:
                 tool_results = await dispatch_tool_calls(
                     session,
@@ -327,6 +332,7 @@ async def _handle_chat_message(
                     pending_tool_calls,
                     mcp_bindings=toolset.bindings,
                 )
+                tool_trace = serialize_tool_trace(tool_results)
                 for result in tool_results:
                     await websocket.send_json(_tool_call_frame(result))
 
@@ -495,6 +501,7 @@ async def _handle_chat_message(
                 chat,
                 user_msg.id,
                 assistant_text,
+                tool_trace=tool_trace,
             )
 
             conflict_payload: dict[str, Any] | None = None
