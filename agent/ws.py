@@ -34,6 +34,11 @@ from agent.schemas import (
     MessagePayload,
     ToolCallEvent,
 )
+from agent.tool_guard import (
+    ACTION_CLAIM_REMINDER,
+    TOOL_USE_RULE,
+    looks_like_action_claim,
+)
 from agent.tools import TOOL_REGISTRY, build_tool_schemas, dispatch_tool_calls
 from shared.auth import SESSION_COOKIE_NAME
 from shared.database import async_session_factory
@@ -205,6 +210,41 @@ async def _persist_assistant_message(
     return assistant_msg
 
 
+async def _stream_action_claim_retry(
+    websocket: WebSocket,
+    llm_messages: list[dict[str, Any]],
+    payload: MessagePayload,
+    temperature: float,
+    max_tokens: int,
+    tool_schemas: list[dict[str, Any]],
+    chat_id: int,
+) -> tuple[str, list[dict[str, Any]]]:
+    """Stream the single corrective re-prompt; a failure keeps whatever was already sent."""
+    retry_text = ""
+    retry_tool_calls: list[dict[str, Any]] = []
+    active_streams[chat_id] = asyncio.current_task()
+    try:
+        async for event in llm_client.stream_chat(
+            llm_messages,
+            payload.model,
+            temperature,
+            max_tokens,
+            tools=tool_schemas,
+        ):
+            if event["type"] == "content":
+                if not retry_text:
+                    await websocket.send_json({"type": "token", "content": "\n\n"})
+                retry_text += event["content"]
+                await websocket.send_json({"type": "token", "content": event["content"]})
+            elif event["type"] == "tool_calls":
+                retry_tool_calls = event["tool_calls"]
+    except Exception as exc:
+        logger.warning("action_claim_reprompt_failed", chat_id=chat_id, error=str(exc))
+    finally:
+        active_streams.pop(chat_id, None)
+    return retry_text, retry_tool_calls
+
+
 async def _handle_chat_message(
     websocket: WebSocket,
     chat_id: int,
@@ -270,6 +310,12 @@ async def _handle_chat_message(
                 tool_schemas = None
                 logger.warning("tools_disabled_unowned_chat", chat_id=chat_id)
 
+            if tool_schemas and llm_messages and llm_messages[0]["role"] == "system":
+                llm_messages[0] = {
+                    **llm_messages[0],
+                    "content": llm_messages[0]["content"] + "\n\n" + TOOL_USE_RULE,
+                }
+
             assistant_text = ""
             pending_tool_calls: list[dict[str, Any]] = []
             stream_task = asyncio.current_task()
@@ -321,6 +367,26 @@ async def _handle_chat_message(
             finally:
                 active_streams.pop(chat_id, None)
 
+            echo_text = assistant_text
+            if tool_schemas and not pending_tool_calls and looks_like_action_claim(assistant_text):
+                # One bounded retry: never re-checked, so a stubborn model cannot loop.
+                logger.info("action_claim_without_tool", chat_id=chat_id)
+                llm_messages.append({"role": "assistant", "content": assistant_text})
+                llm_messages.append({"role": "user", "content": ACTION_CLAIM_REMINDER})
+                retry_text, pending_tool_calls = await _stream_action_claim_retry(
+                    websocket,
+                    llm_messages,
+                    payload,
+                    temperature,
+                    max_tokens,
+                    tool_schemas,
+                    chat_id,
+                )
+                if retry_text:
+                    assistant_text += "\n\n" + retry_text
+                if pending_tool_calls:
+                    echo_text = retry_text
+
             memory_writes: list[dict[str, Any]] = []
             task_writes: list[dict[str, Any]] = []
             tool_trace: str | None = None
@@ -339,7 +405,7 @@ async def _handle_chat_message(
                 llm_messages.append(
                     {
                         "role": "assistant",
-                        "content": assistant_text,
+                        "content": echo_text,
                         "tool_calls": _normalize_tool_calls_for_echo(pending_tool_calls),
                     },
                 )
