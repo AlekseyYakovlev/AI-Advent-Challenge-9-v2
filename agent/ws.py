@@ -37,6 +37,7 @@ from agent.schemas import (
 from agent.tool_guard import (
     ACTION_CLAIM_REMINDER,
     TOOL_USE_RULE,
+    TraceLeakFilter,
     looks_like_action_claim,
 )
 from agent.tools import TOOL_REGISTRY, build_tool_schemas, dispatch_tool_calls
@@ -210,6 +211,22 @@ async def _persist_assistant_message(
     return assistant_msg
 
 
+async def _emit_filtered(websocket: WebSocket, trace_filter: TraceLeakFilter, token: str) -> str:
+    """Send the trace-filtered part of a token to the client and return what was sent."""
+    safe = trace_filter.feed(token)
+    if safe:
+        await websocket.send_json({"type": "token", "content": safe})
+    return safe
+
+
+async def _flush_filtered(websocket: WebSocket, trace_filter: TraceLeakFilter) -> str:
+    """Send any text the trace filter still withholds at stream end and return it."""
+    safe = trace_filter.flush()
+    if safe:
+        await websocket.send_json({"type": "token", "content": safe})
+    return safe
+
+
 async def _stream_action_claim_retry(
     websocket: WebSocket,
     llm_messages: list[dict[str, Any]],
@@ -222,7 +239,19 @@ async def _stream_action_claim_retry(
     """Stream the single corrective re-prompt; a failure keeps whatever was already sent."""
     retry_text = ""
     retry_tool_calls: list[dict[str, Any]] = []
+    trace_filter = TraceLeakFilter()
     active_streams[chat_id] = asyncio.current_task()
+
+    async def send_retry_text(safe: str) -> None:
+        """Send filtered retry text, preceded by a separator before the first chunk."""
+        nonlocal retry_text
+        if not safe:
+            return
+        if not retry_text:
+            await websocket.send_json({"type": "token", "content": "\n\n"})
+        retry_text += safe
+        await websocket.send_json({"type": "token", "content": safe})
+
     try:
         async for event in llm_client.stream_chat(
             llm_messages,
@@ -232,16 +261,14 @@ async def _stream_action_claim_retry(
             tools=tool_schemas,
         ):
             if event["type"] == "content":
-                if not retry_text:
-                    await websocket.send_json({"type": "token", "content": "\n\n"})
-                retry_text += event["content"]
-                await websocket.send_json({"type": "token", "content": event["content"]})
+                await send_retry_text(trace_filter.feed(event["content"]))
             elif event["type"] == "tool_calls":
                 retry_tool_calls = event["tool_calls"]
     except Exception as exc:
         logger.warning("action_claim_reprompt_failed", chat_id=chat_id, error=str(exc))
     finally:
         active_streams.pop(chat_id, None)
+    await send_retry_text(trace_filter.flush())
     return retry_text, retry_tool_calls
 
 
@@ -323,6 +350,7 @@ async def _handle_chat_message(
 
             try:
                 if tool_schemas:
+                    trace_filter = TraceLeakFilter()
                     async for event in llm_client.stream_chat(
                         llm_messages,
                         payload.model,
@@ -331,23 +359,22 @@ async def _handle_chat_message(
                         tools=tool_schemas,
                     ):
                         if event["type"] == "content":
-                            assistant_text += event["content"]
-                            await websocket.send_json(
-                                {"type": "token", "content": event["content"]},
+                            assistant_text += await _emit_filtered(
+                                websocket, trace_filter, event["content"],
                             )
                         elif event["type"] == "tool_calls":
                             pending_tool_calls = event["tool_calls"]
+                    assistant_text += await _flush_filtered(websocket, trace_filter)
                 else:
+                    trace_filter = TraceLeakFilter()
                     async for token in llm_client.stream_chat(
                         llm_messages,
                         payload.model,
                         temperature,
                         max_tokens,
                     ):
-                        assistant_text += token
-                        await websocket.send_json(
-                            {"type": "token", "content": token},
-                        )
+                        assistant_text += await _emit_filtered(websocket, trace_filter, token)
+                    assistant_text += await _flush_filtered(websocket, trace_filter)
             except Exception as exc:
                 logger.error(
                     "llm_stream_failed",
@@ -418,6 +445,7 @@ async def _handle_chat_message(
                         },
                     )
 
+                trace_filter = TraceLeakFilter()
                 try:
                     async for token in llm_client.stream_chat(
                         llm_messages,
@@ -425,10 +453,8 @@ async def _handle_chat_message(
                         temperature,
                         max_tokens,
                     ):
-                        assistant_text += token
-                        await websocket.send_json(
-                            {"type": "token", "content": token},
-                        )
+                        assistant_text += await _emit_filtered(websocket, trace_filter, token)
+                    assistant_text += await _flush_filtered(websocket, trace_filter)
                 except Exception as exc:
                     logger.error(
                         "llm_stream_failed",
@@ -505,6 +531,7 @@ async def _handle_chat_message(
                             ),
                         },
                     )
+                    trace_filter = TraceLeakFilter()
                     try:
                         async for token in llm_client.stream_chat(
                             llm_messages,
@@ -512,16 +539,14 @@ async def _handle_chat_message(
                             temperature,
                             max_tokens,
                         ):
-                            assistant_text += token
-                            await websocket.send_json(
-                                {"type": "token", "content": token},
-                            )
+                            assistant_text += await _emit_filtered(websocket, trace_filter, token)
                     except Exception as exc:
                         logger.warning(
                             "transition_illegal_reprompt_failed",
                             chat_id=chat_id,
                             error=str(exc),
                         )
+                    assistant_text += await _flush_filtered(websocket, trace_filter)
 
             active_invariants = await invariants.resolve_active_invariants(session, chat_id)
             flagged: dict[str, Any] | None = None
@@ -543,6 +568,7 @@ async def _handle_chat_message(
                         "content": invariants.build_justify_retract_prompt(flagged, critique),
                     },
                 )
+                trace_filter = TraceLeakFilter()
                 try:
                     async for token in llm_client.stream_chat(
                         llm_messages,
@@ -550,17 +576,18 @@ async def _handle_chat_message(
                         temperature,
                         max_tokens,
                     ):
-                        justification_text += token
-                        assistant_text += token
-                        await websocket.send_json(
-                            {"type": "token", "content": token},
-                        )
+                        safe = await _emit_filtered(websocket, trace_filter, token)
+                        justification_text += safe
+                        assistant_text += safe
                 except Exception as exc:
                     logger.warning(
                         "invariant_justify_retract_failed",
                         chat_id=chat_id,
                         error=str(exc),
                     )
+                tail = await _flush_filtered(websocket, trace_filter)
+                justification_text += tail
+                assistant_text += tail
 
             assistant_msg = await _persist_assistant_message(
                 session,

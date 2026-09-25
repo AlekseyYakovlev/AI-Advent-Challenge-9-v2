@@ -10,7 +10,7 @@ from starlette.testclient import TestClient
 from agent import context_engine
 from agent.main import app
 from agent.schemas import MessagePayload
-from agent.tool_guard import ACTION_CLAIM_REMINDER, TOOL_USE_RULE
+from agent.tool_guard import ACTION_CLAIM_REMINDER, TOOL_TRACE_HEADER, TOOL_USE_RULE
 from agent.ws import _handle_chat_message
 from shared.database import async_session_factory
 from shared.models import Chat
@@ -27,6 +27,13 @@ from tests.test_memory_ws import (
 )
 
 CLAIM = "Файл 1.txt создан."
+REAL_REPLY = "Файл `1.txt` успешно скопирован."
+LEAKY_REPLY = (
+    REAL_REPLY
+    + "\n\n"
+    + TOOL_TRACE_HEADER
+    + "\n- mcp__filesystem_2_copy_file({}) -> ok: Successfully copied"
+)
 SAVE_CALL = ("call_1", "save_working_memory", json.dumps({"key": "k", "content": "v"}))
 
 
@@ -155,6 +162,24 @@ def test_tool_call_turn_never_gets_reminder() -> None:
     bodies = _stream_bodies(route)
     assert len(bodies) == 2
     assert all(ACTION_CLAIM_REMINDER not in json.dumps(body) for body in bodies)
+
+
+@respx.mock
+def test_leaked_trace_block_is_not_streamed_or_persisted() -> None:
+    """A model-imitated trace block in the follow-up reply never reaches client or DB."""
+    route, frames, message = _run_turn(
+        [_tool_calls_response([SAVE_CALL]), _plain_content_response(LEAKY_REPLY)],
+        content="copy 1.txt",
+    )
+
+    assert len(_stream_bodies(route)) == 2
+    tokens = [f["content"] for f in frames if f.get("type") == "token"]
+    assert "".join(tokens) == REAL_REPLY
+    assert all(TOOL_TRACE_HEADER not in t and "mcp__filesystem_2" not in t for t in tokens)
+    assert message.content == REAL_REPLY
+    assert TOOL_TRACE_HEADER not in message.content
+    assert "mcp__filesystem_2_copy_file" not in message.content
+    assert frames[-1]["type"] == "done"
 
 
 class _FakeWebSocket:
