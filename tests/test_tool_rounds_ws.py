@@ -10,6 +10,7 @@ import respx
 from starlette.testclient import TestClient
 
 from agent.main import app
+from agent.tool_guard import TOOL_USE_RULE
 from tests.conftest import login_test_client
 from tests.test_memory_ws import (
     BASE_URL,
@@ -21,7 +22,7 @@ from tests.test_memory_ws import (
     _send_and_drain,
     _tool_calls_response,
 )
-from tests.test_tool_guard_ws import _stream_bodies
+from tests.test_tool_guard_ws import _stream_bodies, _system_content
 
 
 def _stream_queue(responses: list[httpx.Response]):
@@ -271,6 +272,94 @@ def test_empty_followup_with_tools_retries_once_without_tools() -> None:
     assert "Содержимое файла." in _token_text(frames)
     assert message.content == "Содержимое файла."
     assert len(json.loads(message.tool_trace)) == 1
+
+
+@respx.mock
+def test_tool_use_rule_dropped_after_first_dispatch_including_empty_retry() -> None:
+    """Only the first request carries the rule; follow-up and empty-retry omit it."""
+    route = respx.post(f"{BASE_URL}/v1/chat/completions").mock(
+        side_effect=_stream_queue(
+            [
+                _tool_calls_response([_memory_call("c1", "save_working_memory", "k1")]),
+                _plain_content_response(""),
+                _plain_content_response("Ответ."),
+            ],
+        ),
+    )
+    with TestClient(app) as client:
+        login_test_client(client)
+        chat_id = client.post("/api/v1/chats", json={"title": "RuleDrop"}).json()["id"]
+        with client.websocket_connect(
+            f"/ws/chat/{chat_id}", headers={"Origin": WS_ORIGIN},
+        ) as ws:
+            _send_and_drain(ws, "save it")
+
+    bodies = _stream_bodies(route)
+    assert len(bodies) == 3
+    first = _system_content(bodies[0])
+    assert first.endswith("\n\n" + TOOL_USE_RULE)
+    assert "tools" in bodies[1]
+    assert "tools" not in bodies[2]
+    for body in bodies[1:]:
+        system = _system_content(body)
+        assert TOOL_USE_RULE not in system
+        assert system + "\n\n" + TOOL_USE_RULE == first
+
+
+@respx.mock
+def test_tool_use_rule_absent_from_cap_final_followup(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The tools-less final follow-up after the round cap has no rule either."""
+    monkeypatch.setattr("agent.ws.MAX_TOOL_ROUNDS", 2)
+    route = respx.post(f"{BASE_URL}/v1/chat/completions").mock(
+        side_effect=_stream_queue(
+            [
+                _tool_calls_response([_memory_call("c1", "save_working_memory", "k1")]),
+                _tool_calls_response([_memory_call("c2", "save_working_memory", "k2")]),
+                _plain_content_response("Финал."),
+            ],
+        ),
+    )
+    with TestClient(app) as client:
+        login_test_client(client)
+        chat_id = client.post("/api/v1/chats", json={"title": "RuleCap"}).json()["id"]
+        with client.websocket_connect(
+            f"/ws/chat/{chat_id}", headers={"Origin": WS_ORIGIN},
+        ) as ws:
+            _send_and_drain(ws, "two steps")
+
+    bodies = _stream_bodies(route)
+    assert len(bodies) == 3
+    assert _system_content(bodies[0]).endswith("\n\n" + TOOL_USE_RULE)
+    assert TOOL_USE_RULE not in _system_content(bodies[1])
+    assert TOOL_USE_RULE not in _system_content(bodies[2])
+    assert "tools" not in bodies[2]
+
+
+@respx.mock
+def test_rule_returns_on_next_turn() -> None:
+    """The stripped rule is per turn: the next turn's first request carries it again."""
+    route = respx.post(f"{BASE_URL}/v1/chat/completions").mock(
+        side_effect=_stream_queue(
+            [
+                _tool_calls_response([_memory_call("c1", "save_working_memory", "k1")]),
+                _plain_content_response("Готово."),
+                _plain_content_response("Ещё раз."),
+            ],
+        ),
+    )
+    with TestClient(app) as client:
+        login_test_client(client)
+        chat_id = client.post("/api/v1/chats", json={"title": "RuleNext"}).json()["id"]
+        with client.websocket_connect(
+            f"/ws/chat/{chat_id}", headers={"Origin": WS_ORIGIN},
+        ) as ws:
+            _send_and_drain(ws, "save it")
+            _send_and_drain(ws, "and again")
+
+    bodies = _stream_bodies(route)
+    assert len(bodies) == 3
+    assert TOOL_USE_RULE not in _system_content(bodies[1])
+    assert _system_content(bodies[2]).endswith("\n\n" + TOOL_USE_RULE)
 
 
 @respx.mock

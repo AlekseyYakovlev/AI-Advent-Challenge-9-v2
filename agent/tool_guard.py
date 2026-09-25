@@ -1,6 +1,7 @@
 """Tool-use rule text and a heuristic detecting claimed-but-not-performed actions."""
 
 import re
+from typing import Any
 
 TOOL_TRACE_HEADER = "[Tool calls actually executed for this reply]"
 
@@ -18,6 +19,22 @@ ACTION_CLAIM_REMINDER = (
     "If the request needs a tool, call it now. Otherwise, tell the user plainly that you "
     "did not perform the action."
 )
+
+def strip_tool_use_rule(messages: list[dict[str, Any]]) -> None:
+    """Drop the appended TOOL_USE_RULE suffix from a leading system message, in place."""
+    if not messages:
+        return
+    first = messages[0]
+    if first.get("role") != "system":
+        return
+    content = first.get("content")
+    if not isinstance(content, str):
+        return
+    suffix = "\n\n" + TOOL_USE_RULE
+    if not content.endswith(suffix):
+        return
+    messages[0] = {**first, "content": content[: -len(suffix)]}
+
 
 _PARTICIPLE_ENDINGS = r"(?:л|ла|ли|н|на|но|ны)"
 _PAST_ONLY_ENDINGS = r"(?:л|ла|ли)"

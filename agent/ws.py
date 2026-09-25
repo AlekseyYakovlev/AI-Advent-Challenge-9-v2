@@ -41,6 +41,7 @@ from agent.tool_guard import (
     TOOL_USE_RULE,
     TraceLeakFilter,
     looks_like_action_claim,
+    strip_tool_use_rule,
 )
 from agent.tools import TOOL_REGISTRY, build_tool_schemas, dispatch_tool_calls
 from shared.auth import SESSION_COOKIE_NAME
@@ -410,6 +411,10 @@ async def _run_tool_rounds(
     echo_text = first_echo_text
     while True:
         await _dispatch_round(turn, calls, echo_text, acc)
+        if acc.rounds == 1:
+            # After a tool round the rule makes local models answer empty; drop it for
+            # the rest of the turn (the shared list also covers later re-prompts).
+            strip_tool_use_rule(turn.llm_messages)
         tools = turn.tool_schemas if acc.rounds < MAX_TOOL_ROUNDS else None
         if tools is None:
             logger.warning("tool_rounds_capped", chat_id=turn.chat_id, rounds=acc.rounds)
