@@ -56,6 +56,7 @@ from agent.context_engine import compute_chat_stats
 from agent import invariants, mcp_client, mcp_config, memory, profile, tasks
 from agent.events import ws_events
 from agent.scheduler import scheduler
+from agent.scheduler_api import router as scheduler_router
 from agent.ws import ws_chat
 from shared.auth import (
     SESSION_COOKIE_NAME,
@@ -410,6 +411,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(scheduler_router)
+
 
 @app.get("/debug/routes")
 async def debug_routes() -> dict[str, list[dict[str, Any]]]:
