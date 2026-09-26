@@ -1844,6 +1844,379 @@ async function disconnectMcpServer(server) {
 
 // ---- end MCP servers ----
 
+// ---- Scheduler ----
+
+const SCHEDULER_JOB_STATUS_LABELS = {
+    active: 'активно',
+    paused: 'на паузе',
+    completed: 'завершено',
+    cancelled: 'отменено',
+};
+
+const SCHEDULER_JOB_STATUS_CLASSES = {
+    active: 'text-sky-400',
+    paused: 'text-amber-400',
+    completed: 'text-emerald-400',
+    cancelled: 'text-slate-500',
+};
+
+const SCHEDULER_RUN_STATUS_LABELS = {
+    running: 'выполняется',
+    success: 'успешно',
+    failed: 'ошибка',
+    skipped: 'пропущено',
+};
+
+const SCHEDULER_RUN_STATUS_CLASSES = {
+    running: 'text-sky-400',
+    success: 'text-emerald-400',
+    failed: 'text-red-400',
+    skipped: 'text-slate-400',
+};
+
+const SCHEDULER_LIVE_STATUSES = new Set(['active', 'paused']);
+const SCHEDULER_ACTION_ERROR = 'Не удалось выполнить действие. Проверьте соединение и попробуйте снова.';
+const SCHEDULER_NEUTRAL_BTN_CLASSES = 'rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 px-2 py-1 text-xs font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed';
+const SCHEDULER_ACCENT_BTN_CLASSES = 'rounded-lg bg-indigo-600 hover:bg-indigo-500 px-2 py-1 text-xs font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed';
+const SCHEDULER_DESTRUCTIVE_BTN_CLASSES = 'rounded-lg bg-red-700 hover:bg-red-600 px-2 py-1 text-xs font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed';
+const SCHEDULER_LINK_BTN_CLASSES = 'text-xs text-red-400 hover:text-red-300 disabled:opacity-50 disabled:cursor-not-allowed';
+const SCHEDULER_FOCUS_CLASSES = 'focus:outline-none focus:ring-2 focus:ring-indigo-500';
+
+state.lastSchedulerTasks = null;
+state.schedulerExpanded = new Set();
+state.schedulerRuns = new Map();
+state.schedulerBusy = new Set();
+
+function parseSchedulerDate(iso) {
+    const text = String(iso);
+    return new Date(/(Z|[+-]\d{2}:?\d{2})$/.test(text) ? text : `${text}Z`);
+}
+
+function formatSchedulerTimestamp(iso, withSeconds = false) {
+    if (!iso) return '—';
+    const options = { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' };
+    if (withSeconds) options.second = '2-digit';
+    return parseSchedulerDate(iso).toLocaleString('ru-RU', options).replace(',', '');
+}
+
+function formatSchedulerDuration(ms) {
+    if (ms === null || ms === undefined) return '';
+    const totalSeconds = Math.max(0, Math.round(ms / 1000));
+    if (totalSeconds < 60) return `${totalSeconds} с`;
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return seconds ? `${minutes} мин ${seconds} с` : `${minutes} мин`;
+}
+
+function formatSchedulerInterval(seconds) {
+    if (seconds % 3600 === 0) return `Каждые ${seconds / 3600} ч`;
+    if (seconds % 60 === 0) return `Каждые ${seconds / 60} мин`;
+    return `Каждые ${seconds} сек`;
+}
+
+function formatSchedulerRunCount(task) {
+    return task.max_runs
+        ? ` · запусков: ${task.run_count}/${task.max_runs}`
+        : ` · запусков: ${task.run_count}`;
+}
+
+function formatSchedulerSchedule(task) {
+    let head;
+    if (task.schedule_type === 'once') {
+        head = `Однократно · ${formatSchedulerTimestamp(task.run_at || task.next_run_at)}`;
+    } else if (task.schedule_type === 'interval') {
+        head = formatSchedulerInterval(task.interval_seconds);
+    } else {
+        head = `Cron: ${task.cron}`;
+    }
+    return head + formatSchedulerRunCount(task);
+}
+
+function schedulerStatusChip(labels, classes, status) {
+    const chip = mcpEl('span', `inline-flex items-center rounded px-1 text-xs ${classes[status] || 'text-slate-400'}`);
+    if (status === 'running') {
+        chip.appendChild(mcpEl('span', 'inline-block w-2 h-2 mr-1 rounded-full bg-sky-400 animate-pulse motion-reduce:animate-none'));
+    }
+    chip.appendChild(document.createTextNode(labels[status] || String(status)));
+    return chip;
+}
+
+function schedulerRunChip(status) {
+    return schedulerStatusChip(SCHEDULER_RUN_STATUS_LABELS, SCHEDULER_RUN_STATUS_CLASSES, status);
+}
+
+function schedulerLateChip() {
+    return mcpEl('span', 'rounded px-1 text-xs text-amber-400', 'с опозданием');
+}
+
+function compareSchedulerTasks(a, b) {
+    const liveA = SCHEDULER_LIVE_STATUSES.has(a.status) ? 0 : 1;
+    const liveB = SCHEDULER_LIVE_STATUSES.has(b.status) ? 0 : 1;
+    if (liveA !== liveB) return liveA - liveB;
+    const nullA = a.next_run_at ? 0 : 1;
+    const nullB = b.next_run_at ? 0 : 1;
+    if (nullA !== nullB) return nullA - nullB;
+    if (a.next_run_at && b.next_run_at) {
+        const diff = parseSchedulerDate(a.next_run_at) - parseSchedulerDate(b.next_run_at);
+        if (diff !== 0) return diff;
+    }
+    return parseSchedulerDate(b.created_at) - parseSchedulerDate(a.created_at);
+}
+
+function sortSchedulerTasks(tasks) {
+    return tasks.slice().sort(compareSchedulerTasks);
+}
+
+async function loadSchedulerTasks(silent = false) {
+    try {
+        const data = await apiFetch('/api/v1/scheduler/tasks');
+        if (!data) return;
+        state.lastSchedulerTasks = sortSchedulerTasks(data);
+        const knownIds = new Set(data.map((task) => task.id));
+        state.schedulerExpanded.forEach((id) => {
+            if (!knownIds.has(id)) state.schedulerExpanded.delete(id);
+        });
+        renderSchedulerPanel();
+        state.schedulerExpanded.forEach((id) => {
+            loadSchedulerRuns(id, true);
+        });
+    } catch (err) {
+        console.error('Failed to load scheduler tasks:', err);
+        if (!silent) {
+            showToast('Не удалось загрузить расписание. Проверьте соединение и попробуйте снова.', 'error');
+        }
+    }
+}
+
+async function loadSchedulerRuns(taskId, silent = false) {
+    try {
+        const runs = await apiFetch(`/api/v1/scheduler/tasks/${taskId}/runs?limit=20`);
+        if (!runs) return;
+        state.schedulerRuns.set(taskId, runs.slice(0, 20));
+        renderSchedulerPanel();
+    } catch (err) {
+        console.error('Failed to load scheduler runs:', err);
+        if (!silent) showToast(err.message || SCHEDULER_ACTION_ERROR, 'error');
+    }
+}
+
+function bindSchedulerFold(button, body, taskId, caret) {
+    const apply = (open) => {
+        body.classList.toggle('hidden', !open);
+        button.setAttribute('aria-expanded', open ? 'true' : 'false');
+        caret.textContent = open ? '▾' : '▸';
+    };
+    apply(state.schedulerExpanded.has(taskId));
+    button.addEventListener('click', () => {
+        const open = body.classList.contains('hidden');
+        apply(open);
+        if (open) {
+            state.schedulerExpanded.add(taskId);
+            loadSchedulerRuns(taskId);
+        } else {
+            state.schedulerExpanded.delete(taskId);
+        }
+    });
+}
+
+function renderSchedulerRunRow(run) {
+    const row = mcpEl('button', `w-full text-left rounded bg-slate-900 hover:bg-slate-700 px-2 py-1 flex items-center justify-between gap-2 ${SCHEDULER_FOCUS_CLASSES}`);
+    row.type = 'button';
+    row.appendChild(mcpEl('span', 'text-slate-500', formatSchedulerTimestamp(run.started_at || run.scheduled_for, true)));
+
+    const middle = mcpEl('span', 'flex items-center gap-1');
+    middle.appendChild(schedulerRunChip(run.status));
+    if (run.is_late) middle.appendChild(schedulerLateChip());
+    row.appendChild(middle);
+
+    const showDuration = run.status !== 'running' && run.status !== 'skipped';
+    row.appendChild(mcpEl('span', 'text-slate-500', showDuration ? formatSchedulerDuration(run.duration_ms) : ''));
+    row.addEventListener('click', () => openSchedulerRunModal(run.id, row));
+    return row;
+}
+
+function renderSchedulerHistory(container, taskId) {
+    container.replaceChildren();
+    const runs = state.schedulerRuns.get(taskId);
+    if (!runs) return;
+    if (!runs.length) {
+        container.appendChild(mcpEl('div', 'text-slate-600', 'Запусков пока не было'));
+        return;
+    }
+    runs.forEach((run) => container.appendChild(renderSchedulerRunRow(run)));
+}
+
+async function runSchedulerAction(task, button, action) {
+    if (state.schedulerBusy.has(task.id)) return;
+    state.schedulerBusy.add(task.id);
+    button.disabled = true;
+    try {
+        await action();
+    } catch (err) {
+        showToast(err.message || SCHEDULER_ACTION_ERROR, 'error');
+    } finally {
+        state.schedulerBusy.delete(task.id);
+        button.disabled = false;
+    }
+}
+
+function schedulerPause(task, button) {
+    return runSchedulerAction(task, button, async () => {
+        await apiFetch(`/api/v1/scheduler/tasks/${task.id}/pause`, { method: 'POST' });
+        await loadSchedulerTasks();
+        showToast('Задание поставлено на паузу', 'success');
+    });
+}
+
+function schedulerResume(task, button) {
+    return runSchedulerAction(task, button, async () => {
+        await apiFetch(`/api/v1/scheduler/tasks/${task.id}/resume`, { method: 'POST' });
+        await loadSchedulerTasks();
+        showToast('Задание возобновлено', 'success');
+    });
+}
+
+function schedulerRunNow(task, button) {
+    return runSchedulerAction(task, button, async () => {
+        await apiFetch(`/api/v1/scheduler/tasks/${task.id}/run`, { method: 'POST' });
+        showToast('Запуск начат', 'info');
+        await loadSchedulerTasks();
+    });
+}
+
+function schedulerCancel(task, button) {
+    if (!confirm(`Отменить задание «${task.title}»? Будущие запуски не состоятся, история запусков сохранится.`)) {
+        return Promise.resolve();
+    }
+    return runSchedulerAction(task, button, async () => {
+        await apiFetch(`/api/v1/scheduler/tasks/${task.id}/cancel`, { method: 'POST' });
+        await loadSchedulerTasks();
+        showToast('Задание отменено', 'success');
+    });
+}
+
+function schedulerDelete(task, button) {
+    if (!confirm(`Удалить задание «${task.title}» и всю историю его запусков? Это действие нельзя отменить.`)) {
+        return Promise.resolve();
+    }
+    return runSchedulerAction(task, button, async () => {
+        await apiFetch(`/api/v1/scheduler/tasks/${task.id}`, { method: 'DELETE' });
+        state.schedulerExpanded.delete(task.id);
+        state.schedulerRuns.delete(task.id);
+        await loadSchedulerTasks();
+        showToast('Задание удалено', 'success');
+    });
+}
+
+function schedulerButton(label, className, handler) {
+    const button = mcpEl('button', className, label);
+    button.type = 'button';
+    button.addEventListener('click', () => {
+        handler(button);
+    });
+    return button;
+}
+
+function renderSchedulerActions(task) {
+    const actions = mcpEl('div', 'mt-1 flex flex-wrap items-center gap-1');
+    const live = SCHEDULER_LIVE_STATUSES.has(task.status);
+    if (live) {
+        const runBtn = schedulerButton('Запустить сейчас', SCHEDULER_NEUTRAL_BTN_CLASSES, (btn) => schedulerRunNow(task, btn));
+        if (task.is_running) {
+            runBtn.disabled = true;
+            runBtn.title = 'Задание уже выполняется';
+        }
+        actions.appendChild(runBtn);
+        if (task.status === 'active') {
+            actions.appendChild(schedulerButton('Пауза', SCHEDULER_NEUTRAL_BTN_CLASSES, (btn) => schedulerPause(task, btn)));
+        } else {
+            actions.appendChild(schedulerButton('Продолжить', SCHEDULER_ACCENT_BTN_CLASSES, (btn) => schedulerResume(task, btn)));
+        }
+        actions.appendChild(schedulerButton('Отменить', SCHEDULER_DESTRUCTIVE_BTN_CLASSES, (btn) => schedulerCancel(task, btn)));
+    }
+    actions.appendChild(schedulerButton('Удалить', SCHEDULER_LINK_BTN_CLASSES, (btn) => schedulerDelete(task, btn)));
+    return actions;
+}
+
+function renderSchedulerScheduleRow(task) {
+    const row = mcpEl('div', 'text-slate-400');
+    if (task.schedule_type === 'cron') {
+        row.appendChild(document.createTextNode('Cron: '));
+        row.appendChild(mcpEl('span', 'font-mono', task.cron));
+        row.appendChild(document.createTextNode(formatSchedulerRunCount(task)));
+    } else {
+        row.textContent = formatSchedulerSchedule(task);
+    }
+    return row;
+}
+
+function renderSchedulerCard(task) {
+    const card = mcpEl('div', 'rounded-lg bg-slate-800 px-2 py-1');
+    const expanded = state.schedulerExpanded.has(task.id);
+
+    const header = mcpEl('button', `w-full flex items-center justify-between gap-2 text-left rounded ${SCHEDULER_FOCUS_CLASSES}`);
+    header.type = 'button';
+    header.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    const left = mcpEl('span', 'flex items-center gap-1 min-w-0');
+    const caret = mcpEl('span', 'text-slate-400', expanded ? '▾' : '▸');
+    const title = mcpEl('span', 'text-sm font-semibold text-slate-300 truncate', task.title);
+    title.title = task.title;
+    left.append(caret, title);
+    const right = mcpEl('span', 'flex items-center gap-1 shrink-0');
+    right.appendChild(schedulerStatusChip(SCHEDULER_JOB_STATUS_LABELS, SCHEDULER_JOB_STATUS_CLASSES, task.status));
+    if (task.is_running) right.appendChild(schedulerRunChip('running'));
+    header.append(left, right);
+    card.appendChild(header);
+
+    card.appendChild(renderSchedulerScheduleRow(task));
+
+    const nextRow = mcpEl('div', 'flex flex-wrap items-center gap-1 text-slate-500');
+    const nextText = task.status === 'active' && task.next_run_at ? formatSchedulerTimestamp(task.next_run_at) : '—';
+    nextRow.appendChild(mcpEl('span', '', `Следующий: ${nextText}`));
+    if (task.last_run) {
+        nextRow.appendChild(mcpEl('span', '', 'Последний:'));
+        nextRow.appendChild(schedulerRunChip(task.last_run.status));
+    }
+    card.appendChild(nextRow);
+
+    const history = mcpEl('div', 'mt-1 space-y-1');
+    renderSchedulerHistory(history, task.id);
+    card.appendChild(history);
+    bindSchedulerFold(header, history, task.id, caret);
+
+    card.appendChild(renderSchedulerActions(task));
+    return card;
+}
+
+function renderSchedulerPanel() {
+    const tasks = state.lastSchedulerTasks;
+    if (tasks === null) return;
+    const countEl = $('scheduler-count');
+    const badgeEl = $('scheduler-running-badge');
+    const listEl = $('scheduler-list');
+    if (countEl) {
+        countEl.textContent = String(tasks.filter((task) => SCHEDULER_LIVE_STATUSES.has(task.status)).length);
+    }
+    if (badgeEl) {
+        const running = tasks.filter((task) => task.is_running).length;
+        badgeEl.textContent = `${running} выполняется`;
+        badgeEl.classList.toggle('hidden', running === 0);
+    }
+    if (!listEl) return;
+    listEl.replaceChildren();
+
+    if (!tasks.length) {
+        const empty = mcpEl('div', 'text-center py-2 space-y-1');
+        empty.appendChild(mcpEl('p', 'text-sm font-semibold text-slate-300', 'Заданий пока нет'));
+        empty.appendChild(mcpEl('p', 'text-slate-500', 'Создайте задание кнопкой выше или попросите агента в чате, например: «через минуту прочитай файл и перескажи его».'));
+        listEl.appendChild(empty);
+        return;
+    }
+    tasks.forEach((task) => listEl.appendChild(renderSchedulerCard(task)));
+}
+
+// ---- end Scheduler ----
+
 async function openSettingsModal() {
     const perChat = $('settings-per-chat').checked;
     const chatId = perChat && state.currentChatId ? state.currentChatId : null;
@@ -2027,6 +2400,12 @@ function bindEvents() {
         saveMcpServer().catch((err) => showToast(err.message, 'error'));
     });
     setupFoldablePanels();
+    const schedulerFold = document.querySelector('[data-fold-toggle="scheduler-panel-body"]');
+    if (schedulerFold) {
+        schedulerFold.addEventListener('click', () => {
+            if (!$('scheduler-panel-body').classList.contains('hidden')) loadSchedulerTasks();
+        });
+    }
 }
 
 async function init() {
@@ -2036,6 +2415,7 @@ async function init() {
     await loadModels();
     await loadProfile();
     await loadInvariants();
+    await loadSchedulerTasks();
     try {
         await loadChats();
         if (state.chats.length) {
