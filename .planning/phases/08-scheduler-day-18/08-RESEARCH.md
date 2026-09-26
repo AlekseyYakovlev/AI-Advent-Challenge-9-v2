@@ -616,15 +616,19 @@ SCHEDULER_MAX_ACTIVE_TASKS_PER_USER: int = 50
 | A7 | `session.exec(update(...))` works on the oldest allowed `sqlmodel>=0.0.22` | State of the Art | Low: installed 0.0.42 verified; use `session.execute` fallback if the floor matters |
 | A8 | Global concurrency cap (2) for runs is desirable given single-GPU LM Studio | Code Examples | Low |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Should a scheduled run re-attempt an MCP server that has a *recorded* connect failure?**
    - What we know: `_auto_connect_missing` skips such servers ("no retry after failure", quick task 260924-2n8); after logout the sessions are closed, so an unattended run may see zero MCP tools.
    - What's unclear: whether the demo flow ("через минуту прочитай файл через MCP") can hit this (only if the server failed to connect earlier in the same Agent lifetime).
    - Recommendation: do not change MCP behaviour; log `mcp_tool_count` in the run and surface "MCP-инструменты недоступны" in the run's error/trace when the toolset is empty and the prompt is likely to need it. Revisit in Day 20 rechecks.
+   - RESOLVED: MCP reconnect behaviour is unchanged. `run_headless_turn` returns `mcp_tool_count` and, when the user has at least one enabled MCP server but the headless toolset is empty, appends `MCP_UNAVAILABLE_NOTE` ("Примечание: MCP-инструменты были недоступны во время этого запуска.") to the result text, or " (MCP-инструменты недоступны)" to the empty-answer error (plan 08-03 Task 2); the engine additionally logs `scheduler_run_no_mcp_tools` (plan 08-04 Task 2).
 2. **Should the headless prompt include profile + long-term memory?** Recommended yes for long-term memory, optional for profile (A6); planner decides.
+   - RESOLVED: long-term memory is included in the headless system prompt; the profile block is not (plan 08-03 Task 2, `_build_system_prompt`).
 3. **Run-now on `once` jobs and `max_runs` accounting** (A5) — confirm with the user during plan review or accept the recommendation.
+   - RESOLVED: recommendation accepted. "Run now" is allowed for active and paused jobs, counts toward `run_count`/`max_runs`, does not move a periodic job's `next_run_at`, and exhausts a `once` job (plan 08-04 Task 2 `start_manual_run`); soft cancel does not abort an in-flight run and resume recomputes the next slot from now (plan 08-05 Task 1).
 4. **Cancel gate strictness** (A4) — accept the heuristic, or add an explicit two-step (model asks user, user confirms) later with Day 20's 999.1.
+   - RESOLVED: heuristic accepted, tightened to whole imperative/infinitive/noun forms (e.g. `удали|удалить|удаление`, not the bare stem `удал`, which would match "удалённый") plus English whole words, with a 2-word negation window; combined with the required `user_requested_cancellation` flag and the tool description (plan 08-06 Task 1 `user_asked_to_cancel`). The two-step confirmation stays with backlog 999.1 (Day 20).
 
 ## Environment Availability
 
