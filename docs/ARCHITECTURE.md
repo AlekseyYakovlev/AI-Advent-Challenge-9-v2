@@ -103,7 +103,8 @@ Statistics update after each message and are sent with WebSocket "done" message.
 
 ## Chat tool calls (built-in + MCP)
 
-Each chat turn sends the LLM one tool list: the six built-in tools (memory and task tools) plus
+Each chat turn sends the LLM one tool list: the nine built-in tools (six memory and task tools plus
+the three scheduler tools described in "Scheduler" below) plus
 the tools of the current user's MCP servers that are enabled and have a live session. The list is
 rebuilt per turn from the session registry (`agent/mcp_client.py::get_live_tools`), never with a
 ping, so a busy server is not probed on the chat path. A server that is disconnected, disabled or
@@ -162,3 +163,119 @@ and update also reject a body that is not `application/json` with 415. A request
 `Origin` header is allowed, so curl and other non-browser clients keep working. Mutating routes
 outside MCP are not covered by this dependency and still rely on `SameSite=Lax` cookies plus CORS.
 An origin check does not stop script running inside the app's own origin (XSS).
+
+## Scheduler
+
+The Agent runs user-defined jobs in the background: a prompt executed once, every N seconds, or on
+a 5-field cron, with no chat and no user present. The REST/WS/tool contract is in
+`docs/API_SPEC.md` ("Scheduler"); this section describes how it works.
+
+**Modules:** `agent/schedule.py` (pure schedule math and validation), `agent/scheduler.py`
+(`SchedulerService`: poll loop, claim, recovery, run execution), `agent/scheduler_ops.py`
+(user-scoped operations shared by the REST routes and the LLM tools), `agent/scheduler_api.py`
+(REST router), `agent/scheduler_schemas.py` (Pydantic shapes and WS frames),
+`agent/scheduler_tools.py` (LLM tools), `agent/headless.py` (socket-free LLM turn),
+`agent/events.py` (`EventHub` and `WS /ws/events`).
+
+**Tables** (`shared/models.py`, created by `init_db`):
+- `scheduledtask`: `user_id` (FK CASCADE), `origin_chat_id` (FK to `chat`, **SET NULL**, so deleting
+  the chat that created a job keeps the job), title, prompt, `model`, `schedule_type`
+  (`once|interval|cron`), `run_at`, `interval_seconds`, `cron_expr`, `max_runs`, `run_count`,
+  `next_run_at` (UTC), `status` (`active|paused|completed|cancelled`), timestamps. Index
+  `ix_scheduledtask_status_next (status, next_run_at)` serves the due-job query.
+- `taskrun`: `scheduled_task_id` (FK CASCADE), `user_id` (FK CASCADE), `status`
+  (`running|success|failed|skipped`), `trigger` (`schedule|manual`), `scheduled_for`, `started_at`,
+  `finished_at`, `is_late`, `model`, `result_text`, `error`, `tool_trace` (JSON text). The partial
+  unique index `uq_taskrun_one_running (scheduled_task_id) WHERE status = 'running'` guarantees at
+  most one running run per job; any number of `skipped`/`success`/`failed` rows are allowed.
+- All datetimes are stored as UTC. Cron expressions (via `cronsim`) and a naive `run_at` are
+  evaluated in the Agent machine's local time and converted to UTC.
+
+**Poll loop:** the Agent lifespan calls `scheduler.recover_orphaned_runs()` unconditionally and, when
+`SCHEDULER_ENABLED` is true, `scheduler.start()`, which ticks every `SCHEDULER_POLL_INTERVAL`
+(1 s). A tick selects up to 20 (`TICK_BATCH_LIMIT`) active jobs with `next_run_at <= now`, oldest
+first, and claims each in its own session. A failing tick is logged and never stops the loop. On
+shutdown the loop is stopped first, then in-flight runs are cancelled (each records
+`Прервано: Agent остановлен`), before MCP cleanup and engine disposal. The test suite sets
+`SCHEDULER_ENABLED=false` and drives `SchedulerService.tick(now)` directly.
+
+**Atomic claim:** `claim_slot` runs `UPDATE scheduledtask SET next_run_at = <new>, run_count = ...
+WHERE id = ? AND status = 'active' AND next_run_at = old` and inserts the `taskrun` row in the same
+commit. Only the caller that sees `rowcount == 1` owns the slot, so two racing claimers (or a tick
+racing a manual run) produce exactly one run. If the partial unique index rejects the insert (a
+manual run got there first), the whole transaction is rolled back, the slot stays due, and the next
+tick records it as skipped.
+
+**Schedule rules:**
+- **Catch-up once:** after downtime an overdue job fires a single time, flagged `is_late` when the
+  lag exceeds `SCHEDULER_LATE_THRESHOLD_SECONDS`. Interval jobs move to the next slot on the original
+  cadence strictly after now; cron jobs move to the next boundary computed from now, never
+  replaying missed slots.
+- **Overlap skip:** if the previous run of the job is still `running`, the slot is consumed but
+  recorded as a `skipped` run (`Предыдущий запуск ещё выполнялся`) that does not count toward
+  `run_count`.
+- **No retry:** a failed run is final for that slot; the next slot fires normally.
+- **max_runs / finalize:** a claim that would reach `max_runs` sets `next_run_at = NULL`.
+  `finalize_task` then flips the job to `completed` once it has no next slot and no run in progress
+  (a one-shot job completes after its run ends; a paused job with a pending slot is never
+  completed). A manual run counts toward `run_count`; on a one-shot or exhausted job it clears
+  `next_run_at`.
+- **Pause/resume/cancel:** pause keeps `next_run_at`; resume restarts interval and cron jobs from
+  now (paused time is not caught up) and keeps a one-shot `run_at` (which fires late if already
+  past); cancel is soft (`status = cancelled`, `next_run_at = NULL`, history kept, an in-flight run
+  still records its result); delete aborts in-flight runs first and cascades to runs.
+
+**Startup recovery:** the supervisor stops the Agent with `terminate()`, a hard kill on Windows, so
+no shutdown code runs and runs may be left `running`. On the next start `recover_orphaned_runs`
+marks every `running` run `failed` (`Прервано: Agent был перезапущен`) and finalizes jobs that have
+no next slot. Overdue jobs are then picked up by the first tick under the catch-up rule.
+
+**Execution:** a claimed run is spawned as a background asyncio task (`execute_run`), held in a
+strong-reference map until it ends. A semaphore (`SCHEDULER_MAX_CONCURRENT_RUNS`, 2) limits
+parallel runs and is taken outside the deadline so queueing does not consume the budget; then
+`asyncio.timeout(SCHEDULER_RUN_TIMEOUT)` (120 s) bounds the run. Outcomes: success stores
+`result_text` and the tool trace; `HeadlessRunError`, timeout, and unexpected exceptions store a
+Russian `error` (unexpected ones only expose the exception type name). Every finished run publishes
+`run_finished` to its owner.
+
+**Headless runner** (`agent/headless.py::run_headless_turn`): builds a system prompt from the user's
+global settings (system prompt, long-term memory, a local-time clock line and an unattended-job
+preface) and a single user message with the job prompt, then reuses the WebSocket tool loop in
+`agent/ws.py` (sequential tool calls, `MAX_TOOL_ROUNDS` cap, empty-answer retry, nudges, loop
+detection) by handing it a `RecordingSink` in place of the socket, so no chat, message row or chat
+lock is involved. Temperature and max tokens come from the user's global `Settings` row (defaults
+if absent, never created); the model is the one stored on the job. **Allowlist:** built-in tools
+offered and dispatched are limited to `save_long_term_memory`; the user's live MCP tools are added
+on top. Task, invariant and scheduler tools are neither offered nor executable (a hallucinated call
+is rejected by the dispatcher). MCP problems never fail the run: the toolset falls back to empty and,
+when servers were enabled but no tools were available, a note is appended to the answer (or named in
+the empty-answer error). LM Studio being down, an HTTP error, or a read timeout map to Russian
+failure messages.
+
+**Live events:** `EventHub` keeps, per user id, a set of bounded queues (100 frames, oldest dropped
+when full). Every publish targets one `user_id`; the ownerless broadcast used elsewhere is never
+used for scheduler data. `WS /ws/events` validates `Origin` with the same policy as `/ws/chat`,
+resolves the session cookie, subscribes the socket, and forwards frames through a single pump task.
+The hub unsubscribes before any await in the `finally` block so a cancelled handler cannot leak its
+queue.
+
+**LLM tools:** `schedule_task`, `list_scheduled_tasks` and `cancel_scheduled_task` are registered
+built-ins that call the same `scheduler_ops` functions as the REST routes. The chat's model is
+passed through the `current_chat_model` context variable. Cancellation from chat is gated in code
+(`user_asked_to_cancel` on the chat's latest user message) in addition to the model's own flag.
+
+**Settings:**
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| SCHEDULER_ENABLED | true | Start the poll loop (recovery runs regardless) |
+| SCHEDULER_POLL_INTERVAL | 1.0 | Seconds between ticks |
+| SCHEDULER_RUN_TIMEOUT | 120.0 | Wall-clock limit of one run |
+| SCHEDULER_MIN_INTERVAL_SECONDS | 10 | Minimum interval for interval jobs |
+| SCHEDULER_LATE_THRESHOLD_SECONDS | 60.0 | Lag after which a run is flagged late |
+| SCHEDULER_MAX_CONCURRENT_RUNS | 2 | Parallel runs |
+| SCHEDULER_MAX_ACTIVE_TASKS_PER_USER | 50 | Active plus paused jobs per user |
+
+**Known limits:** jobs fire only while the Agent process is up (missed slots are caught up once, not
+replayed); a run interrupted by an Agent kill is not retried; there is no per-job destructive-tool
+confirmation, so MCP tools run unattended with the same trust model as chat.
