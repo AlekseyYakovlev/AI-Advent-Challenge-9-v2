@@ -75,6 +75,35 @@ Plans:
 | 6. Controlled Transitions (Day 15) | v1.0 | 4/4 | Complete | 2026-09-21 |
 | 7. MCP Connection (Day 16) | v2.0 | 6/6 | Complete   | 2026-09-23 |
 
+## Backlog
+
+### Phase 999.1: Guard merge_merge_request: run only when the user explicitly asks to merge (BACKLOG)
+
+**Goal:** block or require explicit user request for merge_merge_request; on 'сделай MR' the model created MR !1 and merged it unprompted (quick 260926-38j real GitLab run)
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (promote with /bm:review-backlog when ready)
+
+### Phase 999.2: Descriptive LLM timeout error instead of empty 'LLM error:' (BACKLOG)
+
+**Goal:** llm_stream_timeout yields empty detail and the whole turn (user message) is rolled back even though tools already ran; use type name/'timeout' and keep executed tool results
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (promote with /bm:review-backlog when ready)
+
+### Phase 999.3: Trim wasted tool rounds and stray second answer after MCP error nudge (BACKLOG)
+
+**Goal:** model burns rounds on list_allowed_directories/get_file_info and commit_files 'update' on missing files; TOOL_ERROR_REMINDER can append a second answer after an already good final answer
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (promote with /bm:review-backlog when ready)
+
 ---
 *Roadmap created: 2026-09-19*
 *Last updated: 2026-09-23 — v1.0 milestone archived*
