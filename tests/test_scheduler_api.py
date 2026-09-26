@@ -665,3 +665,24 @@ async def test_rest_mutation_publishes_event_to_owner(
     assert [f["type"] for f in frames] == ["task_updated"]
     assert frames[0]["task"]["status"] == "paused"
     assert _drain(other_queue) == []
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("GET", "/api/v1/scheduler/tasks"),
+        ("POST", "/api/v1/scheduler/tasks"),
+        ("GET", "/api/v1/scheduler/tasks/1"),
+        ("POST", "/api/v1/scheduler/tasks/1/pause"),
+        ("POST", "/api/v1/scheduler/tasks/1/resume"),
+        ("POST", "/api/v1/scheduler/tasks/1/cancel"),
+        ("POST", "/api/v1/scheduler/tasks/1/run"),
+        ("DELETE", "/api/v1/scheduler/tasks/1"),
+        ("GET", "/api/v1/scheduler/tasks/1/runs"),
+        ("GET", "/api/v1/scheduler/runs/1"),
+    ],
+)
+async def test_rest_routes_require_a_session(client: AsyncClient, method: str, path: str) -> None:
+    """Every scheduler route answers 401 without a session cookie."""
+    resp = await client.request(method, path, headers=ORIGIN, json={} if method == "POST" else None)
+    assert resp.status_code == 401
