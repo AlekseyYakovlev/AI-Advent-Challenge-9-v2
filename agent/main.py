@@ -54,6 +54,7 @@ from agent.llm_client import LMStudioClient
 from agent.state import CORS_ORIGINS, chat_locks, cleanup_chat_caches
 from agent.context_engine import compute_chat_stats
 from agent import invariants, mcp_client, mcp_config, memory, profile, tasks
+from agent.events import ws_events
 from agent.ws import ws_chat
 from shared.auth import (
     SESSION_COOKIE_NAME,
@@ -1228,6 +1229,12 @@ async def websocket_chat_endpoint(websocket: WebSocket, chat_id: int) -> None:
     """WebSocket chat endpoint."""
     logger.info("ws_route_called", chat_id=chat_id)
     await ws_chat(websocket, chat_id)
+
+
+@app.websocket("/ws/events")
+async def websocket_events_endpoint(websocket: WebSocket) -> None:
+    """User-level WebSocket for scheduler live events."""
+    await ws_events(websocket)
 
 
 logger.info("websocket_routes_registered")
