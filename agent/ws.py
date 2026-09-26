@@ -343,6 +343,7 @@ class _ToolTurn:
     toolset: McpToolset
     temperature: float
     max_tokens: int
+    allowed_tools: frozenset[str] | None = None
 
 
 @dataclass
@@ -452,6 +453,7 @@ async def _dispatch_round(
         turn.chat_id,
         calls,
         mcp_bindings=turn.toolset.bindings,
+        allowed_tools=turn.allowed_tools,
     )
     for result in results:
         await turn.websocket.send_json(_tool_call_frame(result))

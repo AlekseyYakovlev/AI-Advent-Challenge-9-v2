@@ -81,6 +81,7 @@ async def dispatch_tool_calls(
     tool_calls: list[dict[str, Any]],
     *,
     mcp_bindings: dict[str, McpToolBinding] | None = None,
+    allowed_tools: frozenset[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Execute tool calls strictly sequentially, in the order returned by the LLM.
 
@@ -88,6 +89,8 @@ async def dispatch_tool_calls(
     caller already holds the per-chat lock and the open session, and a later
     call in a turn may depend on an earlier one. Names found in `mcp_bindings`
     are routed to the user's live MCP session; everything else uses the built-ins.
+    allowed_tools, when given, restricts built-in tools to that set (headless
+    scheduler runs, D-04); MCP bindings are unaffected.
     """
     results: list[dict[str, Any]] = []
     for call in tool_calls:
@@ -116,7 +119,9 @@ async def dispatch_tool_calls(
             )
             continue
 
-        if name not in TOOL_REGISTRY:
+        if name not in TOOL_REGISTRY or (allowed_tools is not None and name not in allowed_tools):
+            if name in TOOL_REGISTRY:
+                logger.warning("tool_call_not_allowed", tool=name)
             results.append(
                 {
                     "tool_call_id": tool_call_id,
