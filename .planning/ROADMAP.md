@@ -96,7 +96,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 08-04-PLAN.md — Scheduler engine: atomic claim, poll loop, catch-up/overlap/max_runs, startup recovery, executor with timeout, lifespan wiring (wave 2)
+- [x] 08-04-PLAN.md — Scheduler engine: atomic claim, poll loop, catch-up/overlap/max_runs, startup recovery, executor with timeout, lifespan wiring (wave 2)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -122,7 +122,7 @@ Plans:
 | 5. Invariants (Day 14) | v1.0 | 4/4 | Complete | 2026-09-20 |
 | 6. Controlled Transitions (Day 15) | v1.0 | 4/4 | Complete | 2026-09-21 |
 | 7. MCP Connection (Day 16) | v2.0 | 6/6 | Complete   | 2026-09-23 |
-| 8. Scheduler (Day 18) | v2.0 | 3/8 | In Progress|  |
+| 8. Scheduler (Day 18) | v2.0 | 4/8 | In Progress|  |
 
 ## Backlog
 
