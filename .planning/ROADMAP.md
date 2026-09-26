@@ -228,6 +228,16 @@ Plans:
 Plans:
 - [ ] TBD (promote with /bm:review-backlog when ready)
 
+### Phase 999.11: LLM providers section in Settings (BACKLOG)
+
+**Goal:** add a 'Провайдеры LLM' section to Settings, styled like the 'MCP серверы' section: a '+ Добавить провайдера' button, with already-added providers listed below it
+**Behavior:** after a new provider is saved, run a connection check and show a success or error indicator; the LLMs the provider exposes appear in the LLM picker, and each picker entry is prefixed with the provider name
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (promote with /bm:review-backlog when ready)
+
 ---
 *Roadmap created: 2026-09-19*
 *Last updated: 2026-09-23 — v1.0 milestone archived*
