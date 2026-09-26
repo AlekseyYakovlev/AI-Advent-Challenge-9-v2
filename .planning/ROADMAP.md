@@ -90,9 +90,9 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 08-01-PLAN.md — ScheduledTask/TaskRun models (partial unique index, CASCADE/SET NULL), SCHEDULER_* settings, cronsim pin, pure schedule math (wave 1)
-- [ ] 08-02-PLAN.md — Per-user EventHub + WS /ws/events (origin + cookie auth), conftest guards (wave 1)
-- [ ] 08-03-PLAN.md — Headless LLM+MCP runner reusing the ws tool loop via RecordingSink + dispatcher allowlist (wave 1)
+- [x] 08-01-PLAN.md — ScheduledTask/TaskRun models (partial unique index, CASCADE/SET NULL), SCHEDULER_* settings, cronsim pin, pure schedule math (wave 1)
+- [x] 08-02-PLAN.md — Per-user EventHub + WS /ws/events (origin + cookie auth), conftest guards (wave 1)
+- [x] 08-03-PLAN.md — Headless LLM+MCP runner reusing the ws tool loop via RecordingSink + dispatcher allowlist (wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -122,7 +122,7 @@ Plans:
 | 5. Invariants (Day 14) | v1.0 | 4/4 | Complete | 2026-09-20 |
 | 6. Controlled Transitions (Day 15) | v1.0 | 4/4 | Complete | 2026-09-21 |
 | 7. MCP Connection (Day 16) | v2.0 | 6/6 | Complete   | 2026-09-23 |
-| 8. Scheduler (Day 18) | v2.0 | 0/8 | Planned | - |
+| 8. Scheduler (Day 18) | v2.0 | 3/8 | In Progress|  |
 
 ## Backlog
 
