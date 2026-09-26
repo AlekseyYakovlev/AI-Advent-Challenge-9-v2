@@ -78,6 +78,7 @@ None.
 | 260925-qj5 | Fix empty reply when a follow-up with tools returns nothing after a tool round: one extra tools-less follow-up (regression of q0s found by real-model run: 6/6 empty replies on read-file) | 2026-09-25 | 2d1a97d | Tested (542 passed; real-model recheck pending) | [260925-qj5-fix-empty-reply-when-follow-up-with-tool](./quick/260925-qj5-fix-empty-reply-when-follow-up-with-tool/) |
 | 260925-qvd | Strip TOOL_USE_RULE from the system message after the first tool round (rule + follow-up caused empty replies: 12/12 with tools, 5/16 without) | 2026-09-25 | 0514344 | Tested (555 passed; real-model recheck pending) | [260925-qvd-strip-tool-use-rule-from-system-message-](./quick/260925-qvd-strip-tool-use-rule-from-system-message-/) |
 | 260926-38j | Multi-step tool scenarios: text-leaked tool calls recovered (hermes/qwen XML) + tool_calls flushed on stream stop, announce/MCP-error nudges, fallback summary for empty replies, clock + local-vs-remote hint, MAX_TOOL_ROUNDS 15 | 2026-09-26 | 166e5c8 | Tested (635 passed); real model + real GitLab Sandbox: A ok, B ok on 3rd run (commit 55903a8a on Test, MR !1; model also merged MR unprompted, see follow-ups) | [260926-38j-fix-complex-multi-step-tool-scenarios-le](./quick/260926-38j-fix-complex-multi-step-tool-scenarios-le/) |
+| fast-day20-defer | Defer Day 16 leftovers to Day 20: backlog 999.1-999.3, manual Ctrl+C check, real-model/browser rechecks of 260924-1ic/2n8, 260925-oya/q0s/qj5/qvd | 2026-09-26 | — | Docs only | — |
 
 ## Deferred Items
 

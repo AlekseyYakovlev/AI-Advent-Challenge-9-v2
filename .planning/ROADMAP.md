@@ -77,9 +77,12 @@ Plans:
 
 ## Backlog
 
+> **Deferred to Day 20 (2026-09-26):** items 999.1–999.3 below, plus the remaining Day 16 leftovers: manual interactive Ctrl+C check with `filesystem.exe` connected, and browser/real-model rechecks for quick tasks 260924-1ic, 260924-2n8, 260925-oya, 260925-q0s, 260925-qj5, 260925-qvd. No Day 20 phase exists in the roadmap yet.
+
 ### Phase 999.1: Guard merge_merge_request: run only when the user explicitly asks to merge (BACKLOG)
 
 **Goal:** block or require explicit user request for merge_merge_request; on 'сделай MR' the model created MR !1 and merged it unprompted (quick 260926-38j real GitLab run)
+**Deferred to:** Day 20
 **Requirements:** TBD
 **Plans:** 0 plans
 
@@ -89,6 +92,7 @@ Plans:
 ### Phase 999.2: Descriptive LLM timeout error instead of empty 'LLM error:' (BACKLOG)
 
 **Goal:** llm_stream_timeout yields empty detail and the whole turn (user message) is rolled back even though tools already ran; use type name/'timeout' and keep executed tool results
+**Deferred to:** Day 20
 **Requirements:** TBD
 **Plans:** 0 plans
 
@@ -98,6 +102,7 @@ Plans:
 ### Phase 999.3: Trim wasted tool rounds and stray second answer after MCP error nudge (BACKLOG)
 
 **Goal:** model burns rounds on list_allowed_directories/get_file_info and commit_files 'update' on missing files; TOOL_ERROR_REMINDER can append a second answer after an already good final answer
+**Deferred to:** Day 20
 **Requirements:** TBD
 **Plans:** 0 plans
 
