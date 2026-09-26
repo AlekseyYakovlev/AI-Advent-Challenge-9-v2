@@ -104,8 +104,8 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 08-06-PLAN.md — LLM tools schedule_task / list_scheduled_tasks / cancel_scheduled_task with cancel gate (wave 4)
-- [ ] 08-07-PLAN.md — "Расписание" sidebar panel, create/result modals, /ws/events live client (wave 4)
+- [x] 08-06-PLAN.md — LLM tools schedule_task / list_scheduled_tasks / cancel_scheduled_task with cancel gate (wave 4)
+- [x] 08-07-PLAN.md — "Расписание" sidebar panel, create/result modals, /ws/events live client (wave 4)
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
@@ -122,7 +122,7 @@ Plans:
 | 5. Invariants (Day 14) | v1.0 | 4/4 | Complete | 2026-09-20 |
 | 6. Controlled Transitions (Day 15) | v1.0 | 4/4 | Complete | 2026-09-21 |
 | 7. MCP Connection (Day 16) | v2.0 | 6/6 | Complete   | 2026-09-23 |
-| 8. Scheduler (Day 18) | v2.0 | 5/8 | In Progress|  |
+| 8. Scheduler (Day 18) | v2.0 | 7/8 | In Progress|  |
 
 ## Backlog
 
