@@ -24,6 +24,7 @@ Full details: [milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
 ### 🚧 v2.0 Week 4: MCP Integration (In Progress)
 
 - [x] **Phase 7: MCP Connection (Day 16)** — The agent connects to an MCP server configured in Settings and shows the server's tool list (completed 2026-09-23)
+- [ ] **Phase 8: Scheduler (Day 18)** — Delayed and periodic jobs with persisted status/results, run by the agent and shown in the UI
 
 ## Phase Details
 
@@ -63,6 +64,53 @@ Plans:
 
 - [x] 07-06-PLAN.md — End-to-end acceptance vs filesystem.exe + human UI walkthrough (wave 4, checkpoint)
 
+### Phase 8: Scheduler (Day 18)
+**Goal**: A user (or the LLM via chat tools) can schedule delayed (one-shot) and periodic (interval/cron) jobs; the agent runs them in the background, stores each job's status and every run's result, and the UI shows scheduled and completed jobs
+**Depends on**: Phase 7
+**Requirements**: SCHED-01, SCHED-02, SCHED-03, SCHED-04, SCHED-05, SCHED-06, SCHED-07, SCHED-08, SCHED-09, SCHED-10, SCHED-11, SCHED-12, SCHED-13, SCHED-14
+**Branch**: `Day18`
+**Decision**: Written from scratch in Python inside the Agent process (not a fork of `C:\Projects\mcp-cron`: Go, cron-only, in-memory status, no REST, no user scoping, duplicate agent loop, AGPL)
+**Scope sketch** (to be refined in discuss/plan):
+- `ScheduledTask` + `TaskRun` SQLModel tables, scoped by `user_id`
+- asyncio poll loop started in the agent lifespan; optimistic claim (`UPDATE ... WHERE next_run_at = old`); tasks survive Agent restarts
+- Executor reuses `mcp_client` / `llm_client` under `tool_guard`
+- REST `/api/v1/scheduler/*`; LLM tools `schedule_task` / `list_scheduled_tasks` / `cancel_scheduled_task`
+- UI panel (vanilla JS): scheduled and completed tasks with status and run result
+**Success Criteria** (what must be TRUE):
+
+1. From chat ("через минуту прочитай файл X через MCP и перескажи") the LLM creates a job; it appears in the sidebar panel and goes `выполняется` -> `успешно` live, with the result opening in a Markdown modal
+2. Once / interval / cron jobs (cron in machine-local time) fire exactly once per slot; overlapping slots are recorded as `skipped`; `max_runs` and one-shot jobs auto-complete
+3. After an Agent restart a missed job runs once flagged late, and runs interrupted by the restart are marked failed
+4. REST `/api/v1/scheduler/*` and `/ws/events` are user-scoped (404 / owner-only events); the LLM cannot cancel a job unless the user asked
+5. `pytest tests/ -q` passes, including the new scheduler tests
+
+**Plans**: 8 plans
+**UI hint**: yes
+
+Plans:
+**Wave 1**
+
+- [ ] 08-01-PLAN.md — ScheduledTask/TaskRun models (partial unique index, CASCADE/SET NULL), SCHEDULER_* settings, cronsim pin, pure schedule math (wave 1)
+- [ ] 08-02-PLAN.md — Per-user EventHub + WS /ws/events (origin + cookie auth), conftest guards (wave 1)
+- [ ] 08-03-PLAN.md — Headless LLM+MCP runner reusing the ws tool loop via RecordingSink + dispatcher allowlist (wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 08-04-PLAN.md — Scheduler engine: atomic claim, poll loop, catch-up/overlap/max_runs, startup recovery, executor with timeout, lifespan wiring (wave 2)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 08-05-PLAN.md — User-scoped scheduler ops + REST /api/v1/scheduler/* + scoping tests (wave 3)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 08-06-PLAN.md — LLM tools schedule_task / list_scheduled_tasks / cancel_scheduled_task with cancel gate (wave 4)
+- [ ] 08-07-PLAN.md — "Расписание" sidebar panel, create/result modals, /ws/events live client (wave 4)
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [ ] 08-08-PLAN.md — Docs sync (API_SPEC, ARCHITECTURE, TESTING_GUIDE), full suite, human demo walkthrough (wave 5, checkpoint)
+
 ## Progress
 
 | Phase | Milestone | Plans Complete | Status | Completed |
@@ -74,6 +122,7 @@ Plans:
 | 5. Invariants (Day 14) | v1.0 | 4/4 | Complete | 2026-09-20 |
 | 6. Controlled Transitions (Day 15) | v1.0 | 4/4 | Complete | 2026-09-21 |
 | 7. MCP Connection (Day 16) | v2.0 | 6/6 | Complete   | 2026-09-23 |
+| 8. Scheduler (Day 18) | v2.0 | 0/8 | Planned | - |
 
 ## Backlog
 
