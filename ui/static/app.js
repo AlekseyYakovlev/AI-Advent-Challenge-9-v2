@@ -2502,6 +2502,147 @@ function bindSchedulerModals() {
     });
 }
 
+const SCHEDULER_POLL_INTERVAL_MS = 10000;
+const EVENTS_PING_INTERVAL_MS = 25000;
+
+state.eventsWs = null;
+state.eventsReconnectAttempt = 0;
+state.eventsShouldReconnect = true;
+state.eventsReconnectTimer = null;
+state.schedulerPollTimer = null;
+state.eventsPingTimer = null;
+
+function startSchedulerPolling() {
+    if (state.schedulerPollTimer) return;
+    state.schedulerPollTimer = setInterval(() => {
+        if (!$('scheduler-panel-body').classList.contains('hidden')) loadSchedulerTasks(true);
+    }, SCHEDULER_POLL_INTERVAL_MS);
+}
+
+function stopSchedulerPolling() {
+    if (state.schedulerPollTimer) clearInterval(state.schedulerPollTimer);
+    state.schedulerPollTimer = null;
+}
+
+function upsertSchedulerTask(task) {
+    const tasks = state.lastSchedulerTasks.slice();
+    const idx = tasks.findIndex((existing) => existing.id === task.id);
+    if (idx === -1) {
+        tasks.push(task);
+    } else {
+        tasks[idx] = task;
+    }
+    state.lastSchedulerTasks = sortSchedulerTasks(tasks);
+}
+
+function upsertSchedulerRun(taskId, run) {
+    const runs = state.schedulerRuns.get(taskId);
+    if (!runs) return;
+    const next = runs.slice();
+    const idx = next.findIndex((existing) => existing.id === run.id);
+    if (idx === -1) {
+        next.unshift(run);
+    } else {
+        next[idx] = run;
+    }
+    state.schedulerRuns.set(taskId, next.slice(0, 20));
+}
+
+function removeSchedulerTask(taskId) {
+    state.lastSchedulerTasks = state.lastSchedulerTasks.filter((task) => task.id !== taskId);
+    state.schedulerRuns.delete(taskId);
+    state.schedulerExpanded.delete(taskId);
+}
+
+function notifySchedulerRunFinished(frame) {
+    if (frame.run.status === 'success') {
+        showToast(`Задание «${frame.task.title}» выполнено`, 'success');
+    } else if (frame.run.status === 'failed') {
+        showToast(`Задание «${frame.task.title}» завершилось с ошибкой`, 'error');
+    }
+}
+
+function applySchedulerEvent(frame) {
+    if (!frame || typeof frame !== 'object') return;
+    if (state.lastSchedulerTasks === null) {
+        loadSchedulerTasks(true);
+        return;
+    }
+    switch (frame.type) {
+        case 'run_started':
+            if (!frame.task || !frame.run) return;
+            upsertSchedulerTask(frame.task);
+            upsertSchedulerRun(frame.task_id, frame.run);
+            break;
+        case 'run_finished':
+            if (!frame.task || !frame.run) return;
+            upsertSchedulerTask(frame.task);
+            upsertSchedulerRun(frame.task_id, frame.run);
+            notifySchedulerRunFinished(frame);
+            if (state.schedulerOpenRunId === frame.run.id) refreshSchedulerRunModal(frame.run.id);
+            break;
+        case 'task_updated':
+            if (!frame.task) return;
+            upsertSchedulerTask(frame.task);
+            break;
+        case 'task_deleted':
+            removeSchedulerTask(frame.task_id);
+            break;
+        default:
+            return;
+    }
+    renderSchedulerPanel();
+}
+
+function clearEventsPing() {
+    if (state.eventsPingTimer) clearInterval(state.eventsPingTimer);
+    state.eventsPingTimer = null;
+}
+
+function connectEventsWs() {
+    const ws = new WebSocket(`${WS_BASE}/ws/events`);
+    state.eventsWs = ws;
+
+    ws.onopen = () => {
+        state.eventsReconnectAttempt = 0;
+        stopSchedulerPolling();
+        loadSchedulerTasks(true);
+        clearEventsPing();
+        state.eventsPingTimer = setInterval(() => {
+            if (ws.readyState === WebSocket.OPEN) ws.send('ping');
+        }, EVENTS_PING_INTERVAL_MS);
+    };
+
+    ws.onmessage = (event) => {
+        let frame;
+        try {
+            frame = JSON.parse(event.data);
+        } catch {
+            return;
+        }
+        applySchedulerEvent(frame);
+    };
+
+    ws.onclose = (event) => {
+        clearEventsPing();
+        if (state.eventsWs === ws) state.eventsWs = null;
+        if (STOP_RECONNECT_CODES.has(event.code)) {
+            state.eventsShouldReconnect = false;
+            stopSchedulerPolling();
+            return;
+        }
+        startSchedulerPolling();
+        if (state.eventsShouldReconnect) {
+            const delay = Math.min(1000 * 2 ** state.eventsReconnectAttempt, MAX_RECONNECT_DELAY);
+            state.eventsReconnectAttempt += 1;
+            state.eventsReconnectTimer = setTimeout(connectEventsWs, delay);
+        }
+    };
+
+    // The close event that follows an error drives reconnect and polling; no offline banner here.
+    ws.onerror = () => {};
+}
+
 // ---- end Scheduler ----
 
 async function openSettingsModal() {
@@ -2706,6 +2847,7 @@ async function init() {
     await loadProfile();
     await loadInvariants();
     await loadSchedulerTasks();
+    connectEventsWs();
     try {
         await loadChats();
         if (state.chats.length) {
