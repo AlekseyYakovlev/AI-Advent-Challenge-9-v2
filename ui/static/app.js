@@ -2215,6 +2215,293 @@ function renderSchedulerPanel() {
     tasks.forEach((task) => listEl.appendChild(renderSchedulerCard(task)));
 }
 
+const SCHEDULER_INTERVAL_UNIT_SECONDS = { seconds: 1, minutes: 60, hours: 3600 };
+const SCHEDULER_SKIPPED_TEXT = 'Запуск пропущен: предыдущий запуск ещё выполнялся';
+const SCHEDULER_ERROR_BOX_CLASSES = 'bg-red-900/30 border border-red-700 rounded-lg p-3 text-sm text-red-400';
+const SCHEDULER_TRACE_LABEL_CLASSES = 'text-xs text-slate-500';
+
+state.schedulerModalOpener = null;
+state.schedulerCreating = false;
+state.schedulerOpenRunId = null;
+
+function hideSchedulerModal(modalId) {
+    const modal = $(modalId);
+    if (!modal || modal.classList.contains('hidden')) return false;
+    modal.classList.add('hidden');
+    if (modalId === 'scheduler-run-modal') state.schedulerOpenRunId = null;
+    return true;
+}
+
+function closeSchedulerModal(modalId) {
+    if (!hideSchedulerModal(modalId)) return;
+    const opener = state.schedulerModalOpener;
+    state.schedulerModalOpener = null;
+    if (opener && opener.isConnected) opener.focus();
+}
+
+function closeSchedulerCreateModal() {
+    closeSchedulerModal('scheduler-create-modal');
+}
+
+function closeSchedulerRunModal() {
+    closeSchedulerModal('scheduler-run-modal');
+}
+
+function populateSchedulerModelSelect() {
+    const select = $('scheduler-model');
+    select.replaceChildren();
+    if (!state.models.length) {
+        const empty = mcpEl('option', '', 'Нет моделей');
+        empty.value = '';
+        empty.disabled = true;
+        empty.selected = true;
+        select.appendChild(empty);
+        return;
+    }
+    state.models.forEach((model) => {
+        const option = mcpEl('option', '', model.id);
+        option.value = model.id;
+        select.appendChild(option);
+    });
+    const preselected = state.models.some((m) => m.id === state.selectedModel)
+        ? state.selectedModel
+        : state.models[0].id;
+    select.value = preselected;
+}
+
+function updateSchedulerTypeFields() {
+    const type = $('scheduler-type').value;
+    $('scheduler-once-fields').classList.toggle('hidden', type !== 'once');
+    $('scheduler-interval-fields').classList.toggle('hidden', type !== 'interval');
+    $('scheduler-cron-fields').classList.toggle('hidden', type !== 'cron');
+    $('scheduler-max-runs-field').classList.toggle('hidden', type === 'once');
+}
+
+function updateSchedulerOnceMode() {
+    const checked = document.querySelector('input[name="scheduler-once-mode"]:checked');
+    const mode = checked ? checked.value : 'delay';
+    $('scheduler-delay').disabled = mode !== 'delay';
+    $('scheduler-run-at').disabled = mode !== 'at';
+}
+
+function openSchedulerCreateModal(opener) {
+    hideSchedulerModal('scheduler-run-modal');
+    state.schedulerModalOpener = opener || null;
+    $('scheduler-create-form').reset();
+    $('scheduler-create-error').textContent = '';
+    populateSchedulerModelSelect();
+    updateSchedulerTypeFields();
+    updateSchedulerOnceMode();
+    $('scheduler-create-modal').classList.remove('hidden');
+    $('scheduler-title').focus();
+}
+
+function buildSchedulerScheduleFields(type) {
+    const invalid = new Error('Укажите корректное расписание');
+    if (type === 'once') {
+        const checked = document.querySelector('input[name="scheduler-once-mode"]:checked');
+        if (checked && checked.value === 'at') {
+            const runAt = $('scheduler-run-at').value;
+            if (!runAt) throw invalid;
+            return { run_at: runAt };
+        }
+        const delay = parseInt($('scheduler-delay').value, 10);
+        if (!(delay >= 1)) throw invalid;
+        return { delay_seconds: delay };
+    }
+    if (type === 'interval') {
+        const value = parseInt($('scheduler-interval-value').value, 10);
+        if (!(value >= 1)) throw invalid;
+        return { interval_seconds: value * SCHEDULER_INTERVAL_UNIT_SECONDS[$('scheduler-interval-unit').value] };
+    }
+    const cron = $('scheduler-cron').value.trim();
+    if (!cron) throw invalid;
+    return { cron };
+}
+
+function buildSchedulerCreateBody() {
+    const title = $('scheduler-title').value.trim();
+    const prompt = $('scheduler-prompt').value.trim();
+    if (!title || !prompt) throw new Error('Заполните название и промпт');
+    const type = $('scheduler-type').value;
+    const model = $('scheduler-model').value;
+    if (!model) throw new Error('Выберите модель');
+    const body = { title, prompt, model, schedule_type: type, ...buildSchedulerScheduleFields(type) };
+    const maxRuns = parseInt($('scheduler-max-runs').value, 10);
+    if (type !== 'once' && maxRuns >= 1) body.max_runs = maxRuns;
+    return body;
+}
+
+async function submitSchedulerCreate(event) {
+    event.preventDefault();
+    if (state.schedulerCreating) return;
+    const errorEl = $('scheduler-create-error');
+    const submitBtn = $('btn-submit-scheduler-create');
+    errorEl.textContent = '';
+    let body;
+    try {
+        body = buildSchedulerCreateBody();
+    } catch (err) {
+        errorEl.textContent = err.message;
+        return;
+    }
+    state.schedulerCreating = true;
+    submitBtn.disabled = true;
+    try {
+        try {
+            await apiFetch('/api/v1/scheduler/tasks', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+        } catch (err) {
+            errorEl.textContent = err.message;
+            return;
+        }
+        closeSchedulerCreateModal();
+        await loadSchedulerTasks();
+        showToast('Задание создано', 'success');
+    } finally {
+        state.schedulerCreating = false;
+        submitBtn.disabled = false;
+    }
+}
+
+function formatSchedulerTraceValue(value) {
+    return typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+}
+
+function hasSchedulerTraceValue(value) {
+    if (value === null || value === undefined || value === '') return false;
+    if (typeof value === 'object') return Object.keys(value).length > 0;
+    return true;
+}
+
+function renderSchedulerTraceEntry(entry) {
+    const item = mcpEl('div', 'space-y-1');
+    const head = mcpEl('div', 'flex items-center gap-2');
+    head.appendChild(mcpEl('span', 'font-mono text-xs text-slate-300', String(entry.name || '')));
+    if (entry.ok === false) head.appendChild(mcpEl('span', 'text-xs text-red-400', 'ошибка'));
+    item.appendChild(head);
+    [['Аргументы', entry.arguments], ['Результат', entry.result !== undefined ? entry.result : entry.content]].forEach(([label, value]) => {
+        if (!hasSchedulerTraceValue(value)) return;
+        item.appendChild(mcpEl('div', SCHEDULER_TRACE_LABEL_CLASSES, label));
+        item.appendChild(mcpEl('pre', MCP_PRE_CLASSES, formatSchedulerTraceValue(value)));
+    });
+    return item;
+}
+
+function renderSchedulerTrace(trace) {
+    const wrap = mcpEl('div', 'space-y-2');
+    const toggle = mcpEl('button', `text-xs text-slate-400 hover:text-white rounded ${SCHEDULER_FOCUS_CLASSES}`, '▸ Показать ход выполнения');
+    toggle.type = 'button';
+    toggle.setAttribute('aria-expanded', 'false');
+    const list = mcpEl('div', 'hidden space-y-2');
+    trace.forEach((entry) => list.appendChild(renderSchedulerTraceEntry(entry)));
+    toggle.addEventListener('click', () => {
+        const open = list.classList.contains('hidden');
+        list.classList.toggle('hidden', !open);
+        toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+        toggle.textContent = open ? '▾ Скрыть ход выполнения' : '▸ Показать ход выполнения';
+    });
+    wrap.append(toggle, list);
+    return wrap;
+}
+
+function renderSchedulerRunMeta(detail) {
+    const meta = $('scheduler-run-meta');
+    meta.replaceChildren();
+    meta.appendChild(schedulerRunChip(detail.status));
+    meta.appendChild(mcpEl('span', '', `начало ${formatSchedulerTimestamp(detail.started_at || detail.scheduled_for, true)}`));
+    if (detail.status !== 'running' && detail.status !== 'skipped' && detail.duration_ms !== null && detail.duration_ms !== undefined) {
+        meta.appendChild(mcpEl('span', '', formatSchedulerDuration(detail.duration_ms)));
+    }
+    if (detail.is_late) meta.appendChild(schedulerLateChip());
+}
+
+function renderSchedulerRunBody(detail) {
+    const body = $('scheduler-run-body');
+    body.replaceChildren();
+    if (detail.status === 'running') {
+        const line = mcpEl('div', 'flex items-center text-sm text-slate-300');
+        line.appendChild(mcpEl('span', 'inline-block w-2 h-2 mr-2 rounded-full bg-sky-400 animate-pulse motion-reduce:animate-none'));
+        line.appendChild(document.createTextNode('Задание выполняется…'));
+        body.appendChild(line);
+        return;
+    }
+    if (detail.status === 'skipped') {
+        body.appendChild(mcpEl('p', 'text-sm text-slate-300', SCHEDULER_SKIPPED_TEXT));
+        return;
+    }
+    if (detail.status === 'failed') {
+        body.appendChild(mcpEl('div', SCHEDULER_ERROR_BOX_CLASSES, `Ошибка выполнения: ${detail.error || 'неизвестная ошибка'}`));
+    }
+    if (detail.status === 'success' || detail.result_text) {
+        const section = mcpEl('section', 'space-y-1');
+        section.appendChild(mcpEl('h3', 'text-xs font-semibold text-slate-300', 'Результат'));
+        const content = mcpEl('div', 'message-content text-sm');
+        content.innerHTML = renderMarkdown(detail.result_text || '');
+        section.appendChild(content);
+        body.appendChild(section);
+    }
+    const trace = Array.isArray(detail.tool_trace) ? detail.tool_trace : [];
+    if (trace.length) body.appendChild(renderSchedulerTrace(trace));
+}
+
+function renderSchedulerRunModal(detail) {
+    $('scheduler-run-title').textContent = detail.task_title || '';
+    renderSchedulerRunMeta(detail);
+    renderSchedulerRunBody(detail);
+}
+
+async function openSchedulerRunModal(runId, opener) {
+    let detail;
+    try {
+        detail = await apiFetch(`/api/v1/scheduler/runs/${runId}`);
+    } catch (err) {
+        showToast(err.message || SCHEDULER_ACTION_ERROR, 'error');
+        return;
+    }
+    if (!detail) return;
+    hideSchedulerModal('scheduler-create-modal');
+    state.schedulerModalOpener = opener || null;
+    state.schedulerOpenRunId = runId;
+    renderSchedulerRunModal(detail);
+    $('scheduler-run-modal').classList.remove('hidden');
+    $('btn-close-scheduler-run').focus();
+}
+
+async function refreshSchedulerRunModal(runId) {
+    try {
+        const detail = await apiFetch(`/api/v1/scheduler/runs/${runId}`);
+        if (detail && state.schedulerOpenRunId === runId) renderSchedulerRunModal(detail);
+    } catch (err) {
+        console.error('Failed to refresh scheduler run:', err);
+    }
+}
+
+function bindSchedulerModals() {
+    $('btn-scheduler-new').addEventListener('click', (e) => openSchedulerCreateModal(e.currentTarget));
+    const form = $('scheduler-create-form');
+    form.noValidate = true;
+    form.addEventListener('submit', (e) => {
+        submitSchedulerCreate(e).catch((err) => showToast(err.message, 'error'));
+    });
+    $('scheduler-type').addEventListener('change', updateSchedulerTypeFields);
+    document.querySelectorAll('input[name="scheduler-once-mode"]').forEach((radio) => {
+        radio.addEventListener('change', updateSchedulerOnceMode);
+    });
+    $('btn-close-scheduler-create').addEventListener('click', closeSchedulerCreateModal);
+    $('btn-cancel-scheduler-create').addEventListener('click', closeSchedulerCreateModal);
+    $('btn-close-scheduler-run').addEventListener('click', closeSchedulerRunModal);
+    $('scheduler-create-modal').addEventListener('click', (e) => {
+        if (e.target === $('scheduler-create-modal')) closeSchedulerCreateModal();
+    });
+    $('scheduler-run-modal').addEventListener('click', (e) => {
+        if (e.target === $('scheduler-run-modal')) closeSchedulerRunModal();
+    });
+}
+
 // ---- end Scheduler ----
 
 async function openSettingsModal() {
@@ -2374,6 +2661,8 @@ function bindEvents() {
         if (e.key === 'Escape') {
             closeSettingsModal();
             closeAddUserModal();
+            closeSchedulerCreateModal();
+            closeSchedulerRunModal();
         }
     });
     $('chat-list').addEventListener('contextmenu', (e) => {
@@ -2400,6 +2689,7 @@ function bindEvents() {
         saveMcpServer().catch((err) => showToast(err.message, 'error'));
     });
     setupFoldablePanels();
+    bindSchedulerModals();
     const schedulerFold = document.querySelector('[data-fold-toggle="scheduler-panel-body"]');
     if (schedulerFold) {
         schedulerFold.addEventListener('click', () => {
