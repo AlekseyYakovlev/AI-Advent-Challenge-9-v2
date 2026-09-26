@@ -301,21 +301,24 @@ async def test_run_now_works_when_paused_and_rejects_finished(
 async def test_delete_removes_runs_and_aborts_first(
     authenticated_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Delete removes the job with its runs; the in-flight abort happens before the row goes."""
+    """Delete cancels scheduling first, aborts runs, then removes the job with its runs."""
     user_id = authenticated_client.seeded_user_id
     task = await _create(user_id)
     await _add_run(task.id, user_id, RunStatus.SUCCESS)
     await _add_run(task.id, user_id, RunStatus.FAILED)
-    seen: list[bool] = []
+    seen: list[tuple[ScheduledTaskStatus, bool] | None] = []
 
     async def fake_abort(task_id: int) -> None:
-        seen.append(await _db_task(task_id) is not None)
+        row = await _db_task(task_id)
+        seen.append(None if row is None else (row.status, row.next_run_at is None))
 
     monkeypatch.setattr(scheduler, "abort_task_runs", fake_abort)
     async with async_session_factory() as session:
         await delete_task(session, user_id, task.id)
 
-    assert seen == [True]
+    # First abort: the job is already out of scheduling but still stored; the second one
+    # (after the delete) catches a run spawned in between.
+    assert seen == [(ScheduledTaskStatus.CANCELLED, True), None]
     assert await _db_task(task.id) is None
     async with async_session_factory() as session:
         runs = (

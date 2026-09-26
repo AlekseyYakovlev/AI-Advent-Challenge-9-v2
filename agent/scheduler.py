@@ -197,13 +197,17 @@ class SchedulerService:
             )
         started: list[int] = []
         for task_id in due_ids:
-            run_id = await self._claim_and_announce(task_id, now, spawn)
+            try:
+                run_id = await self._claim_and_announce(task_id, now, spawn)
+            except Exception as exc:
+                logger.error("scheduler_claim_failed", task_id=task_id, error=type(exc).__name__)
+                continue
             if run_id is not None:
                 started.append(run_id)
         return started
 
     async def _claim_and_announce(self, task_id: int, now: datetime, spawn: bool) -> int | None:
-        """Claim one due job in a fresh session, publish its event and optionally spawn it."""
+        """Claim one due job in a fresh session, spawn its run and publish its event."""
         async with async_session_factory() as session:
             task = await session.get(ScheduledTask, task_id)
             if task is None:
@@ -211,6 +215,11 @@ class SchedulerService:
             run = await self.claim_slot(session, task, now)
             if run is None:
                 return None
+            # Spawned before any further await: a committed RUNNING row must never be left
+            # without a task, whatever happens while announcing it.
+            if spawn and run.status == RunStatus.RUNNING:
+                self._run_task_ids[run.id] = task_id
+                self.spawn_run(run.id)
             logger.info(
                 "scheduler_run_claimed",
                 task_id=task.id,
@@ -227,15 +236,26 @@ class SchedulerService:
                     run_finished_frame(run, await build_task_out(session, task)),
                 )
                 return None
+            await self._announce_started(session, task, run)
+        return run.id
+
+    async def _announce_started(
+        self, session: AsyncSession, task: ScheduledTask, run: TaskRun
+    ) -> None:
+        """Publish run_started; a failure is logged because the run itself is already running."""
+        try:
             await session.refresh(task)
             hub.publish(
                 task.user_id,
                 run_started_frame(run, await build_task_out(session, task)),
             )
-        if spawn:
-            self._run_task_ids[run.id] = task_id
-            self.spawn_run(run.id)
-        return run.id
+        except Exception as exc:
+            logger.error(
+                "scheduler_announce_failed",
+                task_id=task.id,
+                run_id=run.id,
+                error=type(exc).__name__,
+            )
 
     async def finalize_task(self, session: AsyncSession, task_id: int) -> bool:
         """Mark a job completed when it has no next slot and no run in progress."""
@@ -455,13 +475,9 @@ class SchedulerService:
         except Exception:
             await session.rollback()
             raise
-        await session.refresh(task)
-        hub.publish(
-            task.user_id,
-            run_started_frame(run, await build_task_out(session, task)),
-        )
         self._run_task_ids[run.id] = task_id
         self.spawn_run(run.id)
+        await self._announce_started(session, task, run)
         return run
 
     async def abort_task_runs(self, task_id: int) -> None:

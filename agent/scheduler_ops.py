@@ -309,8 +309,23 @@ async def cancel_task(
 
 
 async def delete_task(session: AsyncSession, user_id: int, task_id: int) -> None:
-    """Delete a job and its runs, aborting any in-flight run first."""
+    """Delete a job and its runs, taking it out of scheduling before aborting in-flight runs."""
     task = await get_owned_task(session, user_id, task_id)
+    try:
+        # Committed first so the poll loop cannot claim another slot while the runs are aborted.
+        await session.exec(
+            update(ScheduledTask)
+            .where(ScheduledTask.id == task_id)
+            .values(
+                status=ScheduledTaskStatus.CANCELLED,
+                next_run_at=None,
+                updated_at=datetime.now(timezone.utc),
+            )
+        )
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
     await scheduler.abort_task_runs(task_id)
     try:
         await session.delete(task)
@@ -318,6 +333,8 @@ async def delete_task(session: AsyncSession, user_id: int, task_id: int) -> None
     except Exception:
         await session.rollback()
         raise
+    # A run claimed just before the job left scheduling may only have been spawned by now.
+    await scheduler.abort_task_runs(task_id)
     hub.publish(user_id, task_deleted_frame(task_id))
     logger.info("scheduled_task_deleted", user_id=user_id, task_id=task_id)
 
