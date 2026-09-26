@@ -390,6 +390,39 @@ class Session(SQLModel, table=True):
     expires_at: datetime
 
 
+class ScheduleType(str, Enum):
+    """How a scheduled job repeats."""
+
+    ONCE = "once"
+    INTERVAL = "interval"
+    CRON = "cron"
+
+
+class ScheduledTaskStatus(str, Enum):
+    """Lifecycle status of a scheduled job."""
+
+    ACTIVE = "active"
+    PAUSED = "paused"
+    COMPLETED = "completed"
+    CANCELLED = "cancelled"
+
+
+class RunStatus(str, Enum):
+    """Outcome of a single scheduled job run."""
+
+    RUNNING = "running"
+    SUCCESS = "success"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
+class RunTrigger(str, Enum):
+    """What started a run."""
+
+    SCHEDULE = "schedule"
+    MANUAL = "manual"
+
+
 class McpServerConfig(SQLModel, table=True):
     """User-scoped MCP stdio server launch config."""
 
