@@ -161,7 +161,16 @@ async def dispatch_tool_calls(
                     tool_call_id=tool_call_id,
                 )
 
-        result = await TOOL_REGISTRY[name](session, user_id, chat_id, validated_args)
+        try:
+            result = await TOOL_REGISTRY[name](session, user_id, chat_id, validated_args)
+        except Exception as exc:
+            # A failing handler must fail its own call, never the whole chat turn.
+            logger.error("tool_handler_failed", tool=name, error=type(exc).__name__)
+            result = {
+                "status": "error",
+                "code": "tool_failed",
+                "error": f"tool {name} failed unexpectedly",
+            }
         logger.info(
             "tool_call_dispatched",
             tool=name,

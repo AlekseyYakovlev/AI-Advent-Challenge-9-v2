@@ -1,5 +1,6 @@
 """Tests for the scheduler LLM tools, the cancel-intent heuristic and the ws exclusions."""
 
+import asyncio
 import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -340,6 +341,94 @@ async def test_schedule_task_invalid_schedule(
     assert json.loads(bad_cron["content"])["error"]
 
 
+_OUT_OF_RANGE_ARGS = [
+    {"schedule_type": "once", "delay_seconds": 10**12},
+    {"schedule_type": "interval", "interval_seconds": 10**12},
+    {"schedule_type": "interval", "interval_seconds": 60, "max_runs": 10**30},
+    {"schedule_type": "once", "run_at": "0001-01-01T00:00:00"},
+    {"schedule_type": "once", "run_at": "9999-12-31T23:59:59"},
+]
+_OUT_OF_RANGE_IDS = ["delay", "interval", "max-runs", "run-at-0001", "run-at-9999"]
+
+
+@pytest.mark.parametrize("args", _OUT_OF_RANGE_ARGS, ids=_OUT_OF_RANGE_IDS)
+async def test_schedule_task_handler_reports_out_of_range_as_invalid_schedule(
+    authenticated_client: AsyncClient, chat_model: str, args: dict[str, Any]
+) -> None:
+    """The handler maps range errors to ok=False invalid_schedule instead of raising."""
+    user_id = authenticated_client.seeded_user_id
+    chat_id = await _seed_chat(user_id)
+    async with async_session_factory() as session:
+        result = await TOOL_REGISTRY["schedule_task"](
+            session, user_id, chat_id, {"title": "t", "prompt": "p", **args}
+        )
+    assert result["status"] == "error"
+    assert result["code"] == "invalid_schedule"
+    assert await _all_jobs() == []
+
+
+@pytest.mark.parametrize("args", _OUT_OF_RANGE_ARGS, ids=_OUT_OF_RANGE_IDS)
+async def test_dispatch_schedule_task_out_of_range_is_not_ok_and_does_not_raise(
+    authenticated_client: AsyncClient, chat_model: str, args: dict[str, Any]
+) -> None:
+    """Through the dispatcher an out-of-range call is reported as ok=False without raising."""
+    user_id = authenticated_client.seeded_user_id
+    chat_id = await _seed_chat(user_id)
+
+    result = await _dispatch(
+        user_id, chat_id, "schedule_task", {"title": "t", "prompt": "p", **args}
+    )
+
+    assert result["ok"] is False
+    assert await _all_jobs() == []
+
+
+async def test_dispatch_turns_handler_exception_into_failed_result(
+    authenticated_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unexpected handler exception fails its own call only, never the surrounding turn."""
+    user_id = authenticated_client.seeded_user_id
+    chat_id = await _seed_chat(user_id)
+    calls: list[str] = []
+
+    async def _boom(_session: Any, _user_id: int, _chat_id: int, _args: dict[str, Any]) -> dict:
+        calls.append("boom")
+        raise RuntimeError("secret detail")
+
+    monkeypatch.setitem(TOOL_REGISTRY, "list_scheduled_tasks", _boom)
+    async with async_session_factory() as session:
+        results = await dispatch_tool_calls(
+            session,
+            user_id,
+            chat_id,
+            [_call("c1", "list_scheduled_tasks", {}), _call("c2", "list_scheduled_tasks", {})],
+        )
+
+    assert calls == ["boom", "boom"]
+    assert [r["ok"] for r in results] == [False, False]
+    body = json.loads(results[0]["content"])
+    assert body["status"] == "error" and body["code"] == "tool_failed"
+    assert "secret detail" not in results[0]["content"]
+
+
+async def test_dispatch_propagates_cancellation(
+    authenticated_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CancelledError is not swallowed by the handler guard."""
+    user_id = authenticated_client.seeded_user_id
+    chat_id = await _seed_chat(user_id)
+
+    async def _cancelled(*_args: Any) -> dict:
+        raise asyncio.CancelledError()
+
+    monkeypatch.setitem(TOOL_REGISTRY, "list_scheduled_tasks", _cancelled)
+    async with async_session_factory() as session:
+        with pytest.raises(asyncio.CancelledError):
+            await dispatch_tool_calls(
+                session, user_id, chat_id, [_call("c1", "list_scheduled_tasks", {})]
+            )
+
+
 async def test_schedule_task_cap_reports_too_many(
     authenticated_client: AsyncClient, chat_model: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -641,3 +730,49 @@ def test_ws_turn_schedule_task_is_not_a_memory_write() -> None:
         assert len(jobs) == 1
         assert jobs[0].model == WS_MODEL
         assert jobs[0].origin_chat_id == chat_id
+
+
+def _read_turn(ws: Any) -> list[dict[str, Any]]:
+    """Collect the frames of one chat turn up to and including its done frame."""
+    frames: list[dict[str, Any]] = []
+    while True:
+        frame = ws.receive_json()
+        frames.append(frame)
+        if frame.get("type") == "done":
+            return frames
+
+
+@respx.mock
+def test_ws_turn_with_out_of_range_schedule_task_call_keeps_the_socket_alive() -> None:
+    """A failing schedule_task call streams its reply and the socket serves the next message."""
+    queue = [
+        _tool_response(
+            "call_1",
+            "schedule_task",
+            {"schedule_type": "once", "run_at": "0001-01-01T00:00:00", "title": "t", "prompt": "p"},
+        ),
+        _plain_response("That time is not valid, please pick another one."),
+        _plain_response("Second answer."),
+    ]
+    respx.post(f"{BASE_URL}/v1/chat/completions").mock(
+        side_effect=lambda _request: queue.pop(0)
+    )
+
+    with TestClient(app) as client:
+        login_test_client(client)
+        chat_id = client.post("/api/v1/chats", json={"title": "Sched"}).json()["id"]
+        with client.websocket_connect(
+            f"/ws/chat/{chat_id}", headers={"Origin": WS_ORIGIN}
+        ) as ws:
+            ws.send_json({"content": "run p at the dawn of time", "model": WS_MODEL})
+            first = _read_turn(ws)
+            ws.send_json({"content": "thanks", "model": WS_MODEL})
+            second = _read_turn(ws)
+
+        tool_frames = [f for f in first if f.get("type") == "tool_call"]
+        assert len(tool_frames) == 1 and tool_frames[0]["ok"] is False
+        assert json.loads(tool_frames[0]["result"])["code"] == "invalid_schedule"
+        assert any(f.get("type") == "token" for f in first)
+        assert second[-1]["type"] == "done"
+        assert client.portal.call(_all_jobs) == []
+

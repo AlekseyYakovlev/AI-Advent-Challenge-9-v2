@@ -477,6 +477,28 @@ async def test_rest_create_validation_returns_russian_422(
     assert resp.json()["detail"] == detail
 
 
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"schedule_type": "interval", "interval_seconds": 10**12},
+        {"schedule_type": "interval", "interval_seconds": 10**30},
+        {"schedule_type": "interval", "interval_seconds": 60, "max_runs": 10**30},
+        {"schedule_type": "once", "interval_seconds": None, "delay_seconds": 10**12},
+        {"schedule_type": "once", "interval_seconds": None, "run_at": "0001-01-01T00:00:00"},
+        {"schedule_type": "once", "interval_seconds": None, "run_at": "9999-12-31T23:59:59"},
+    ],
+    ids=["interval-1e12", "interval-1e30", "max-runs-1e30", "delay-1e12", "run-at-0001", "run-at-9999"],
+)
+async def test_rest_create_out_of_range_is_422_with_russian_detail(
+    authenticated_client: AsyncClient, overrides: dict[str, Any]
+) -> None:
+    """Out-of-range numbers and dates are validation errors with a Russian string, never a 500."""
+    resp = await _post_task(authenticated_client, **overrides)
+    assert resp.status_code == 422, resp.text
+    assert isinstance(resp.json()["detail"], str)
+    assert resp.json()["detail"]
+
+
 async def test_rest_create_rejects_non_json_and_foreign_origin(
     authenticated_client: AsyncClient,
 ) -> None:
