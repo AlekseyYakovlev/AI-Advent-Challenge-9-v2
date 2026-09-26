@@ -186,6 +186,17 @@ async def test_create_enforces_per_user_cap(
 # --------------------------------------------------------------------------- ops: lifecycle
 
 
+async def _clear_next_run(task_id: int, status: ScheduledTaskStatus) -> None:
+    """Put a job in the state of a final run in flight: slot consumed, status still live."""
+    async with async_session_factory() as session:
+        task = await session.get(ScheduledTask, task_id)
+        assert task is not None
+        task.next_run_at = None
+        task.status = status
+        session.add(task)
+        await session.commit()
+
+
 async def test_pause_keeps_next_run_and_rejects_second_pause(
     authenticated_client: AsyncClient,
 ) -> None:
@@ -525,6 +536,27 @@ async def test_rest_pause_resume_cancel_lifecycle(authenticated_client: AsyncCli
     assert resp.status_code == 200 and resp.json()["status"] == "cancelled"
     resp = await authenticated_client.post(f"{base}/cancel", headers=ORIGIN)
     assert resp.status_code == 409 and resp.json()["detail"] == "Задание уже завершено"
+
+
+async def test_rest_pause_and_resume_of_job_with_final_run_in_flight_are_409(
+    authenticated_client: AsyncClient,
+) -> None:
+    """A job whose slot is consumed (final run in flight) can be neither paused nor resumed."""
+    task_id = (await _api_create(authenticated_client))["id"]
+    base = f"/api/v1/scheduler/tasks/{task_id}"
+
+    await _clear_next_run(task_id, ScheduledTaskStatus.ACTIVE)
+    resp = await authenticated_client.post(f"{base}/pause", headers=ORIGIN)
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "Задание выполняет последний запуск"
+
+    await _clear_next_run(task_id, ScheduledTaskStatus.PAUSED)
+    resp = await authenticated_client.post(f"{base}/resume", headers=ORIGIN)
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "Задание выполняет последний запуск"
+    stored = await _db_task(task_id)
+    assert stored is not None
+    assert stored.status == ScheduledTaskStatus.PAUSED and stored.next_run_at is None
 
 
 async def test_rest_run_now_then_conflict(authenticated_client: AsyncClient) -> None:

@@ -12,12 +12,19 @@ from agent.schedule import as_aware_utc
 from agent.headless import HeadlessResult, HeadlessRunError
 from agent.scheduler import (
     MSG_ABORTED_DELETE,
+    MSG_ALREADY_FINISHED,
     MSG_INTERRUPTED_RESTART,
     MSG_SKIPPED_OVERLAP,
     RunAlreadyActiveError,
     SchedulerService,
     build_task_out,
     msg_timeout,
+)
+from agent.scheduler_ops import (
+    MSG_FINAL_RUN_IN_PROGRESS,
+    SchedulerConflictError,
+    pause_task,
+    resume_task,
 )
 from agent.scheduler_schemas import run_to_summary, task_to_out
 from shared.database import async_session_factory
@@ -672,3 +679,117 @@ async def test_loop_runs_due_job_and_stop_ends_it(
     assert len(runs) == 1
     assert runs[0].status == RunStatus.SUCCESS
     assert runs[0].result_text == "loop"
+
+
+# --------------------------------------------------------------------------- final run in flight
+
+
+async def _assert_final_run_cannot_be_rearmed(
+    user_id: int, task_id: int, svc: SchedulerService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pause/resume are refused while the final run is in flight; the job then completes."""
+    run_id = await _claim_running_run(svc)
+    assert (await _task(task_id)).next_run_at is None
+
+    async with async_session_factory() as session:
+        with pytest.raises(SchedulerConflictError) as info:
+            await pause_task(session, user_id, task_id)
+    assert info.value.message == MSG_FINAL_RUN_IN_PROGRESS
+    assert (await _task(task_id)).status == ScheduledTaskStatus.ACTIVE
+
+    # A job that was paused by a racing request must not be re-armed by resume either.
+    async with async_session_factory() as session:
+        stored = await session.get(ScheduledTask, task_id)
+        stored.status = ScheduledTaskStatus.PAUSED
+        session.add(stored)
+        await session.commit()
+    async with async_session_factory() as session:
+        with pytest.raises(SchedulerConflictError) as info:
+            await resume_task(session, user_id, task_id, now=NOW)
+    assert info.value.message == MSG_FINAL_RUN_IN_PROGRESS
+    stored = await _task(task_id)
+    assert stored.status == ScheduledTaskStatus.PAUSED
+    assert stored.next_run_at is None
+    async with async_session_factory() as session:
+        stored = await session.get(ScheduledTask, task_id)
+        stored.status = ScheduledTaskStatus.ACTIVE
+        session.add(stored)
+        await session.commit()
+
+    assert await svc.tick(NOW + timedelta(hours=1), spawn=False) == []
+    monkeypatch.setattr("agent.scheduler.run_headless_turn", _fake_turn())
+    await svc.execute_run(run_id)
+
+    stored = await _task(task_id)
+    assert stored.status == ScheduledTaskStatus.COMPLETED
+    assert stored.run_count == 1
+    assert await svc.tick(NOW + timedelta(hours=2), spawn=False) == []
+    assert len(await _runs(task_id)) == 1
+
+
+async def test_once_job_final_run_cannot_be_rearmed_by_pause_resume(
+    seed_user: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user = await seed_user("u1", "pw")
+    task_id = await _add_task(user.id, schedule_type=ScheduleType.ONCE)
+    await _assert_final_run_cannot_be_rearmed(user.id, task_id, SchedulerService(), monkeypatch)
+
+
+async def test_max_runs_final_run_cannot_be_rearmed_by_pause_resume(
+    seed_user: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user = await seed_user("u1", "pw")
+    task_id = await _add_task(user.id, max_runs=1)
+    await _assert_final_run_cannot_be_rearmed(user.id, task_id, SchedulerService(), monkeypatch)
+
+
+async def test_start_manual_run_refuses_job_cancelled_after_status_check(
+    seed_user: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user = await seed_user("u1", "pw")
+    task_id = await _add_task(user.id, next_run_at=NOW + timedelta(hours=1))
+    svc = SchedulerService()
+    spawned: list[int] = []
+    monkeypatch.setattr(svc, "spawn_run", spawned.append)
+
+    async with async_session_factory() as session:
+        stale = await session.get(ScheduledTask, task_id)
+        assert stale is not None and stale.status == ScheduledTaskStatus.ACTIVE
+        async with async_session_factory() as other:
+            fresh = await other.get(ScheduledTask, task_id)
+            fresh.status = ScheduledTaskStatus.CANCELLED
+            fresh.next_run_at = None
+            other.add(fresh)
+            await other.commit()
+
+        with pytest.raises(SchedulerConflictError) as info:
+            await svc.start_manual_run(session, stale, NOW)
+
+    assert info.value.message == MSG_ALREADY_FINISHED
+    assert spawned == []
+    assert await _runs(task_id) == []
+    stored = await _task(task_id)
+    assert stored.run_count == 0
+    assert stored.status == ScheduledTaskStatus.CANCELLED
+
+
+async def test_start_manual_run_exhaustion_uses_stored_run_count(
+    seed_user: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user = await seed_user("u1", "pw")
+    task_id = await _add_task(user.id, max_runs=2, run_count=0, next_run_at=NOW + timedelta(hours=1))
+    svc = SchedulerService()
+    monkeypatch.setattr(svc, "spawn_run", lambda _run_id: None)
+
+    async with async_session_factory() as session:
+        stale = await session.get(ScheduledTask, task_id)
+        async with async_session_factory() as other:
+            bumped = await other.get(ScheduledTask, task_id)
+            bumped.run_count = 1
+            other.add(bumped)
+            await other.commit()
+        await svc.start_manual_run(session, stale, NOW)
+
+    stored = await _task(task_id)
+    assert stored.run_count == 2
+    assert stored.next_run_at is None

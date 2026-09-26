@@ -3,7 +3,7 @@
 import asyncio
 from datetime import datetime, timezone
 
-from sqlalchemy import exists, update
+from sqlalchemy import and_, case, exists, or_, update
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -35,6 +35,7 @@ MSG_SKIPPED_OVERLAP = "Предыдущий запуск ещё выполнял
 MSG_INTERRUPTED_RESTART = "Прервано: Agent был перезапущен"
 MSG_INTERRUPTED_STOP = "Прервано: Agent остановлен"
 MSG_ABORTED_DELETE = "Прервано: задание удалено"
+MSG_ALREADY_FINISHED = "Задание уже завершено"
 
 TICK_BATCH_LIMIT = 20
 
@@ -51,6 +52,14 @@ def msg_unexpected(exc: BaseException) -> str:
 
 class RunAlreadyActiveError(Exception):
     """A run of this job is already in progress."""
+
+
+class SchedulerConflictError(Exception):
+    """The requested change is illegal in the job's current state; `message` is Russian text."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message: str = message
 
 
 async def build_task_out(session: AsyncSession, task: ScheduledTask) -> ScheduledTaskOut:
@@ -400,15 +409,14 @@ class SchedulerService:
         """
         now = as_aware_utc(now or datetime.now(timezone.utc))
         task_id = task.id
-        exhausts = task.schedule_type == ScheduleType.ONCE or (
-            task.max_runs is not None and task.run_count + 1 >= task.max_runs
+        # Evaluated by the database against the row being updated, not the caller's ORM copy.
+        exhausts = or_(
+            ScheduledTask.schedule_type == ScheduleType.ONCE,
+            and_(
+                ScheduledTask.max_runs.is_not(None),
+                ScheduledTask.run_count + 1 >= ScheduledTask.max_runs,
+            ),
         )
-        values: dict[str, object] = {
-            "run_count": ScheduledTask.run_count + 1,
-            "updated_at": now,
-        }
-        if exhausts:
-            values["next_run_at"] = None
         run = TaskRun(
             scheduled_task_id=task_id,
             user_id=task.user_id,
@@ -420,14 +428,30 @@ class SchedulerService:
             model=task.model,
         )
         try:
-            session.add(run)
-            await session.exec(
-                update(ScheduledTask).where(ScheduledTask.id == task_id).values(**values)
+            result = await session.exec(
+                update(ScheduledTask)
+                .where(
+                    ScheduledTask.id == task_id,
+                    ScheduledTask.status.in_(
+                        [ScheduledTaskStatus.ACTIVE, ScheduledTaskStatus.PAUSED]
+                    ),
+                )
+                .values(
+                    run_count=ScheduledTask.run_count + 1,
+                    next_run_at=case((exhausts, None), else_=ScheduledTask.next_run_at),
+                    updated_at=now,
+                )
             )
+            if result.rowcount != 1:
+                await session.rollback()
+                raise SchedulerConflictError(MSG_ALREADY_FINISHED)
+            session.add(run)
             await session.commit()
         except IntegrityError as exc:
             await session.rollback()
             raise RunAlreadyActiveError() from exc
+        except SchedulerConflictError:
+            raise
         except Exception:
             await session.rollback()
             raise

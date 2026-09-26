@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from sqlalchemy import func
+from sqlalchemy import func, update
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -17,7 +17,13 @@ from agent.schedule import (
     initial_next_run,
     next_run_on_resume,
 )
-from agent.scheduler import RunAlreadyActiveError, build_task_out, scheduler
+from agent.scheduler import (
+    MSG_ALREADY_FINISHED,
+    RunAlreadyActiveError,
+    SchedulerConflictError,
+    build_task_out,
+    scheduler,
+)
 from agent.scheduler_schemas import ScheduledTaskOut, task_deleted_frame, task_updated_frame
 from shared.config import settings
 from shared.logger import get_logger
@@ -34,22 +40,14 @@ MSG_MODEL_REQUIRED = "Выберите модель"
 MSG_MODEL_TOO_LONG = f"Название модели не длиннее {MODEL_MAX_LENGTH} символов"
 MSG_NOT_ACTIVE = "Задание не активно"
 MSG_NOT_PAUSED = "Задание не на паузе"
-MSG_ALREADY_FINISHED = "Задание уже завершено"
 MSG_ALREADY_RUNNING = "Задание уже выполняется"
+MSG_FINAL_RUN_IN_PROGRESS = "Задание выполняет последний запуск"
 
 _LIVE_STATUSES = (ScheduledTaskStatus.ACTIVE, ScheduledTaskStatus.PAUSED)
 
 
 class SchedulerNotFoundError(Exception):
     """The job or run does not exist or belongs to another user."""
-
-
-class SchedulerConflictError(Exception):
-    """The requested change is illegal in the job's current state; `message` is Russian text."""
-
-    def __init__(self, message: str) -> None:
-        super().__init__(message)
-        self.message: str = message
 
 
 def _validate_text_fields(title: str, prompt: str, model: str) -> tuple[str, str, str]:
@@ -201,6 +199,36 @@ async def list_scheduled_tasks(
     return rows
 
 
+async def _guarded_transition(
+    session: AsyncSession,
+    task_id: int,
+    *,
+    expected: ScheduledTaskStatus,
+    values: dict[str, object],
+) -> bool:
+    """Apply values only while the job still has the expected status and a pending slot.
+
+    next_run_at is NULL exactly while the job's final run is in flight; such a job must
+    stay untouched so it can neither be re-armed nor paused, and finalize_task completes
+    it when the run ends.
+    """
+    try:
+        result = await session.exec(
+            update(ScheduledTask)
+            .where(
+                ScheduledTask.id == task_id,
+                ScheduledTask.status == expected,
+                ScheduledTask.next_run_at.is_not(None),
+            )
+            .values(**values)
+        )
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    return result.rowcount == 1
+
+
 async def pause_task(
     session: AsyncSession, user_id: int, task_id: int, now: datetime | None = None
 ) -> ScheduledTask:
@@ -208,15 +236,17 @@ async def pause_task(
     task = await get_owned_task(session, user_id, task_id)
     if task.status != ScheduledTaskStatus.ACTIVE:
         raise SchedulerConflictError(MSG_NOT_ACTIVE)
-    task.status = ScheduledTaskStatus.PAUSED
-    task.updated_at = as_aware_utc(now or datetime.now(timezone.utc))
-    session.add(task)
-    try:
-        await session.commit()
-        await session.refresh(task)
-    except Exception:
-        await session.rollback()
-        raise
+    if task.next_run_at is None:
+        raise SchedulerConflictError(MSG_FINAL_RUN_IN_PROGRESS)
+    updated_at = as_aware_utc(now or datetime.now(timezone.utc))
+    if not await _guarded_transition(
+        session,
+        task_id,
+        expected=ScheduledTaskStatus.ACTIVE,
+        values={"status": ScheduledTaskStatus.PAUSED, "updated_at": updated_at},
+    ):
+        raise SchedulerConflictError(MSG_FINAL_RUN_IN_PROGRESS)
+    await session.refresh(task)
     await publish_task_updated(session, task)
     logger.info("scheduled_task_paused", user_id=user_id, task_id=task_id)
     return task
@@ -229,23 +259,28 @@ async def resume_task(
     task = await get_owned_task(session, user_id, task_id)
     if task.status != ScheduledTaskStatus.PAUSED:
         raise SchedulerConflictError(MSG_NOT_PAUSED)
+    if task.next_run_at is None:
+        raise SchedulerConflictError(MSG_FINAL_RUN_IN_PROGRESS)
     now = as_aware_utc(now or datetime.now(timezone.utc))
-    task.next_run_at = next_run_on_resume(
+    next_run_at = next_run_on_resume(
         task.schedule_type,
         run_at=task.run_at,
         interval_seconds=task.interval_seconds,
         cron_expr=task.cron_expr,
         now=now,
     )
-    task.status = ScheduledTaskStatus.ACTIVE
-    task.updated_at = now
-    session.add(task)
-    try:
-        await session.commit()
-        await session.refresh(task)
-    except Exception:
-        await session.rollback()
-        raise
+    if not await _guarded_transition(
+        session,
+        task_id,
+        expected=ScheduledTaskStatus.PAUSED,
+        values={
+            "status": ScheduledTaskStatus.ACTIVE,
+            "next_run_at": next_run_at,
+            "updated_at": now,
+        },
+    ):
+        raise SchedulerConflictError(MSG_FINAL_RUN_IN_PROGRESS)
+    await session.refresh(task)
     await publish_task_updated(session, task)
     logger.info("scheduled_task_resumed", user_id=user_id, task_id=task_id)
     return task
