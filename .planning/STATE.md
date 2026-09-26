@@ -2,16 +2,15 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: "Week 4: MCP Integration"
-status: milestone_complete
-last_updated: 2026-09-23T23:42:10.655Z
-last_activity: 2026-09-23 -- Phase 07 execution started
+status: completed
+last_updated: "2026-09-26T10:36:03.800Z"
+last_activity: 2026-09-23
 progress:
-  total_phases: 1
+  total_phases: 5
   completed_phases: 1
   total_plans: 6
   completed_plans: 6
-  percent: 100
-stopped_at: Milestone complete (Phase 07 was final phase)
+  percent: 20
 ---
 
 # Project State
@@ -46,6 +45,10 @@ No phases executed yet — metrics will populate after Phase 1 completes.
 - INV-04 conflict-check scope resolved as full-response prose + tool-calls (D-08), shipped in 05-03's `run_self_critique`.
 - Global-vs-per-chat invariant precedence resolved as per-chat-overrides-global via an explicit `overrides_id` FK link (D-05), shipped in 05-02 and confirmed live in the Day 14 acceptance demo.
 - Day 14 demo observed the primary LLM call proactively avoiding invariant violations (refuses + offers alternatives) rather than complying then justifying/retracting in a separate call — accepted as correct, since invariants are injected into every request's system prompt, not just the critique call's. Phase 6 (hard TRANS enforcement) should account for this: a "flagged conflict" may be rarer in practice than assumed, since well-behaved models self-censor at the primary-answer stage.
+
+### Roadmap Evolution
+
+- Phase 8 added: Scheduler (Day 18) — delayed/periodic jobs, written from scratch in Python (not a fork of mcp-cron), branch `Day18`
 
 ### Open Questions (flagged by research, need resolution during phase planning)
 
@@ -90,7 +93,7 @@ Items acknowledged and deferred at milestone close on 2026-09-23:
 
 ## Session Continuity
 
-**Last session:** 2026-09-23T18:35:10.608Z
+**Last session:** 2026-09-26T10:36:03.793Z
 **Next action:** Run `/bm:plan-phase 1` to plan Auth Foundation.
 
 ---
