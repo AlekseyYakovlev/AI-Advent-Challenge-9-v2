@@ -158,6 +158,35 @@ Plans:
 Plans:
 - [ ] TBD (promote with /bm:review-backlog when ready)
 
+### Phase 999.4: Auto-rename chats with LLM instead of 'New Chat' (BACKLOG)
+
+**Goal:** every chat is currently titled 'New Chat'; the LLM should generate a short title per chat
+**Chosen approach (2026-09-26): title after first Q&A turn.** Trigger once when the chat has 2 messages and the title is still the default 'New Chat' (never overwrite a user-edited title); input = first user message + short summary of the first answer; 3–8 words / ~50 chars, temperature 0, max_tokens ~30, plain text (not JSON, for small LM Studio models), user text wrapped in tags against prompt injection; title in the user's language; fallback = truncated first user message if the LLM call fails; run after the `done` event as a non-blocking extra call and push a WebSocket event so the sidebar updates. Open: which model generates the title (default: the chat's current model)
+**Refs:** ChatOllama blog (2025-09-09), OpenSearch-Dashboards PR #12786, NodeSpace issue #1698, LibreChat PR #13395, open-webui discussion #9567
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (promote with /bm:review-backlog when ready)
+
+### Phase 999.5: Modal windows close only via 'x' button (BACKLOG)
+
+**Goal:** change modal behavior: a modal closes only when its 'x' is clicked; clicking outside the modal (on the backdrop) must not close it
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (promote with /bm:review-backlog when ready)
+
+### Phase 999.6: Edit and delete long-term memory fields via UI (BACKLOG)
+
+**Goal:** the user must be able to edit long-term memory fields through the UI ("Редактировать" and "Удалить" buttons per entry)
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (promote with /bm:review-backlog when ready)
+
 ---
 *Roadmap created: 2026-09-19*
 *Last updated: 2026-09-23 — v1.0 milestone archived*
