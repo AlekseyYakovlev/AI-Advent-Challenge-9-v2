@@ -100,7 +100,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 08-05-PLAN.md — User-scoped scheduler ops + REST /api/v1/scheduler/* + scoping tests (wave 3)
+- [x] 08-05-PLAN.md — User-scoped scheduler ops + REST /api/v1/scheduler/* + scoping tests (wave 3)
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -122,7 +122,7 @@ Plans:
 | 5. Invariants (Day 14) | v1.0 | 4/4 | Complete | 2026-09-20 |
 | 6. Controlled Transitions (Day 15) | v1.0 | 4/4 | Complete | 2026-09-21 |
 | 7. MCP Connection (Day 16) | v2.0 | 6/6 | Complete   | 2026-09-23 |
-| 8. Scheduler (Day 18) | v2.0 | 4/8 | In Progress|  |
+| 8. Scheduler (Day 18) | v2.0 | 5/8 | In Progress|  |
 
 ## Backlog
 
