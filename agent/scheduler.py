@@ -3,7 +3,7 @@
 import asyncio
 from datetime import datetime, timezone
 
-from sqlalchemy import exists, update
+from sqlalchemy import and_, case, exists, or_, update
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -35,6 +35,7 @@ MSG_SKIPPED_OVERLAP = "Предыдущий запуск ещё выполнял
 MSG_INTERRUPTED_RESTART = "Прервано: Agent был перезапущен"
 MSG_INTERRUPTED_STOP = "Прервано: Agent остановлен"
 MSG_ABORTED_DELETE = "Прервано: задание удалено"
+MSG_ALREADY_FINISHED = "Задание уже завершено"
 
 TICK_BATCH_LIMIT = 20
 
@@ -51,6 +52,14 @@ def msg_unexpected(exc: BaseException) -> str:
 
 class RunAlreadyActiveError(Exception):
     """A run of this job is already in progress."""
+
+
+class SchedulerConflictError(Exception):
+    """The requested change is illegal in the job's current state; `message` is Russian text."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message: str = message
 
 
 async def build_task_out(session: AsyncSession, task: ScheduledTask) -> ScheduledTaskOut:
@@ -188,13 +197,17 @@ class SchedulerService:
             )
         started: list[int] = []
         for task_id in due_ids:
-            run_id = await self._claim_and_announce(task_id, now, spawn)
+            try:
+                run_id = await self._claim_and_announce(task_id, now, spawn)
+            except Exception as exc:
+                logger.error("scheduler_claim_failed", task_id=task_id, error=type(exc).__name__)
+                continue
             if run_id is not None:
                 started.append(run_id)
         return started
 
     async def _claim_and_announce(self, task_id: int, now: datetime, spawn: bool) -> int | None:
-        """Claim one due job in a fresh session, publish its event and optionally spawn it."""
+        """Claim one due job in a fresh session, spawn its run and publish its event."""
         async with async_session_factory() as session:
             task = await session.get(ScheduledTask, task_id)
             if task is None:
@@ -202,6 +215,11 @@ class SchedulerService:
             run = await self.claim_slot(session, task, now)
             if run is None:
                 return None
+            # Spawned before any further await: a committed RUNNING row must never be left
+            # without a task, whatever happens while announcing it.
+            if spawn and run.status == RunStatus.RUNNING:
+                self._run_task_ids[run.id] = task_id
+                self.spawn_run(run.id)
             logger.info(
                 "scheduler_run_claimed",
                 task_id=task.id,
@@ -218,15 +236,26 @@ class SchedulerService:
                     run_finished_frame(run, await build_task_out(session, task)),
                 )
                 return None
+            await self._announce_started(session, task, run)
+        return run.id
+
+    async def _announce_started(
+        self, session: AsyncSession, task: ScheduledTask, run: TaskRun
+    ) -> None:
+        """Publish run_started; a failure is logged because the run itself is already running."""
+        try:
             await session.refresh(task)
             hub.publish(
                 task.user_id,
                 run_started_frame(run, await build_task_out(session, task)),
             )
-        if spawn:
-            self._run_task_ids[run.id] = task_id
-            self.spawn_run(run.id)
-        return run.id
+        except Exception as exc:
+            logger.error(
+                "scheduler_announce_failed",
+                task_id=task.id,
+                run_id=run.id,
+                error=type(exc).__name__,
+            )
 
     async def finalize_task(self, session: AsyncSession, task_id: int) -> bool:
         """Mark a job completed when it has no next slot and no run in progress."""
@@ -400,15 +429,14 @@ class SchedulerService:
         """
         now = as_aware_utc(now or datetime.now(timezone.utc))
         task_id = task.id
-        exhausts = task.schedule_type == ScheduleType.ONCE or (
-            task.max_runs is not None and task.run_count + 1 >= task.max_runs
+        # Evaluated by the database against the row being updated, not the caller's ORM copy.
+        exhausts = or_(
+            ScheduledTask.schedule_type == ScheduleType.ONCE,
+            and_(
+                ScheduledTask.max_runs.is_not(None),
+                ScheduledTask.run_count + 1 >= ScheduledTask.max_runs,
+            ),
         )
-        values: dict[str, object] = {
-            "run_count": ScheduledTask.run_count + 1,
-            "updated_at": now,
-        }
-        if exhausts:
-            values["next_run_at"] = None
         run = TaskRun(
             scheduled_task_id=task_id,
             user_id=task.user_id,
@@ -420,24 +448,36 @@ class SchedulerService:
             model=task.model,
         )
         try:
-            session.add(run)
-            await session.exec(
-                update(ScheduledTask).where(ScheduledTask.id == task_id).values(**values)
+            result = await session.exec(
+                update(ScheduledTask)
+                .where(
+                    ScheduledTask.id == task_id,
+                    ScheduledTask.status.in_(
+                        [ScheduledTaskStatus.ACTIVE, ScheduledTaskStatus.PAUSED]
+                    ),
+                )
+                .values(
+                    run_count=ScheduledTask.run_count + 1,
+                    next_run_at=case((exhausts, None), else_=ScheduledTask.next_run_at),
+                    updated_at=now,
+                )
             )
+            if result.rowcount != 1:
+                await session.rollback()
+                raise SchedulerConflictError(MSG_ALREADY_FINISHED)
+            session.add(run)
             await session.commit()
         except IntegrityError as exc:
             await session.rollback()
             raise RunAlreadyActiveError() from exc
+        except SchedulerConflictError:
+            raise
         except Exception:
             await session.rollback()
             raise
-        await session.refresh(task)
-        hub.publish(
-            task.user_id,
-            run_started_frame(run, await build_task_out(session, task)),
-        )
         self._run_task_ids[run.id] = task_id
         self.spawn_run(run.id)
+        await self._announce_started(session, task, run)
         return run
 
     async def abort_task_runs(self, task_id: int) -> None:

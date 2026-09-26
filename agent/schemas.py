@@ -7,6 +7,7 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from agent.schedule import MAX_DELAY_SECONDS, MAX_INTERVAL_SECONDS, MAX_RUNS_LIMIT
 from shared.models import ContextStrategy
 
 TITLE_MAX_LENGTH = 200
@@ -495,6 +496,7 @@ class ScheduleTaskArgs(BaseModel):
     delay_seconds: int | None = Field(
         default=None,
         ge=1,
+        le=MAX_DELAY_SECONDS,
         description="For once: run after this many seconds",
     )
     run_at: str | None = Field(
@@ -507,6 +509,7 @@ class ScheduleTaskArgs(BaseModel):
     interval_seconds: int | None = Field(
         default=None,
         ge=1,
+        le=MAX_INTERVAL_SECONDS,
         description="For interval: period in seconds (minimum 10)",
     )
     cron: str | None = Field(
@@ -516,6 +519,7 @@ class ScheduleTaskArgs(BaseModel):
     max_runs: int | None = Field(
         default=None,
         ge=1,
+        le=MAX_RUNS_LIMIT,
         description="Optional: stop after this many runs (periodic jobs only)",
     )
 

@@ -8,7 +8,11 @@ from agent import schedule as sched
 from agent.schedule import (
     MSG_BAD_SCHEDULE,
     MSG_CRON_INVALID,
+    MAX_DELAY_SECONDS,
+    MAX_INTERVAL_SECONDS,
+    MAX_RUNS_LIMIT,
     MSG_MAX_RUNS_INVALID,
+    MSG_MAX_RUNS_TOO_LARGE,
     MSG_RUN_AT_PAST,
     ScheduleSpec,
     ScheduleValidationError,
@@ -346,3 +350,88 @@ def test_module_avoids_zoneinfo_and_utcnow() -> None:
     source = open(sched.__file__, encoding="utf-8").read()
     assert "zoneinfo" not in source
     assert "utcnow" not in source
+
+
+# --- out-of-range inputs are validation errors, never raw OverflowError/OSError ---------
+
+
+def _spec(schedule_type: str, **fields: object) -> ScheduleSpec:
+    base: dict[str, object] = {
+        "delay_seconds": None,
+        "run_at": None,
+        "interval_seconds": None,
+        "cron": None,
+        "max_runs": None,
+    }
+    base.update(fields)
+    return build_schedule_spec(schedule_type, now=NOW, tz=MSK, **base)
+
+
+@pytest.mark.parametrize("delay", [MAX_DELAY_SECONDS + 1, 10**12, 10**30])
+def test_once_delay_beyond_limit_is_rejected(delay: int) -> None:
+    with pytest.raises(ScheduleValidationError) as info:
+        _spec("once", delay_seconds=delay)
+    assert info.value.message == MSG_BAD_SCHEDULE
+
+
+def test_once_delay_at_limit_is_accepted() -> None:
+    spec = _spec("once", delay_seconds=MAX_DELAY_SECONDS)
+    assert spec.run_at == NOW + timedelta(seconds=MAX_DELAY_SECONDS)
+
+
+@pytest.mark.parametrize("interval", [MAX_INTERVAL_SECONDS + 1, 10**12, 10**30])
+def test_interval_beyond_limit_is_rejected(interval: int) -> None:
+    with pytest.raises(ScheduleValidationError) as info:
+        _spec("interval", interval_seconds=interval)
+    assert info.value.message == MSG_BAD_SCHEDULE
+
+
+@pytest.mark.parametrize("max_runs", [MAX_RUNS_LIMIT + 1, 10**30])
+def test_max_runs_beyond_limit_is_rejected(max_runs: int) -> None:
+    with pytest.raises(ScheduleValidationError) as info:
+        _spec("interval", interval_seconds=60, max_runs=max_runs)
+    assert info.value.message == MSG_MAX_RUNS_TOO_LARGE
+
+
+def test_max_runs_at_limit_is_accepted() -> None:
+    assert _spec("interval", interval_seconds=60, max_runs=MAX_RUNS_LIMIT).max_runs == MAX_RUNS_LIMIT
+
+
+@pytest.mark.parametrize(
+    "run_at",
+    [
+        "0001-01-01T00:00:00",
+        "0001-01-01T00:00:00+05:00",
+        "9999-12-31T23:59:59",
+        "9999-12-31T23:59:59-12:00",
+        "2037-01-01T00:00:00",
+    ],
+)
+def test_run_at_extremes_are_validation_errors(run_at: str) -> None:
+    with pytest.raises(ScheduleValidationError):
+        _spec("once", run_at=run_at)
+
+
+@pytest.mark.parametrize("run_at", ["0001-01-01T00:00:00", "0001-01-01T00:00:00+05:00"])
+def test_parse_run_at_year_one_is_validation_error(run_at: str) -> None:
+    for tz in (None, MSK):
+        with pytest.raises(ScheduleValidationError):
+            parse_run_at(run_at, tz)
+
+
+def test_slot_math_overflow_is_validation_error() -> None:
+    huge = ScheduleSpec(ScheduleType.INTERVAL, None, 10**13, None, None)
+    with pytest.raises(ScheduleValidationError):
+        initial_next_run(huge, NOW)
+    with pytest.raises(ScheduleValidationError):
+        next_run_on_resume(
+            ScheduleType.INTERVAL, run_at=None, interval_seconds=10**13, cron_expr=None, now=NOW
+        )
+    with pytest.raises(ScheduleValidationError):
+        next_interval_run(NOW - timedelta(seconds=1), 10**13, NOW)
+
+
+def test_next_cron_run_at_datetime_edge_is_validation_error() -> None:
+    edge = datetime(9999, 12, 31, 23, 59, 30, tzinfo=UTC)
+    with pytest.raises(ScheduleValidationError):
+        next_cron_run("* * * * *", edge, tz=MSK)

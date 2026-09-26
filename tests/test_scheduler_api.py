@@ -186,6 +186,17 @@ async def test_create_enforces_per_user_cap(
 # --------------------------------------------------------------------------- ops: lifecycle
 
 
+async def _clear_next_run(task_id: int, status: ScheduledTaskStatus) -> None:
+    """Put a job in the state of a final run in flight: slot consumed, status still live."""
+    async with async_session_factory() as session:
+        task = await session.get(ScheduledTask, task_id)
+        assert task is not None
+        task.next_run_at = None
+        task.status = status
+        session.add(task)
+        await session.commit()
+
+
 async def test_pause_keeps_next_run_and_rejects_second_pause(
     authenticated_client: AsyncClient,
 ) -> None:
@@ -290,21 +301,24 @@ async def test_run_now_works_when_paused_and_rejects_finished(
 async def test_delete_removes_runs_and_aborts_first(
     authenticated_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Delete removes the job with its runs; the in-flight abort happens before the row goes."""
+    """Delete cancels scheduling first, aborts runs, then removes the job with its runs."""
     user_id = authenticated_client.seeded_user_id
     task = await _create(user_id)
     await _add_run(task.id, user_id, RunStatus.SUCCESS)
     await _add_run(task.id, user_id, RunStatus.FAILED)
-    seen: list[bool] = []
+    seen: list[tuple[ScheduledTaskStatus, bool] | None] = []
 
     async def fake_abort(task_id: int) -> None:
-        seen.append(await _db_task(task_id) is not None)
+        row = await _db_task(task_id)
+        seen.append(None if row is None else (row.status, row.next_run_at is None))
 
     monkeypatch.setattr(scheduler, "abort_task_runs", fake_abort)
     async with async_session_factory() as session:
         await delete_task(session, user_id, task.id)
 
-    assert seen == [True]
+    # First abort: the job is already out of scheduling but still stored; the second one
+    # (after the delete) catches a run spawned in between.
+    assert seen == [(ScheduledTaskStatus.CANCELLED, True), None]
     assert await _db_task(task.id) is None
     async with async_session_factory() as session:
         runs = (
@@ -463,6 +477,28 @@ async def test_rest_create_validation_returns_russian_422(
     assert resp.json()["detail"] == detail
 
 
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"schedule_type": "interval", "interval_seconds": 10**12},
+        {"schedule_type": "interval", "interval_seconds": 10**30},
+        {"schedule_type": "interval", "interval_seconds": 60, "max_runs": 10**30},
+        {"schedule_type": "once", "interval_seconds": None, "delay_seconds": 10**12},
+        {"schedule_type": "once", "interval_seconds": None, "run_at": "0001-01-01T00:00:00"},
+        {"schedule_type": "once", "interval_seconds": None, "run_at": "9999-12-31T23:59:59"},
+    ],
+    ids=["interval-1e12", "interval-1e30", "max-runs-1e30", "delay-1e12", "run-at-0001", "run-at-9999"],
+)
+async def test_rest_create_out_of_range_is_422_with_russian_detail(
+    authenticated_client: AsyncClient, overrides: dict[str, Any]
+) -> None:
+    """Out-of-range numbers and dates are validation errors with a Russian string, never a 500."""
+    resp = await _post_task(authenticated_client, **overrides)
+    assert resp.status_code == 422, resp.text
+    assert isinstance(resp.json()["detail"], str)
+    assert resp.json()["detail"]
+
+
 async def test_rest_create_rejects_non_json_and_foreign_origin(
     authenticated_client: AsyncClient,
 ) -> None:
@@ -525,6 +561,27 @@ async def test_rest_pause_resume_cancel_lifecycle(authenticated_client: AsyncCli
     assert resp.status_code == 200 and resp.json()["status"] == "cancelled"
     resp = await authenticated_client.post(f"{base}/cancel", headers=ORIGIN)
     assert resp.status_code == 409 and resp.json()["detail"] == "Задание уже завершено"
+
+
+async def test_rest_pause_and_resume_of_job_with_final_run_in_flight_are_409(
+    authenticated_client: AsyncClient,
+) -> None:
+    """A job whose slot is consumed (final run in flight) can be neither paused nor resumed."""
+    task_id = (await _api_create(authenticated_client))["id"]
+    base = f"/api/v1/scheduler/tasks/{task_id}"
+
+    await _clear_next_run(task_id, ScheduledTaskStatus.ACTIVE)
+    resp = await authenticated_client.post(f"{base}/pause", headers=ORIGIN)
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "Задание выполняет последний запуск"
+
+    await _clear_next_run(task_id, ScheduledTaskStatus.PAUSED)
+    resp = await authenticated_client.post(f"{base}/resume", headers=ORIGIN)
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "Задание выполняет последний запуск"
+    stored = await _db_task(task_id)
+    assert stored is not None
+    assert stored.status == ScheduledTaskStatus.PAUSED and stored.next_run_at is None
 
 
 async def test_rest_run_now_then_conflict(authenticated_client: AsyncClient) -> None:
