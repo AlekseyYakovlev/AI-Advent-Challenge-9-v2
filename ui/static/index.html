@@ -152,6 +152,18 @@
                     </button>
                 </div>
             </div>
+            <div id="scheduler-panel" class="border-t border-slate-800 p-3 text-xs text-slate-400 overflow-y-auto max-h-72">
+                <h3 class="text-slate-300 font-semibold mb-2 flex items-center justify-between">
+                    <span>Расписание <span id="scheduler-count" class="text-white font-semibold">0</span> <span id="scheduler-running-badge" class="text-sky-400 font-semibold hidden"></span></span>
+                    <button type="button" data-fold-toggle="scheduler-panel-body" aria-expanded="false"
+                        title="Свернуть/развернуть" class="text-slate-400 hover:text-white">▸</button>
+                </h3>
+                <div id="scheduler-panel-body" class="hidden">
+                    <button type="button" id="btn-scheduler-new"
+                        class="w-full rounded-lg bg-indigo-600 hover:bg-indigo-500 px-4 py-2 text-sm font-semibold transition">+ Новое задание</button>
+                    <div id="scheduler-list" class="space-y-2 mt-2"></div>
+                </div>
+            </div>
             <div id="agent-status" class="p-3 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
                 <span>Agent: <span id="agent-status-text">подключение…</span></span>
                 <button id="btn-logout"
@@ -380,6 +392,112 @@
                     </button>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <!-- Scheduler create modal -->
+    <div id="scheduler-create-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+        role="dialog" aria-modal="true" aria-labelledby="scheduler-create-title">
+        <div class="bg-slate-900 border border-slate-700 rounded-xl shadow-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
+            <div class="flex items-center justify-between px-5 py-4 border-b border-slate-700">
+                <h2 id="scheduler-create-title" class="text-lg font-semibold">Новое задание</h2>
+                <button type="button" id="btn-close-scheduler-create" aria-label="Закрыть"
+                    class="text-slate-400 hover:text-white text-xl leading-none">&times;</button>
+            </div>
+            <form id="scheduler-create-form" class="p-5 space-y-4">
+                <div>
+                    <label for="scheduler-title" class="block text-sm text-slate-400 mb-1">Название</label>
+                    <input type="text" id="scheduler-title" maxlength="200" required
+                        placeholder="Например: Сводка по репозиторию"
+                        class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                </div>
+                <div>
+                    <label for="scheduler-prompt" class="block text-sm text-slate-400 mb-1">Что сделать агенту (промпт)</label>
+                    <textarea id="scheduler-prompt" rows="4" maxlength="4000" required
+                        class="w-full resize-none rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"></textarea>
+                    <p class="text-xs text-slate-500 mt-1">Агент выполнит этот текст как запрос и сохранит ответ в истории запусков</p>
+                </div>
+                <div>
+                    <label for="scheduler-type" class="block text-sm text-slate-400 mb-1">Тип расписания</label>
+                    <select id="scheduler-type"
+                        class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <option value="once">Однократно</option>
+                        <option value="interval">Интервал</option>
+                        <option value="cron">Cron</option>
+                    </select>
+                </div>
+                <div id="scheduler-once-fields" class="space-y-2">
+                    <div class="flex items-center gap-2">
+                        <input type="radio" id="scheduler-once-delay-mode" name="scheduler-once-mode" value="delay" checked>
+                        <label for="scheduler-once-delay-mode" class="text-sm text-slate-400">Через N секунд</label>
+                    </div>
+                    <input type="number" id="scheduler-delay" min="1" step="1" value="60" aria-label="Через N секунд"
+                        class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50">
+                    <div class="flex items-center gap-2">
+                        <input type="radio" id="scheduler-once-at-mode" name="scheduler-once-mode" value="at">
+                        <label for="scheduler-once-at-mode" class="text-sm text-slate-400">В указанное время</label>
+                    </div>
+                    <input type="datetime-local" id="scheduler-run-at" disabled aria-label="В указанное время"
+                        class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50">
+                    <p class="text-xs text-slate-500">Локальное время</p>
+                </div>
+                <div id="scheduler-interval-fields" class="hidden">
+                    <label for="scheduler-interval-value" class="block text-sm text-slate-400 mb-1">Каждые</label>
+                    <div class="flex gap-2">
+                        <input type="number" id="scheduler-interval-value" min="1" step="1" value="5"
+                            class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <select id="scheduler-interval-unit" aria-label="Единица интервала"
+                            class="rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                            <option value="seconds">секунд</option>
+                            <option value="minutes" selected>минут</option>
+                            <option value="hours">часов</option>
+                        </select>
+                    </div>
+                    <p class="text-xs text-slate-500 mt-1">Минимальный интервал — 10 секунд</p>
+                </div>
+                <div id="scheduler-cron-fields" class="hidden">
+                    <label for="scheduler-cron" class="block text-sm text-slate-400 mb-1">Cron-выражение</label>
+                    <input type="text" id="scheduler-cron" placeholder="*/5 * * * *"
+                        class="w-full font-mono rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    <p class="text-xs text-slate-500 mt-1">5 полей: минута час день месяц день_недели. Время — локальное время машины агента.</p>
+                </div>
+                <div>
+                    <label for="scheduler-model" class="block text-sm text-slate-400 mb-1">Модель</label>
+                    <select id="scheduler-model"
+                        class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"></select>
+                    <p class="text-xs text-slate-500 mt-1">Если модель будет недоступна, запуск завершится ошибкой</p>
+                </div>
+                <div id="scheduler-max-runs-field" class="hidden">
+                    <label for="scheduler-max-runs" class="block text-sm text-slate-400 mb-1">Максимум запусков (необязательно)</label>
+                    <input type="number" id="scheduler-max-runs" min="1" step="1" placeholder="Без ограничения"
+                        class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                </div>
+                <p id="scheduler-create-error" class="text-xs text-red-400"></p>
+                <div class="flex justify-end gap-2 pt-2">
+                    <button type="button" id="btn-cancel-scheduler-create"
+                        class="rounded-lg px-4 py-2 text-sm text-slate-400 hover:text-white transition">
+                        Отмена
+                    </button>
+                    <button type="submit" id="btn-submit-scheduler-create"
+                        class="rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2 text-sm font-semibold transition">
+                        Создать задание
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Scheduler run result modal -->
+    <div id="scheduler-run-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+        role="dialog" aria-modal="true" aria-labelledby="scheduler-run-title">
+        <div class="bg-slate-900 border border-slate-700 rounded-xl shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
+            <div class="flex items-center justify-between gap-2 px-5 py-4 border-b border-slate-700">
+                <h2 id="scheduler-run-title" class="text-lg font-semibold truncate"></h2>
+                <button type="button" id="btn-close-scheduler-run" aria-label="Закрыть"
+                    class="text-slate-400 hover:text-white text-xl leading-none">&times;</button>
+            </div>
+            <div id="scheduler-run-meta" class="px-5 pt-3 text-xs text-slate-500 flex flex-wrap gap-2"></div>
+            <div id="scheduler-run-body" class="p-5 space-y-4"></div>
         </div>
     </div>
 
