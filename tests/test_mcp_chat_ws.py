@@ -9,6 +9,7 @@ import respx
 from starlette.testclient import TestClient
 
 from agent.main import app
+from agent.tool_guard import TOOL_ERROR_REMINDER
 from agent.tools import TOOL_REGISTRY
 from shared.config import settings
 from tests.conftest import login_test_client
@@ -125,6 +126,7 @@ def test_mcp_tool_failure_is_a_tool_result_not_an_error_frame() -> None:
             [
                 _tool_calls_response([("call_fail", "mcp__fixture__fail", "{}")]),
                 _plain_content_response("The tool failed."),
+                _plain_content_response("Tried another way."),
             ],
         ),
     )
@@ -141,6 +143,9 @@ def test_mcp_tool_failure_is_a_tool_result_not_an_error_frame() -> None:
     follow_up = _request_body(route, 1)
     tool_message = next(m for m in follow_up["messages"] if m["role"] == "tool")
     assert "fixture failure" in tool_message["content"]
+
+    nudge = _request_body(route, 2)
+    assert nudge["messages"][-1] == {"role": "user", "content": TOOL_ERROR_REMINDER}
 
 
 @respx.mock

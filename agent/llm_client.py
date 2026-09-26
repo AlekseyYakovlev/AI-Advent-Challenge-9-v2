@@ -143,6 +143,7 @@ class LLMClient:
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Parse SSE, accumulating tool_calls deltas by index across chunks."""
         tool_calls_acc: dict[int, dict[str, Any]] = {}
+        tool_calls_emitted: bool = False
         async for line in response.aiter_lines():
             if not line.startswith("data: "):
                 continue
@@ -169,7 +170,13 @@ class LLMClient:
                     if fn.get("arguments"):
                         acc["function"]["arguments"] += fn["arguments"]
             if choice.get("finish_reason") == "tool_calls":
+                tool_calls_emitted = True
                 yield {"type": "tool_calls", "tool_calls": list(tool_calls_acc.values())}
+        # Some local models end a tool-call turn with finish_reason "stop" or just [DONE];
+        # the accumulated deltas would otherwise be silently lost.
+        if tool_calls_acc and not tool_calls_emitted:
+            logger.info("tool_calls_flushed_at_stream_end", count=len(tool_calls_acc))
+            yield {"type": "tool_calls", "tool_calls": list(tool_calls_acc.values())}
 
 
 class LMStudioClient:

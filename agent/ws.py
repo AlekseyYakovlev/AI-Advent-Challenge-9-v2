@@ -4,7 +4,8 @@ import asyncio
 import json
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from datetime import datetime, timezone
+from typing import Any, Protocol
 
 from fastapi import WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
@@ -35,11 +36,18 @@ from agent.schemas import (
     MessagePayload,
     ToolCallEvent,
 )
+from agent.text_tool_calls import TextToolCallFilter
 from agent.tool_guard import (
+    ACTION_ANNOUNCE_REMINDER,
     ACTION_CLAIM_REMINDER,
     MAX_TOOL_ROUNDS,
+    MULTI_STEP_TOOL_HINT,
+    TOOL_ERROR_REMINDER,
     TOOL_USE_RULE,
     TraceLeakFilter,
+    build_clock_line,
+    build_tool_fallback_summary,
+    looks_like_action_announcement,
     looks_like_action_claim,
     strip_tool_use_rule,
 )
@@ -214,20 +222,64 @@ async def _persist_assistant_message(
     return assistant_msg
 
 
-async def _emit_filtered(websocket: WebSocket, trace_filter: TraceLeakFilter, token: str) -> str:
-    """Send the trace-filtered part of a token to the client and return what was sent."""
+class _StreamFilter(Protocol):
+    """Anything that turns raw streamed chunks into text that is safe to show."""
+
+    def feed(self, chunk: str) -> str:
+        """Return the part of the chunk that is safe to emit now."""
+
+    def flush(self) -> str:
+        """Return any withheld text once the stream ends."""
+
+
+class _ReplyFilter:
+    """Streaming filter that captures text-written tool calls, then drops tool-trace imitations."""
+
+    def __init__(self) -> None:
+        self._text_calls = TextToolCallFilter()
+        self._trace = TraceLeakFilter()
+
+    def feed(self, chunk: str) -> str:
+        """Return the part of the chunk that is safe to emit now."""
+        return self._trace.feed(self._text_calls.feed(chunk))
+
+    def flush(self) -> str:
+        """Return any withheld text once the stream ends."""
+        return self._trace.feed(self._text_calls.flush()) + self._trace.flush()
+
+    def recovered_calls(self, tool_schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Return the tool calls the model wrote as text during this stream."""
+        return self._text_calls.captured_calls(tool_schemas)
+
+
+async def _emit_filtered(websocket: WebSocket, trace_filter: _StreamFilter, token: str) -> str:
+    """Send the filtered part of a token to the client and return what was sent."""
     safe = trace_filter.feed(token)
     if safe:
         await websocket.send_json({"type": "token", "content": safe})
     return safe
 
 
-async def _flush_filtered(websocket: WebSocket, trace_filter: TraceLeakFilter) -> str:
-    """Send any text the trace filter still withholds at stream end and return it."""
+async def _flush_filtered(websocket: WebSocket, trace_filter: _StreamFilter) -> str:
+    """Send any text the filter still withholds at stream end and return it."""
     safe = trace_filter.flush()
     if safe:
         await websocket.send_json({"type": "token", "content": safe})
     return safe
+
+
+def _recover_text_calls(
+    reply_filter: _ReplyFilter,
+    tool_schemas: list[dict[str, Any]] | None,
+    chat_id: int,
+) -> list[dict[str, Any]]:
+    """Return tool calls the model wrote as text, or [] when tools were not offered."""
+    if not tool_schemas:
+        return []
+    recovered = reply_filter.recovered_calls(tool_schemas)
+    if recovered:
+        logger.info("text_tool_calls_recovered", chat_id=chat_id, count=len(recovered))
+    return recovered
 
 
 async def _stream_action_claim_retry(
@@ -242,7 +294,7 @@ async def _stream_action_claim_retry(
     """Stream the single corrective re-prompt; a failure keeps whatever was already sent."""
     retry_text = ""
     retry_tool_calls: list[dict[str, Any]] = []
-    trace_filter = TraceLeakFilter()
+    trace_filter = _ReplyFilter()
     active_streams[chat_id] = asyncio.current_task()
 
     async def send_retry_text(safe: str) -> None:
@@ -272,6 +324,8 @@ async def _stream_action_claim_retry(
     finally:
         active_streams.pop(chat_id, None)
     await send_retry_text(trace_filter.flush())
+    if not retry_tool_calls:
+        retry_tool_calls = _recover_text_calls(trace_filter, tool_schemas, chat_id)
     return retry_text, retry_tool_calls
 
 
@@ -301,16 +355,35 @@ class _ToolRoundsResult:
     rounds: int = 0
     error: Exception | None = None
     empty_retry_used: bool = False
+    announce_nudge_used: bool = False
+    error_nudge_used: bool = False
 
 
 async def _stream_follow_up(
     turn: _ToolTurn,
     tools: list[dict[str, Any]] | None,
+    separator: bool = False,
 ) -> tuple[str, list[dict[str, Any]]]:
-    """Stream one follow-up; with tools it may return further tool calls, without it is text only."""
+    """Stream one follow-up; with tools it may return further tool calls, without it is text only.
+
+    With separator, a blank line is sent before the first chunk so the text does not run
+    into what was already shown.
+    """
     text = ""
     tool_calls: list[dict[str, Any]] = []
-    trace_filter = TraceLeakFilter()
+    reply_filter = _ReplyFilter()
+
+    async def send(safe: str) -> None:
+        """Send filtered text, preceded by the separator before the first chunk."""
+        nonlocal text
+        if not safe:
+            return
+        if separator and not text:
+            await turn.websocket.send_json({"type": "token", "content": "\n\n"})
+            text += "\n\n"
+        await turn.websocket.send_json({"type": "token", "content": safe})
+        text += safe
+
     async for event in llm_client.stream_chat(
         turn.llm_messages,
         turn.payload.model,
@@ -319,12 +392,14 @@ async def _stream_follow_up(
         tools=tools,
     ):
         if not tools:
-            text += await _emit_filtered(turn.websocket, trace_filter, event)
+            await send(reply_filter.feed(event))
         elif event["type"] == "content":
-            text += await _emit_filtered(turn.websocket, trace_filter, event["content"])
+            await send(reply_filter.feed(event["content"]))
         elif event["type"] == "tool_calls":
             tool_calls = event["tool_calls"]
-    text += await _flush_filtered(turn.websocket, trace_filter)
+    await send(reply_filter.flush())
+    if not tool_calls:
+        tool_calls = _recover_text_calls(reply_filter, tools, turn.chat_id)
     return text, tool_calls
 
 
@@ -332,16 +407,17 @@ async def _stream_follow_up_with_empty_retry(
     turn: _ToolTurn,
     tools: list[dict[str, Any]] | None,
     acc: _ToolRoundsResult,
+    separator: bool = False,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Stream a follow-up into acc.text; retry once without tools if it came back empty."""
-    text, tool_calls = await _stream_follow_up(turn, tools)
+    text, tool_calls = await _stream_follow_up(turn, tools, separator)
     acc.text += text
     # Some local models answer nothing when tools are offered right after a tool result.
     if not tools or tool_calls or text.strip() or acc.empty_retry_used:
         return text, tool_calls
     acc.empty_retry_used = True
     logger.info("tool_followup_empty_retry", chat_id=turn.chat_id, round=acc.rounds)
-    retry_text, _ = await _stream_follow_up(turn, None)
+    retry_text, _ = await _stream_follow_up(turn, None, separator)
     acc.text += retry_text
     return retry_text, []
 
@@ -368,7 +444,7 @@ async def _dispatch_round(
     calls: list[dict[str, Any]],
     echo_text: str,
     acc: _ToolRoundsResult,
-) -> None:
+) -> list[dict[str, Any]]:
     """Run one round of tool calls, report them to the client and extend the LLM context."""
     results = await dispatch_tool_calls(
         turn.session,
@@ -398,6 +474,35 @@ async def _dispatch_round(
     acc.results.extend(results)
     acc.calls.extend(calls)
     acc.rounds += 1
+    return results
+
+
+def _pick_nudge(acc: _ToolRoundsResult, text: str, last_results: list[dict[str, Any]]) -> str | None:
+    """Return the kind of nudge the follow-up text calls for, marking it used, or None."""
+    if not acc.announce_nudge_used and looks_like_action_announcement(text):
+        acc.announce_nudge_used = True
+        return "announce"
+    mcp_failed = any(not r["ok"] and r.get("mcp") is not None for r in last_results)
+    # Only MCP failures: native task-tool errors have their own transition re-prompt.
+    if not acc.error_nudge_used and mcp_failed:
+        acc.error_nudge_used = True
+        return "error"
+    return None
+
+
+async def _stream_nudge(
+    turn: _ToolTurn,
+    tools: list[dict[str, Any]],
+    acc: _ToolRoundsResult,
+    text: str,
+    kind: str,
+) -> tuple[str, list[dict[str, Any]]]:
+    """Send the model one corrective re-prompt and stream its answer, tools still on offer."""
+    reminder = ACTION_ANNOUNCE_REMINDER if kind == "announce" else TOOL_ERROR_REMINDER
+    logger.info("tool_round_nudge", chat_id=turn.chat_id, kind=kind, rounds=acc.rounds)
+    turn.llm_messages.append({"role": "assistant", "content": text})
+    turn.llm_messages.append({"role": "user", "content": reminder})
+    return await _stream_follow_up_with_empty_retry(turn, tools, acc, separator=True)
 
 
 async def _run_tool_rounds(
@@ -410,7 +515,7 @@ async def _run_tool_rounds(
     calls = first_calls
     echo_text = first_echo_text
     while True:
-        await _dispatch_round(turn, calls, echo_text, acc)
+        last_results = await _dispatch_round(turn, calls, echo_text, acc)
         if acc.rounds == 1:
             # After a tool round the rule makes local models answer empty; drop it for
             # the rest of the turn (the shared list also covers later re-prompts).
@@ -420,6 +525,10 @@ async def _run_tool_rounds(
             logger.warning("tool_rounds_capped", chat_id=turn.chat_id, rounds=acc.rounds)
         try:
             text, next_calls = await _stream_follow_up_with_empty_retry(turn, tools, acc)
+            if not next_calls and tools is not None:
+                kind = _pick_nudge(acc, text, last_results)
+                if kind is not None:
+                    text, next_calls = await _stream_nudge(turn, tools, acc, text, kind)
             if next_calls and _call_signatures(next_calls) & _call_signatures(calls):
                 logger.warning("tool_loop_detected", chat_id=turn.chat_id, rounds=acc.rounds)
                 # The repeated call is not dispatched; the text-only stream ends the turn.
@@ -536,6 +645,22 @@ async def _reprompt_rejected_transitions(
     return text
 
 
+async def _send_fallback_summary(
+    websocket: WebSocket,
+    results: list[dict[str, Any]],
+    user_text: str,
+    shown_text: str,
+    chat_id: int,
+) -> str:
+    """Send the fixed tool-result summary as one token frame and return the text sent."""
+    logger.info("tool_reply_fallback_summary", chat_id=chat_id, results=len(results))
+    summary = build_tool_fallback_summary(results, user_text)
+    if shown_text.strip():
+        summary = "\n\n" + summary
+    await websocket.send_json({"type": "token", "content": summary})
+    return summary
+
+
 async def _handle_chat_message(
     websocket: WebSocket,
     chat_id: int,
@@ -601,10 +726,15 @@ async def _handle_chat_message(
                 tool_schemas = None
                 logger.warning("tools_disabled_unowned_chat", chat_id=chat_id)
 
-            if tool_schemas and llm_messages and llm_messages[0]["role"] == "system":
+            if llm_messages and llm_messages[0]["role"] == "system":
+                # The clock and the multi-step hint stay for the whole turn; only the
+                # rule is removable, so it must remain the last suffix.
+                suffix = "\n\n" + build_clock_line(datetime.now(timezone.utc).astimezone())
+                if tool_schemas:
+                    suffix += "\n\n" + MULTI_STEP_TOOL_HINT + "\n\n" + TOOL_USE_RULE
                 llm_messages[0] = {
                     **llm_messages[0],
-                    "content": llm_messages[0]["content"] + "\n\n" + TOOL_USE_RULE,
+                    "content": llm_messages[0]["content"] + suffix,
                 }
 
             assistant_text = ""
@@ -614,7 +744,7 @@ async def _handle_chat_message(
 
             try:
                 if tool_schemas:
-                    trace_filter = TraceLeakFilter()
+                    reply_filter = _ReplyFilter()
                     async for event in llm_client.stream_chat(
                         llm_messages,
                         payload.model,
@@ -624,11 +754,15 @@ async def _handle_chat_message(
                     ):
                         if event["type"] == "content":
                             assistant_text += await _emit_filtered(
-                                websocket, trace_filter, event["content"],
+                                websocket, reply_filter, event["content"],
                             )
                         elif event["type"] == "tool_calls":
                             pending_tool_calls = event["tool_calls"]
-                    assistant_text += await _flush_filtered(websocket, trace_filter)
+                    assistant_text += await _flush_filtered(websocket, reply_filter)
+                    if not pending_tool_calls:
+                        pending_tool_calls = _recover_text_calls(
+                            reply_filter, tool_schemas, chat_id,
+                        )
                 else:
                     trace_filter = TraceLeakFilter()
                     async for token in llm_client.stream_chat(
@@ -659,11 +793,21 @@ async def _handle_chat_message(
                 active_streams.pop(chat_id, None)
 
             echo_text = assistant_text
-            if tool_schemas and not pending_tool_calls and looks_like_action_claim(assistant_text):
+            claim = bool(tool_schemas) and looks_like_action_claim(assistant_text)
+            announce = bool(tool_schemas) and looks_like_action_announcement(assistant_text)
+            if tool_schemas and not pending_tool_calls and (claim or announce):
                 # One bounded retry: never re-checked, so a stubborn model cannot loop.
-                logger.info("action_claim_without_tool", chat_id=chat_id)
+                logger.info(
+                    "action_claim_without_tool" if claim else "action_announce_without_tool",
+                    chat_id=chat_id,
+                )
                 llm_messages.append({"role": "assistant", "content": assistant_text})
-                llm_messages.append({"role": "user", "content": ACTION_CLAIM_REMINDER})
+                llm_messages.append(
+                    {
+                        "role": "user",
+                        "content": ACTION_CLAIM_REMINDER if claim else ACTION_ANNOUNCE_REMINDER,
+                    },
+                )
                 retry_text, pending_tool_calls = await _stream_action_claim_retry(
                     websocket,
                     llm_messages,
@@ -717,10 +861,15 @@ async def _handle_chat_message(
                 memory_writes = _collect_memory_writes(rounds.results)
                 task_writes = _collect_task_writes(rounds.results)
                 await _send_tool_error_frames(websocket, rounds.results)
-                assistant_text += await _reprompt_rejected_transitions(
+                reprompt_text = await _reprompt_rejected_transitions(
                     turn,
                     _collect_rejected_transitions(rounds.results),
                 )
+                assistant_text += reprompt_text
+                if not (rounds.text + reprompt_text).strip():
+                    assistant_text += await _send_fallback_summary(
+                        websocket, rounds.results, payload.content, assistant_text, chat_id,
+                    )
                 pending_tool_calls = rounds.calls
 
             active_invariants = await invariants.resolve_active_invariants(session, chat_id)

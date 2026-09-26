@@ -239,3 +239,87 @@ async def test_reasoning_content_deltas_are_ignored(llm_client: LLMClient) -> No
     content_events = [e for e in events if e["type"] == "content"]
     assert len(content_events) == 1
     assert content_events[0]["content"] == "Done."
+
+
+_TOOL_DELTAS = [
+    'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","type":"function",'
+    '"function":{"name":"save_long_term_memory","arguments":""}}]},"finish_reason":null}]}',
+    'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"type":"function",'
+    '"function":{"arguments":"{\\"key\\":\\"k\\"}"}}]},"finish_reason":null}]}',
+]
+
+
+async def _collect_events(llm_client: LLMClient, lines: list[str]) -> list[dict]:
+    """Stream a mocked SSE body with tools enabled and return every event."""
+    respx.post(f"{BASE_URL}/v1/chat/completions").mock(
+        return_value=httpx.Response(200, content=_sse_body(lines)),
+    )
+    tools = [{"type": "function", "function": {"name": "save_long_term_memory"}}]
+    return [
+        item
+        async for item in llm_client.stream_chat(
+            messages=[{"role": "user", "content": "hi"}],
+            model="qwen/qwen3.5-9b",
+            temperature=0.0,
+            max_tokens=100,
+            tools=tools,
+        )
+    ]
+
+
+@respx.mock
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "tail",
+    [
+        ['data: {"choices":[{"delta":{},"finish_reason":"stop"}]}', "data: [DONE]"],
+        ["data: [DONE]"],
+        [],
+        ['data: {"choices":[{"delta":{},"finish_reason":"length"}]}'],
+    ],
+)
+async def test_tool_calls_flushed_when_stream_ends_without_tool_calls_finish(
+    llm_client: LLMClient,
+    tail: list[str],
+) -> None:
+    """Tool-call deltas are yielded once at stream end for stop, [DONE]-only and EOF endings."""
+    events = await _collect_events(llm_client, _TOOL_DELTAS + tail)
+
+    tool_events = [e for e in events if e["type"] == "tool_calls"]
+    assert len(tool_events) == 1
+    call = tool_events[0]["tool_calls"][0]
+    assert call["function"]["name"] == "save_long_term_memory"
+    assert json.loads(call["function"]["arguments"]) == {"key": "k"}
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_tool_calls_finish_reason_does_not_duplicate_at_stream_end(
+    llm_client: LLMClient,
+) -> None:
+    """A normal tool_calls finish still yields exactly one event."""
+    events = await _collect_events(
+        llm_client,
+        _TOOL_DELTAS
+        + ['data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}', "data: [DONE]"],
+    )
+
+    assert len([e for e in events if e["type"] == "tool_calls"]) == 1
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_no_tool_deltas_and_stop_yields_no_tool_calls_event(
+    llm_client: LLMClient,
+) -> None:
+    """Plain content ending in stop produces no tool_calls event."""
+    events = await _collect_events(
+        llm_client,
+        [
+            'data: {"choices":[{"delta":{"content":"Hi"},"finish_reason":null}]}',
+            'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}',
+            "data: [DONE]",
+        ],
+    )
+
+    assert [e["type"] for e in events] == ["content"]
