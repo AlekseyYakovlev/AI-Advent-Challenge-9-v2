@@ -5,7 +5,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from shared.models import ContextStrategy
 
@@ -24,6 +24,8 @@ TASK_TITLE_MAX_LENGTH = 200
 TASK_DESCRIPTION_MAX_LENGTH = 5_000
 TASK_GOAL_MAX_LENGTH = 2_000
 TASK_NOTE_MAX_LENGTH = 2_000
+SCHEDULED_TITLE_MAX_LENGTH = 200
+SCHEDULED_PROMPT_MAX_LENGTH = 4_000
 INVARIANT_TITLE_MAX_LENGTH = 200
 INVARIANT_RULE_MAX_LENGTH = 2000
 INVARIANT_CONFLICT_NOTE_MAX_LENGTH = 2000
@@ -465,6 +467,91 @@ class ResumeTaskArgs(BaseModel):
     task_id: int = Field(
         gt=0,
         description="The numeric id of an existing task in this chat to resume",
+    )
+
+
+class ScheduleTaskArgs(BaseModel):
+    """Tool-call arguments for schedule_task."""
+
+    schedule_type: Literal["once", "interval", "cron"] = Field(
+        description=(
+            "once = single run; interval = every N seconds; "
+            "cron = 5-field cron in the agent machine's LOCAL time"
+        ),
+    )
+    title: str = Field(
+        min_length=1,
+        max_length=SCHEDULED_TITLE_MAX_LENGTH,
+        description="Short human-readable job title",
+    )
+    prompt: str = Field(
+        min_length=1,
+        max_length=SCHEDULED_PROMPT_MAX_LENGTH,
+        description=(
+            "What the agent must do at fire time, as a self-contained instruction "
+            "(no user will be present)"
+        ),
+    )
+    delay_seconds: int | None = Field(
+        default=None,
+        ge=1,
+        description="For once: run after this many seconds",
+    )
+    run_at: str | None = Field(
+        default=None,
+        description=(
+            "For once: absolute local time, ISO 8601 like 2026-09-26T14:05:00 "
+            "(compute it from the current local time in the system message)"
+        ),
+    )
+    interval_seconds: int | None = Field(
+        default=None,
+        ge=1,
+        description="For interval: period in seconds (minimum 10)",
+    )
+    cron: str | None = Field(
+        default=None,
+        description="For cron: exactly 5 fields: minute hour day month weekday",
+    )
+    max_runs: int | None = Field(
+        default=None,
+        ge=1,
+        description="Optional: stop after this many runs (periodic jobs only)",
+    )
+
+    @model_validator(mode="after")
+    def _check_schedule_fields(self) -> "ScheduleTaskArgs":
+        """Require the field set that matches schedule_type."""
+        if self.schedule_type == "once":
+            if (self.delay_seconds is None) == (self.run_at is None):
+                raise ValueError("once requires exactly one of delay_seconds or run_at")
+        elif self.schedule_type == "interval":
+            if self.interval_seconds is None:
+                raise ValueError("interval requires interval_seconds")
+        elif not self.cron:
+            raise ValueError("cron requires a 5-field cron expression")
+        return self
+
+
+class ListScheduledTasksArgs(BaseModel):
+    """Tool-call arguments for list_scheduled_tasks (none)."""
+
+
+class CancelScheduledTaskArgs(BaseModel):
+    """Tool-call arguments for cancel_scheduled_task."""
+
+    task_id: int = Field(
+        gt=0,
+        description=(
+            "The numeric id of an existing scheduled job "
+            "(call list_scheduled_tasks first if unknown)"
+        ),
+    )
+    user_requested_cancellation: bool = Field(
+        description=(
+            "Must be true, and only when the user explicitly asked in their latest message "
+            "to cancel/stop/delete this job"
+        ),
     )
 
 
