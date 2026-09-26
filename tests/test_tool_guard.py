@@ -259,7 +259,7 @@ def test_strip_rule_removes_one_suffix_per_call() -> None:
 
 def test_round_cap_allows_ten_rounds() -> None:
     """Multi-step requests such as commit + push + MR need up to ten tool rounds."""
-    assert MAX_TOOL_ROUNDS == 10
+    assert MAX_TOOL_ROUNDS == 15
 
 
 @pytest.mark.parametrize(

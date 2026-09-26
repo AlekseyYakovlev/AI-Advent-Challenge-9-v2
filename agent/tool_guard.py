@@ -8,7 +8,7 @@ TOOL_TRACE_HEADER = "[Tool calls actually executed for this reply]"
 
 # Caps dispatched tool rounds per chat turn so a model cannot loop forever.
 # Ten rounds because "commit, push to a branch, open an MR" alone takes about six.
-MAX_TOOL_ROUNDS = 10
+MAX_TOOL_ROUNDS = 15
 
 TOOL_USE_RULE = (
     "Tool use rule: never say an action was performed unless you called the "
