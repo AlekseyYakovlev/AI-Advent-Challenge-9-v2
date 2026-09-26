@@ -403,3 +403,265 @@ async def test_list_task_runs_newest_first_and_limited(
     assert [r.id for r in runs] == [new, old]
     assert [r.id for r in limited] == [new]
     assert run.id == old and owner_task.id == task.id
+
+
+# --------------------------------------------------------------------------- REST
+
+
+async def _post_task(client: AsyncClient, **overrides: Any) -> Any:
+    """POST a valid interval job over REST and return the response."""
+    body: dict[str, Any] = {
+        "title": "Digest",
+        "prompt": "summarize",
+        "model": "deepseek-chat",
+        "schedule_type": "interval",
+        "interval_seconds": 60,
+    }
+    body.update(overrides)
+    return await client.post("/api/v1/scheduler/tasks", json=body, headers=ORIGIN)
+
+
+async def _api_create(client: AsyncClient, **overrides: Any) -> dict[str, Any]:
+    resp = await _post_task(client, **overrides)
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+async def test_rest_create_returns_201_with_utc_iso(authenticated_client: AsyncClient) -> None:
+    """POST /tasks answers 201 with UTC-aware ISO timestamps and the stored schedule."""
+    resp = await _post_task(authenticated_client, max_runs=3)
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["schedule_type"] == "interval"
+    assert data["max_runs"] == 3
+    assert data["status"] == "active"
+    for key in ("next_run_at", "created_at"):
+        assert data[key].endswith("Z") or data[key].endswith("+00:00"), data[key]
+    assert data["last_run"] is None and data["is_running"] is False
+
+
+@pytest.mark.parametrize(
+    "overrides,detail",
+    [
+        ({"schedule_type": "cron", "cron": "*/5 * * * * *"}, MSG_CRON_INVALID),
+        (
+            {"schedule_type": "once", "interval_seconds": None, "run_at": "2000-01-01T00:00:00Z"},
+            MSG_RUN_AT_PAST,
+        ),
+        ({"title": "  "}, MSG_TITLE_PROMPT_REQUIRED),
+        ({"interval_seconds": 5}, msg_min_interval(10)),
+        ({"model": ""}, "Выберите модель"),
+    ],
+    ids=["cron-6-fields", "run-at-past", "blank-title", "interval-too-short", "blank-model"],
+)
+async def test_rest_create_validation_returns_russian_422(
+    authenticated_client: AsyncClient, overrides: dict[str, Any], detail: str
+) -> None:
+    """Invalid input answers 422 with a plain Russian string detail."""
+    resp = await _post_task(authenticated_client, **overrides)
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == detail
+
+
+async def test_rest_create_rejects_non_json_and_foreign_origin(
+    authenticated_client: AsyncClient,
+) -> None:
+    """The CSRF guards apply to creation: 415 without JSON, 403 for a foreign Origin."""
+    resp = await authenticated_client.post(
+        "/api/v1/scheduler/tasks",
+        content='{"title": "x"}',
+        headers={**ORIGIN, "Content-Type": "text/plain"},
+    )
+    assert resp.status_code == 415
+    resp = await authenticated_client.post(
+        "/api/v1/scheduler/tasks",
+        json={"title": "x"},
+        headers={"Origin": "http://evil.example"},
+    )
+    assert resp.status_code == 403
+
+
+async def test_rest_create_over_cap_is_409(
+    authenticated_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Exceeding the per-user cap answers 409 with the Russian cap message."""
+    monkeypatch.setattr(settings, "SCHEDULER_MAX_ACTIVE_TASKS_PER_USER", 1)
+    await _api_create(authenticated_client)
+    resp = await _post_task(authenticated_client)
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == MSG_TOO_MANY_TASKS.format(n=1)
+
+
+async def test_rest_list_and_get_are_per_user(
+    authenticated_client: AsyncClient, second_authenticated_client: AsyncClient
+) -> None:
+    """The list holds only the caller's jobs and a foreign id answers 404."""
+    created = await _api_create(authenticated_client)
+    listed = await authenticated_client.get("/api/v1/scheduler/tasks")
+    assert [item["id"] for item in listed.json()] == [created["id"]]
+    other_list = await second_authenticated_client.get("/api/v1/scheduler/tasks")
+    assert other_list.json() == []
+    foreign = await second_authenticated_client.get(f"/api/v1/scheduler/tasks/{created['id']}")
+    assert foreign.status_code == 404
+    own = await authenticated_client.get(f"/api/v1/scheduler/tasks/{created['id']}")
+    assert own.status_code == 200 and own.json()["title"] == "Digest"
+
+
+async def test_rest_pause_resume_cancel_lifecycle(authenticated_client: AsyncClient) -> None:
+    """Pause, resume and cancel change the status; repeating an illegal step is a 409."""
+    base = f"/api/v1/scheduler/tasks/{(await _api_create(authenticated_client))['id']}"
+
+    resp = await authenticated_client.post(f"{base}/pause", headers=ORIGIN)
+    assert resp.status_code == 200 and resp.json()["status"] == "paused"
+    resp = await authenticated_client.post(f"{base}/pause", headers=ORIGIN)
+    assert resp.status_code == 409 and resp.json()["detail"] == "Задание не активно"
+
+    resp = await authenticated_client.post(f"{base}/resume", headers=ORIGIN)
+    assert resp.status_code == 200 and resp.json()["status"] == "active"
+    resp = await authenticated_client.post(f"{base}/resume", headers=ORIGIN)
+    assert resp.status_code == 409
+
+    resp = await authenticated_client.post(f"{base}/cancel", headers=ORIGIN)
+    assert resp.status_code == 200 and resp.json()["status"] == "cancelled"
+    resp = await authenticated_client.post(f"{base}/cancel", headers=ORIGIN)
+    assert resp.status_code == 409 and resp.json()["detail"] == "Задание уже завершено"
+
+
+async def test_rest_run_now_then_conflict(authenticated_client: AsyncClient) -> None:
+    """Run now answers 202 with a running manual run; a second call answers 409."""
+    task_id = (await _api_create(authenticated_client))["id"]
+    url = f"/api/v1/scheduler/tasks/{task_id}/run"
+    resp = await authenticated_client.post(url, headers=ORIGIN)
+    assert resp.status_code == 202
+    data = resp.json()
+    assert data["status"] == "running" and data["trigger"] == "manual"
+    assert data["task_id"] == task_id
+    resp = await authenticated_client.post(url, headers=ORIGIN)
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "Задание уже выполняется"
+
+
+async def test_rest_runs_and_run_detail(authenticated_client: AsyncClient) -> None:
+    """The run list is newest first without result_text; the detail carries the full result."""
+    user_id = authenticated_client.seeded_user_id
+    task_id = (await _api_create(authenticated_client, title="Report"))["id"]
+    old = await _add_run(task_id, user_id, RunStatus.FAILED, error="boom")
+    new = await _add_run(
+        task_id,
+        user_id,
+        RunStatus.SUCCESS,
+        started_at=NOW + timedelta(hours=1),
+        finished_at=NOW + timedelta(hours=1, seconds=2),
+        result_text="all good",
+        tool_trace='[{"tool": "search", "ok": true}]',
+    )
+
+    listed = await authenticated_client.get(f"/api/v1/scheduler/tasks/{task_id}/runs")
+    assert listed.status_code == 200
+    items = listed.json()
+    assert [item["id"] for item in items] == [new, old]
+    assert all("result_text" not in item for item in items)
+    assert items[0]["duration_ms"] == 2000
+
+    detail = await authenticated_client.get(f"/api/v1/scheduler/runs/{new}")
+    assert detail.status_code == 200
+    body = detail.json()
+    assert body["result_text"] == "all good"
+    assert body["task_title"] == "Report"
+    assert body["tool_trace"] == [{"tool": "search", "ok": True}]
+    failed = (await authenticated_client.get(f"/api/v1/scheduler/runs/{old}")).json()
+    assert failed["error"] == "boom" and failed["tool_trace"] == []
+
+    too_many = await authenticated_client.get(f"/api/v1/scheduler/tasks/{task_id}/runs?limit=101")
+    assert too_many.status_code == 422
+
+
+async def test_rest_delete_removes_job_and_runs(authenticated_client: AsyncClient) -> None:
+    """DELETE answers 204; afterwards the job is 404 and no run rows remain."""
+    user_id = authenticated_client.seeded_user_id
+    task_id = (await _api_create(authenticated_client))["id"]
+    await _add_run(task_id, user_id, RunStatus.SUCCESS)
+
+    resp = await authenticated_client.delete(f"/api/v1/scheduler/tasks/{task_id}", headers=ORIGIN)
+    assert resp.status_code == 204
+    again = await authenticated_client.get(f"/api/v1/scheduler/tasks/{task_id}")
+    assert again.status_code == 404
+    async with async_session_factory() as session:
+        runs = (
+            await session.exec(select(TaskRun).where(TaskRun.scheduled_task_id == task_id))
+        ).all()
+    assert runs == []
+
+
+@pytest.mark.parametrize(
+    "method,suffix",
+    [
+        ("GET", ""),
+        ("POST", "/pause"),
+        ("POST", "/resume"),
+        ("POST", "/cancel"),
+        ("POST", "/run"),
+        ("DELETE", ""),
+        ("GET", "/runs"),
+    ],
+)
+async def test_rest_foreign_task_routes_return_404(
+    authenticated_client: AsyncClient,
+    second_authenticated_client: AsyncClient,
+    method: str,
+    suffix: str,
+) -> None:
+    """Another user's job id answers 404 on every route and leaves the job untouched."""
+    task_id = (await _api_create(authenticated_client))["id"]
+    resp = await second_authenticated_client.request(
+        method, f"/api/v1/scheduler/tasks/{task_id}{suffix}", headers=ORIGIN
+    )
+    assert resp.status_code == 404
+    stored = await _db_task(task_id)
+    assert stored is not None
+    assert stored.status == ScheduledTaskStatus.ACTIVE and stored.run_count == 0
+    async with async_session_factory() as session:
+        runs = (await session.exec(select(TaskRun))).all()
+    assert runs == []
+
+
+async def test_rest_foreign_run_detail_returns_404(
+    authenticated_client: AsyncClient, second_authenticated_client: AsyncClient
+) -> None:
+    """Another user's run id answers 404 (never 403) and its own owner still reads it."""
+    task_id = (await _api_create(authenticated_client))["id"]
+    run_id = await _add_run(task_id, authenticated_client.seeded_user_id, RunStatus.SUCCESS)
+    resp = await second_authenticated_client.get(f"/api/v1/scheduler/runs/{run_id}")
+    assert resp.status_code == 404
+    own = await authenticated_client.get(f"/api/v1/scheduler/runs/{run_id}")
+    assert own.status_code == 200
+
+
+async def test_rest_mutations_require_allowed_origin(authenticated_client: AsyncClient) -> None:
+    """Mutating routes reject a foreign Origin with 403 before touching the job."""
+    task_id = (await _api_create(authenticated_client))["id"]
+    resp = await authenticated_client.post(
+        f"/api/v1/scheduler/tasks/{task_id}/pause", headers={"Origin": "http://evil.example"}
+    )
+    assert resp.status_code == 403
+    resp = await authenticated_client.delete(
+        f"/api/v1/scheduler/tasks/{task_id}", headers={"Origin": "http://evil.example"}
+    )
+    assert resp.status_code == 403
+    stored = await _db_task(task_id)
+    assert stored is not None and stored.status == ScheduledTaskStatus.ACTIVE
+
+
+async def test_rest_mutation_publishes_event_to_owner(
+    authenticated_client: AsyncClient, second_authenticated_client: AsyncClient
+) -> None:
+    """A REST pause pushes task_updated to the owner's sockets and nothing to another user."""
+    owner_queue = hub.subscribe(authenticated_client.seeded_user_id)
+    other_queue = hub.subscribe(second_authenticated_client.seeded_user_id)
+    task_id = (await _api_create(authenticated_client))["id"]
+    _drain(owner_queue)
+    await authenticated_client.post(f"/api/v1/scheduler/tasks/{task_id}/pause", headers=ORIGIN)
+    frames = _drain(owner_queue)
+    assert [f["type"] for f in frames] == ["task_updated"]
+    assert frames[0]["task"]["status"] == "paused"
+    assert _drain(other_queue) == []

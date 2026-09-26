@@ -17,6 +17,16 @@ UNAUTH_ROUTES: list[tuple[str, str, dict | None]] = [
     ("GET", "/api/v1/settings", None),
     ("PUT", "/api/v1/settings", {"chat_id": None}),
     ("GET", "/api/v1/lm-studio/models", None),
+    ("GET", "/api/v1/scheduler/tasks", None),
+    ("POST", "/api/v1/scheduler/tasks", {"title": "x"}),
+    ("GET", "/api/v1/scheduler/tasks/1", None),
+    ("POST", "/api/v1/scheduler/tasks/1/pause", None),
+    ("POST", "/api/v1/scheduler/tasks/1/resume", None),
+    ("POST", "/api/v1/scheduler/tasks/1/cancel", None),
+    ("POST", "/api/v1/scheduler/tasks/1/run", None),
+    ("DELETE", "/api/v1/scheduler/tasks/1", None),
+    ("GET", "/api/v1/scheduler/tasks/1/runs", None),
+    ("GET", "/api/v1/scheduler/runs/1", None),
 ]
 
 
