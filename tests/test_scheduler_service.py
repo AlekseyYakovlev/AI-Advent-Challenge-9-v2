@@ -9,11 +9,15 @@ from sqlmodel import select
 
 from agent.events import EventHub
 from agent.schedule import as_aware_utc
+from agent.headless import HeadlessResult, HeadlessRunError
 from agent.scheduler import (
+    MSG_ABORTED_DELETE,
     MSG_INTERRUPTED_RESTART,
     MSG_SKIPPED_OVERLAP,
+    RunAlreadyActiveError,
     SchedulerService,
     build_task_out,
+    msg_timeout,
 )
 from agent.scheduler_schemas import run_to_summary, task_to_out
 from shared.database import async_session_factory
@@ -426,3 +430,243 @@ async def test_mapper_duration_and_running_summary(seed_user: Any) -> None:
     assert done.duration_ms == 1500
     assert live.duration_ms is None
     assert out.last_run is None
+
+
+def _fake_turn(text: str = "ok") -> Any:
+    """Build a run_headless_turn stand-in returning a fixed successful result."""
+
+    async def _run(_session: Any, _user_id: int, _prompt: str, _model: str) -> HeadlessResult:
+        return HeadlessResult(text=text, results=[], tool_trace=None, mcp_tool_count=0)
+
+    return _run
+
+
+def _raising_turn(exc: BaseException) -> Any:
+    """Build a run_headless_turn stand-in that raises exc."""
+
+    async def _run(_session: Any, _user_id: int, _prompt: str, _model: str) -> HeadlessResult:
+        raise exc
+
+    return _run
+
+
+async def _claim_running_run(svc: SchedulerService) -> int:
+    """Tick once (no spawn) and return the id of the RUNNING run it created."""
+    started = await svc.tick(NOW, spawn=False)
+    assert len(started) == 1
+    return started[0]
+
+
+async def test_execute_run_success_persists_result_and_publishes_finished(
+    seed_user: Any, fresh_hub: EventHub, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user = await seed_user("u1", "pw")
+    task_id = await _add_task(user.id)
+    svc = SchedulerService()
+    run_id = await _claim_running_run(svc)
+    queue = fresh_hub.subscribe(user.id)
+    monkeypatch.setattr("agent.scheduler.run_headless_turn", _fake_turn("ok"))
+
+    await svc.execute_run(run_id)
+
+    run = (await _runs(task_id))[0]
+    assert run.status == RunStatus.SUCCESS
+    assert run.result_text == "ok"
+    assert run.finished_at is not None
+    frame = queue.get_nowait()
+    assert frame["type"] == "run_finished"
+    assert frame["run"]["status"] == "success"
+    assert frame["task"]["is_running"] is False
+    assert frame["task"]["run_count"] == 1
+    assert queue.empty()
+
+
+async def test_execute_run_maps_headless_error_and_next_slot_still_fires(
+    seed_user: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user = await seed_user("u1", "pw")
+    task_id = await _add_task(user.id)
+    svc = SchedulerService()
+    run_id = await _claim_running_run(svc)
+    message = "Модель недоступна: LM Studio не запущен"
+    monkeypatch.setattr(
+        "agent.scheduler.run_headless_turn", _raising_turn(HeadlessRunError(message))
+    )
+
+    await svc.execute_run(run_id)
+
+    run = (await _runs(task_id))[0]
+    assert run.status == RunStatus.FAILED
+    assert run.error == message
+    assert (await _task(task_id)).status == ScheduledTaskStatus.ACTIVE
+    assert len(await svc.tick(NOW + timedelta(seconds=120), spawn=False)) == 1
+    assert len(await _runs(task_id)) == 2
+
+
+async def test_execute_run_times_out_with_russian_message(
+    seed_user: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user = await seed_user("u1", "pw")
+    task_id = await _add_task(user.id)
+    svc = SchedulerService()
+    run_id = await _claim_running_run(svc)
+
+    async def _slow(*_args: Any) -> HeadlessResult:
+        await asyncio.sleep(1)
+        raise AssertionError("deadline should have fired")
+
+    monkeypatch.setattr("agent.scheduler.run_headless_turn", _slow)
+    monkeypatch.setattr("agent.scheduler.settings.SCHEDULER_RUN_TIMEOUT", 0.05)
+
+    await svc.execute_run(run_id)
+
+    run = (await _runs(task_id))[0]
+    assert run.status == RunStatus.FAILED
+    assert run.error == msg_timeout(0.05)
+
+
+def test_default_timeout_message_reads_120_seconds() -> None:
+    assert msg_timeout(120.0) == "Превышено время выполнения (120 с)"
+
+
+async def test_execute_run_maps_unexpected_exception(
+    seed_user: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user = await seed_user("u1", "pw")
+    task_id = await _add_task(user.id)
+    svc = SchedulerService()
+    run_id = await _claim_running_run(svc)
+    monkeypatch.setattr("agent.scheduler.run_headless_turn", _raising_turn(RuntimeError("secret")))
+
+    await svc.execute_run(run_id)
+
+    run = (await _runs(task_id))[0]
+    assert run.status == RunStatus.FAILED
+    assert run.error == "Непредвиденная ошибка (RuntimeError)"
+
+
+async def test_execute_run_for_missing_run_returns_quietly() -> None:
+    await SchedulerService().execute_run(987654)
+
+
+async def test_once_job_completes_after_its_run(
+    seed_user: Any, fresh_hub: EventHub, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user = await seed_user("u1", "pw")
+    task_id = await _add_task(user.id, schedule_type=ScheduleType.ONCE)
+    svc = SchedulerService()
+    run_id = await _claim_running_run(svc)
+    queue = fresh_hub.subscribe(user.id)
+    monkeypatch.setattr("agent.scheduler.run_headless_turn", _fake_turn())
+
+    await svc.execute_run(run_id)
+
+    assert (await _task(task_id)).status == ScheduledTaskStatus.COMPLETED
+    frame = queue.get_nowait()
+    assert frame["task"]["status"] == "completed"
+
+
+async def test_manual_run_on_interval_job_keeps_next_slot(
+    seed_user: Any, fresh_hub: EventHub, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user = await seed_user("u1", "pw")
+    slot = NOW + timedelta(minutes=30)
+    task_id = await _add_task(user.id, next_run_at=slot, run_count=3)
+    queue = fresh_hub.subscribe(user.id)
+    svc = SchedulerService()
+    spawned: list[int] = []
+    monkeypatch.setattr(svc, "spawn_run", spawned.append)
+
+    async with async_session_factory() as session:
+        task = await session.get(ScheduledTask, task_id)
+        run = await svc.start_manual_run(session, task, NOW)
+
+        assert run.trigger == RunTrigger.MANUAL
+        assert run.status == RunStatus.RUNNING
+        assert run.scheduled_for is None
+        assert spawned == [run.id]
+        with pytest.raises(RunAlreadyActiveError):
+            await svc.start_manual_run(session, task, NOW)
+
+    stored = await _task(task_id)
+    assert stored.run_count == 4
+    assert as_aware_utc(stored.next_run_at) == slot
+    frame = queue.get_nowait()
+    assert frame["type"] == "run_started"
+    assert frame["task"]["run_count"] == 4
+    assert frame["task"]["is_running"] is True
+    assert len(await _runs(task_id)) == 1
+
+
+async def test_manual_run_on_once_job_clears_slot_and_completes_after_run(
+    seed_user: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user = await seed_user("u1", "pw")
+    task_id = await _add_task(
+        user.id, schedule_type=ScheduleType.ONCE, next_run_at=NOW + timedelta(hours=1)
+    )
+    svc = SchedulerService()
+    monkeypatch.setattr(svc, "spawn_run", lambda _run_id: None)
+    monkeypatch.setattr("agent.scheduler.run_headless_turn", _fake_turn())
+
+    async with async_session_factory() as session:
+        task = await session.get(ScheduledTask, task_id)
+        run = await svc.start_manual_run(session, task, NOW)
+    assert (await _task(task_id)).next_run_at is None
+
+    await svc.execute_run(run.id)
+    assert (await _task(task_id)).status == ScheduledTaskStatus.COMPLETED
+
+
+async def test_abort_task_runs_cancels_in_flight_run(
+    seed_user: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user = await seed_user("u1", "pw")
+    task_id = await _add_task(user.id)
+    svc = SchedulerService()
+
+    async def _forever(*_args: Any) -> HeadlessResult:
+        await asyncio.sleep(30)
+        raise AssertionError("should have been cancelled")
+
+    monkeypatch.setattr("agent.scheduler.run_headless_turn", _forever)
+    started = await svc.tick(NOW)
+    await asyncio.sleep(0.1)
+    assert svc._runs
+
+    await svc.abort_task_runs(task_id)
+
+    run = (await _runs(task_id))[0]
+    assert run.id == started[0]
+    assert run.status == RunStatus.FAILED
+    assert run.error == MSG_ABORTED_DELETE
+    assert not svc._runs
+
+
+async def test_loop_runs_due_job_and_stop_ends_it(
+    seed_user: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    user = await seed_user("u1", "pw")
+    task_id = await _add_task(
+        user.id,
+        interval_seconds=3600,
+        next_run_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+    )
+    monkeypatch.setattr("agent.scheduler.settings.SCHEDULER_POLL_INTERVAL", 0.01)
+    monkeypatch.setattr("agent.scheduler.run_headless_turn", _fake_turn("loop"))
+    svc = SchedulerService()
+
+    await svc.start()
+    assert svc.is_running_loop
+    for _ in range(200):
+        runs = await _runs(task_id)
+        if runs and runs[0].status == RunStatus.SUCCESS:
+            break
+        await asyncio.sleep(0.02)
+    await svc.stop()
+
+    assert not svc.is_running_loop
+    runs = await _runs(task_id)
+    assert len(runs) == 1
+    assert runs[0].status == RunStatus.SUCCESS
+    assert runs[0].result_text == "loop"

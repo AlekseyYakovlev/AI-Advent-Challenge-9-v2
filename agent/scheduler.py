@@ -9,6 +9,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from agent.events import hub
+from agent.headless import HeadlessRunError, run_headless_turn
 from agent.schedule import as_aware_utc, next_run_after_claim
 from agent.scheduler_schemas import (
     ScheduledTaskOut,
@@ -24,6 +25,7 @@ from shared.models import (
     RunTrigger,
     ScheduledTask,
     ScheduledTaskStatus,
+    ScheduleType,
     TaskRun,
 )
 
@@ -222,6 +224,7 @@ class SchedulerService:
                 run_started_frame(run, await build_task_out(session, task)),
             )
         if spawn:
+            self._run_task_ids[run.id] = task_id
             self.spawn_run(run.id)
         return run.id
 
@@ -286,6 +289,205 @@ class SchedulerService:
                 await self.finalize_task(session, task_id)
         logger.info("scheduler_recovered_orphans", count=recovered)
         return recovered
+
+    def spawn_run(self, run_id: int) -> None:
+        """Start execute_run in the background, keeping a strong reference until it ends."""
+        task = asyncio.create_task(self.execute_run(run_id), name=f"scheduler-run-{run_id}")
+        self._runs[run_id] = task
+        task.add_done_callback(lambda _done: self._forget_run(run_id))
+
+    def _forget_run(self, run_id: int) -> None:
+        """Drop bookkeeping for a run whose asyncio task has ended."""
+        self._runs.pop(run_id, None)
+        self._run_task_ids.pop(run_id, None)
+        self._cancel_reason.pop(run_id, None)
+
+    async def execute_run(self, run_id: int) -> None:
+        """Run the headless turn for a claimed run and persist its outcome."""
+        async with async_session_factory() as session:
+            run = await session.get(TaskRun, run_id)
+            task = await session.get(ScheduledTask, run.scheduled_task_id) if run else None
+            if run is None or task is None:
+                return
+            task_id, user_id, prompt, model = task.id, task.user_id, task.prompt, task.model
+        self._run_task_ids[run_id] = task_id
+        try:
+            # The semaphore is taken outside the deadline so queueing does not eat the budget.
+            async with self._semaphore:
+                async with asyncio.timeout(settings.SCHEDULER_RUN_TIMEOUT):
+                    async with async_session_factory() as run_session:
+                        result = await run_headless_turn(run_session, user_id, prompt, model)
+        except HeadlessRunError as exc:
+            await self._finish_run(run_id, RunStatus.FAILED, error=exc.message)
+        except TimeoutError:
+            await self._finish_run(
+                run_id, RunStatus.FAILED, error=msg_timeout(settings.SCHEDULER_RUN_TIMEOUT)
+            )
+        except asyncio.CancelledError:
+            await self._finish_cancelled(run_id)
+            raise
+        except Exception as exc:
+            logger.error("scheduler_run_failed", run_id=run_id, error=type(exc).__name__)
+            await self._finish_run(run_id, RunStatus.FAILED, error=msg_unexpected(exc))
+        else:
+            if result.mcp_tool_count == 0:
+                logger.info("scheduler_run_no_mcp_tools", run_id=run_id)
+            await self._finish_run(
+                run_id,
+                RunStatus.SUCCESS,
+                result_text=result.text,
+                tool_trace=result.tool_trace,
+            )
+
+    async def _finish_cancelled(self, run_id: int) -> None:
+        """Best-effort failure record for a run whose task was cancelled."""
+        reason = self._cancel_reason.get(run_id, MSG_INTERRUPTED_STOP)
+        try:
+            await self._finish_run(run_id, RunStatus.FAILED, error=reason)
+        except Exception as exc:
+            logger.error("scheduler_cancel_record_failed", run_id=run_id, error=type(exc).__name__)
+
+    async def _finish_run(
+        self,
+        run_id: int,
+        status: RunStatus,
+        *,
+        result_text: str | None = None,
+        error: str | None = None,
+        tool_trace: str | None = None,
+    ) -> None:
+        """Persist a run outcome, finalize its job and tell the owner."""
+        async with async_session_factory() as session:
+            run = await session.get(TaskRun, run_id)
+            if run is None or run.status != RunStatus.RUNNING:
+                return
+            run.status = status
+            run.finished_at = datetime.now(timezone.utc)
+            run.result_text = result_text
+            run.error = error
+            run.tool_trace = tool_trace
+            session.add(run)
+            try:
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+            task = await session.get(ScheduledTask, run.scheduled_task_id)
+            if task is None:
+                return
+            await self.finalize_task(session, task.id)
+            await session.refresh(task)
+            task_out = await build_task_out(session, task)
+            hub.publish(task.user_id, run_finished_frame(run, task_out))
+            logger.info(
+                "scheduler_run_finished",
+                run_id=run_id,
+                task_id=task.id,
+                status=status.value,
+                duration_ms=task_out.last_run.duration_ms if task_out.last_run else None,
+            )
+
+    async def start_manual_run(
+        self,
+        session: AsyncSession,
+        task: ScheduledTask,
+        now: datetime | None = None,
+    ) -> TaskRun:
+        """Start an off-schedule run that counts toward run_count and max_runs.
+
+        A periodic job keeps its next_run_at; a one-shot (or exhausted) job clears it so
+        the job completes once this run finishes.
+        """
+        now = as_aware_utc(now or datetime.now(timezone.utc))
+        task_id = task.id
+        exhausts = task.schedule_type == ScheduleType.ONCE or (
+            task.max_runs is not None and task.run_count + 1 >= task.max_runs
+        )
+        values: dict[str, object] = {
+            "run_count": ScheduledTask.run_count + 1,
+            "updated_at": now,
+        }
+        if exhausts:
+            values["next_run_at"] = None
+        run = TaskRun(
+            scheduled_task_id=task_id,
+            user_id=task.user_id,
+            trigger=RunTrigger.MANUAL,
+            status=RunStatus.RUNNING,
+            scheduled_for=None,
+            started_at=now,
+            is_late=False,
+            model=task.model,
+        )
+        try:
+            session.add(run)
+            await session.exec(
+                update(ScheduledTask).where(ScheduledTask.id == task_id).values(**values)
+            )
+            await session.commit()
+        except IntegrityError as exc:
+            await session.rollback()
+            raise RunAlreadyActiveError() from exc
+        except Exception:
+            await session.rollback()
+            raise
+        await session.refresh(task)
+        hub.publish(
+            task.user_id,
+            run_started_frame(run, await build_task_out(session, task)),
+        )
+        self._run_task_ids[run.id] = task_id
+        self.spawn_run(run.id)
+        return run
+
+    async def abort_task_runs(self, task_id: int) -> None:
+        """Cancel and await every in-flight run of a job (used before deleting it)."""
+        pending: list[asyncio.Task[None]] = []
+        for run_id, owner_task_id in list(self._run_task_ids.items()):
+            running = self._runs.get(run_id)
+            if owner_task_id != task_id or running is None:
+                continue
+            self._cancel_reason[run_id] = MSG_ABORTED_DELETE
+            running.cancel()
+            pending.append(running)
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+
+    @property
+    def is_running_loop(self) -> bool:
+        """Whether the poll loop task is alive."""
+        return self._loop_task is not None and not self._loop_task.done()
+
+    async def start(self) -> None:
+        """Start the poll loop (no-op when it is already running)."""
+        if self.is_running_loop:
+            return
+        # Rebuilt here so the semaphore belongs to the loop the service actually runs on.
+        self._semaphore = asyncio.Semaphore(settings.SCHEDULER_MAX_CONCURRENT_RUNS)
+        self._loop_task = asyncio.create_task(self._run_loop(), name="scheduler-loop")
+
+    async def _run_loop(self) -> None:
+        """Tick forever; a failing tick is logged and never stops the loop."""
+        while True:
+            try:
+                await self.tick()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.error("scheduler_tick_failed", error=type(exc).__name__)
+            await asyncio.sleep(settings.SCHEDULER_POLL_INTERVAL)
+
+    async def stop(self) -> None:
+        """Stop the loop, then cancel in-flight runs (their handlers record the interruption)."""
+        loop_task, self._loop_task = self._loop_task, None
+        if loop_task is not None:
+            loop_task.cancel()
+            await asyncio.gather(loop_task, return_exceptions=True)
+        in_flight = list(self._runs.values())
+        for running in in_flight:
+            running.cancel()
+        if in_flight:
+            await asyncio.gather(*in_flight, return_exceptions=True)
 
 
 scheduler = SchedulerService()
