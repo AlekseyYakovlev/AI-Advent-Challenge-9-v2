@@ -24,7 +24,8 @@ Full details: [milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
 ### 🚧 v2.0 Week 4: MCP Integration (In Progress)
 
 - [x] **Phase 7: MCP Connection (Day 16)** — The agent connects to an MCP server configured in Settings and shows the server's tool list (completed 2026-09-23)
-- [x] **Phase 8: Scheduler (Day 18)** — Delayed and periodic jobs with persisted status/results, run by the agent and shown in the UI (completed 2026-09-26)
+- [x] **Phase 8: Scheduler (Day 18)** — Delayed and periodic jobs with persisted status/results, run by the agent and shown in the UI
+ (completed 2026-09-26)
 
 ## Phase Details
 
@@ -181,6 +182,46 @@ Plans:
 ### Phase 999.6: Edit and delete long-term memory fields via UI (BACKLOG)
 
 **Goal:** the user must be able to edit long-term memory fields through the UI ("Редактировать" and "Удалить" buttons per entry)
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (promote with /bm:review-backlog when ready)
+
+### Phase 999.7: Harden scheduler LLM tools: gate schedule_task and bind cancel to the task (BACKLOG)
+
+**Goal:** WR-05/WR-06 from the phase 08 code review. `schedule_task` has no intent gate: a prompt injected through MCP/file content can persist a delayed, unattended prompt that later runs with all of the user's MCP tools. The cancel gate (`user_asked_to_cancel`) is a keyword heuristic that passes questions/hypotheticals and does not tie the cancel to the task id. Ideas: require explicit user intent (like the cancel gate) or a confirm step for schedule_task, bind `cancel_scheduled_task` to the id/title the user actually named
+**Refs:** 08-REVIEW.md WR-05, WR-06
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (promote with /bm:review-backlog when ready)
+
+### Phase 999.8: Fix DST fall-back fold in cron next-run math (BACKLOG)
+
+**Goal:** WR-04 from the phase 08 code review. `_to_local_naive` in agent/schedule.py drops the datetime fold, so on the fall-back night `next_cron_run` can return a slot in the past and the job refires (or writes a SKIPPED row) every tick for up to an hour. Add a test with a fixed DST zone; cron is computed in machine-local time and stored as UTC
+**Refs:** 08-REVIEW.md WR-04
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (promote with /bm:review-backlog when ready)
+
+### Phase 999.9: Re-validate the session on the /ws/events socket (BACKLOG)
+
+**Goal:** WR-07 + IN-05 from the phase 08 code review. `/ws/events` checks the session cookie only at the handshake, so the socket keeps streaming per-user events after logout or session expiry; a binary frame also raises KeyError from `receive_text()`. Re-check the session periodically (e.g. on each ping) and close with 1008 when it is gone; ignore/close on non-text frames
+**Refs:** 08-REVIEW.md WR-07, IN-05
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (promote with /bm:review-backlog when ready)
+
+### Phase 999.10: Scheduler code review INFO cleanup (BACKLOG)
+
+**Goal:** IN-01..IN-04, IN-06, IN-07 from the phase 08 code review: naive `created_at.timestamp()` sort in list_scheduled_tasks; duplicated constants/running-run query; unused `RecordingSink.frames`; events UI can show stale state (stale fetch overwrites newer event) and drops keyboard focus on every panel render; headless.py coupled to private agent.ws helpers and lists MCP servers twice; any built-in TimeoutError is reported as the run deadline. Also cosmetic: the run row with the 'с опозданием' chip wraps onto several lines in the narrow sidebar
+**Refs:** 08-REVIEW.md IN-01..IN-07; Playwright UAT note in 08-08-SUMMARY.md
 **Requirements:** TBD
 **Plans:** 0 plans
 
