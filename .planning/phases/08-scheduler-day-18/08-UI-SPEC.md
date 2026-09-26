@@ -1,7 +1,8 @@
 ---
 phase: 8
 slug: scheduler-day-18
-status: draft
+status: approved
+reviewed_at: 2026-09-26
 shadcn_initialized: false
 preset: none
 created: 2026-09-26
@@ -240,11 +241,11 @@ CDN libraries stay as already loaded in `index.html` (Tailwind CDN, Marked, DOMP
 
 ## Checker Sign-Off
 
-- [ ] Dimension 1 Copywriting: PASS
-- [ ] Dimension 2 Visuals: PASS
-- [ ] Dimension 3 Color: PASS
-- [ ] Dimension 4 Typography: PASS
-- [ ] Dimension 5 Spacing: PASS
-- [ ] Dimension 6 Registry Safety: PASS
+- [x] Dimension 1 Copywriting: FLAG (non-blocking)
+- [x] Dimension 2 Visuals: FLAG (non-blocking)
+- [x] Dimension 3 Color: PASS
+- [x] Dimension 4 Typography: PASS
+- [x] Dimension 5 Spacing: FLAG (non-blocking)
+- [x] Dimension 6 Registry Safety: PASS
 
-**Approval:** pending
+**Approval:** approved 2026-09-26 (0 BLOCK, 3 non-blocking FLAGs: dismiss-button label, no declared visual anchor, unlisted 12px input/error-box padding)
