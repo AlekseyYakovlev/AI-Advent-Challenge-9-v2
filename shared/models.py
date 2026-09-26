@@ -4,7 +4,16 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
-from sqlalchemy import Column, Enum as SAEnum, ForeignKey, Integer, Text, UniqueConstraint
+from sqlalchemy import (
+    Column,
+    Enum as SAEnum,
+    ForeignKey,
+    Index,
+    Integer,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlmodel import Field, SQLModel
 
 
@@ -421,6 +430,124 @@ class RunTrigger(str, Enum):
 
     SCHEDULE = "schedule"
     MANUAL = "manual"
+
+
+class ScheduledTask(SQLModel, table=True):
+    """A user-scoped job that runs a prompt on a schedule (once, interval or cron)."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("user.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        ),
+    )
+    origin_chat_id: Optional[int] = Field(
+        default=None,
+        sa_column=Column(
+            Integer,
+            ForeignKey("chat.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
+    )
+    title: str = Field(max_length=200)
+    prompt: str = Field(sa_column=Column(Text, nullable=False))
+    model: str = Field(max_length=200)
+    schedule_type: ScheduleType = Field(
+        sa_column=Column(
+            SAEnum(
+                ScheduleType,
+                values_callable=lambda enum_cls: [member.value for member in enum_cls],
+            ),
+            nullable=False,
+        ),
+    )
+    run_at: Optional[datetime] = Field(default=None)
+    interval_seconds: Optional[int] = Field(default=None)
+    cron_expr: Optional[str] = Field(default=None, max_length=100)
+    max_runs: Optional[int] = Field(default=None)
+    run_count: int = Field(default=0)
+    next_run_at: Optional[datetime] = Field(default=None)
+    status: ScheduledTaskStatus = Field(
+        default=ScheduledTaskStatus.ACTIVE,
+        sa_column=Column(
+            SAEnum(
+                ScheduledTaskStatus,
+                values_callable=lambda enum_cls: [member.value for member in enum_cls],
+            ),
+            nullable=False,
+        ),
+    )
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+    )
+
+    __table_args__ = (Index("ix_scheduledtask_status_next", "status", "next_run_at"),)
+
+
+class TaskRun(SQLModel, table=True):
+    """One execution attempt of a scheduled job, including skipped overlaps."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    scheduled_task_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("scheduledtask.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        ),
+    )
+    user_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("user.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        ),
+    )
+    status: RunStatus = Field(
+        sa_column=Column(
+            SAEnum(
+                RunStatus,
+                values_callable=lambda enum_cls: [member.value for member in enum_cls],
+            ),
+            nullable=False,
+        ),
+    )
+    trigger: RunTrigger = Field(
+        sa_column=Column(
+            SAEnum(
+                RunTrigger,
+                values_callable=lambda enum_cls: [member.value for member in enum_cls],
+            ),
+            nullable=False,
+        ),
+    )
+    scheduled_for: Optional[datetime] = Field(default=None)
+    started_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+    )
+    finished_at: Optional[datetime] = Field(default=None)
+    is_late: bool = Field(default=False)
+    model: str = Field(max_length=200)
+    result_text: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    error: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    tool_trace: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+
+    # At most one RUNNING row per job (overlap invariant); other statuses are unrestricted.
+    __table_args__ = (
+        Index(
+            "uq_taskrun_one_running",
+            "scheduled_task_id",
+            unique=True,
+            sqlite_where=text("status = 'running'"),
+        ),
+    )
 
 
 class McpServerConfig(SQLModel, table=True):

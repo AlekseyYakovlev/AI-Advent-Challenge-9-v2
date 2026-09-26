@@ -117,7 +117,7 @@ async def test_many_skipped_runs_accepted(seed_user: SeedUser) -> None:
         session.add(_run(job_id, user.id, RunStatus.FAILED))
         await session.commit()
     async with async_session_factory() as session:
-        rows = (await session.execute(select(TaskRun))).scalars().all()
+        rows = (await session.exec(select(TaskRun))).all()
     assert len(rows) == 4
 
 
@@ -184,7 +184,7 @@ async def test_deleting_job_deletes_its_runs(seed_user: SeedUser) -> None:
         await session.delete(job)
         await session.commit()
     async with async_session_factory() as session:
-        remaining = (await session.execute(select(TaskRun))).scalars().all()
+        remaining = (await session.exec(select(TaskRun))).all()
     assert remaining == []
 
 
@@ -202,7 +202,7 @@ async def test_deleting_user_deletes_jobs_and_runs(seed_user: SeedUser) -> None:
         await session.delete(row)
         await session.commit()
     async with async_session_factory() as session:
-        jobs = (await session.execute(select(ScheduledTask))).scalars().all()
-        runs = (await session.execute(select(TaskRun))).scalars().all()
+        jobs = (await session.exec(select(ScheduledTask))).all()
+        runs = (await session.exec(select(TaskRun))).all()
     assert [j.id for j in jobs] == [other_job_id]
     assert [r.scheduled_task_id for r in runs] == [other_job_id]
