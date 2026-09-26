@@ -112,7 +112,10 @@ async def ws_events(websocket: WebSocket) -> None:
     except WebSocketDisconnect:
         pass
     finally:
+        # Unsubscribe before any await: when this task is cancelled (server shutdown,
+        # test client teardown) the awaits below re-raise CancelledError and would
+        # otherwise skip the unsubscribe and leak the queue.
+        hub.unsubscribe(user_id, queue)
         pump.cancel()
         await asyncio.gather(pump, return_exceptions=True)
-        hub.unsubscribe(user_id, queue)
         logger.info("events_ws_disconnected", user_id=user_id)
