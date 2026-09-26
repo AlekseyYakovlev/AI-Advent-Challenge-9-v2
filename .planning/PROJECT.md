@@ -62,6 +62,8 @@ The agent must demonstrably separate and manage distinct kinds of state — shor
 - ✓ **MCP-06**: Standalone CLI `scripts/mcp_list_tools.py <command> <args…>` prints the tool list — Phase 7 (v2.0)
 - ✓ **MCP-F1**: LLM can call connected MCP tools during a chat turn; enabled servers auto-connect on first chat use — Phase 7 extension (quick tasks 260924-1ic, 260924-2n8)
 
+- ✓ **SCHED-01..14**: Scheduler (Day 18) — user-scoped delayed/periodic jobs (once / interval / cron in machine-local time) stored in SQLite, run in the background of the Agent process (atomic slot claim, overlap skip, restart recovery, catch-up-once with `is_late`), executed by a headless LLM+MCP runner; manageable through REST `/api/v1/scheduler/*`, the "Расписание" sidebar panel with live `/ws/events` updates, and LLM chat tools with a cancel gate — Phase 8 (v2.0)
+
 ### Active
 
 (No active requirements — start the next milestone to define more.)
@@ -79,6 +81,8 @@ The agent must demonstrably separate and manage distinct kinds of state — shor
 Shipped **v1.0 Week 3: Agent Memory & Task State** (2026-09-23): auth, 3-layer memory, personalization, task FSM, invariants with conflict check, and hard-enforced task transitions — 6 phases / 25 plans, all merged to `main`. Known deferred item: Phase 01 VERIFICATION still flagged `human_needed` (auth exercised in every later live demo).
 
 Phase 7 (MCP Connection, Day 16) complete (2026-09-24): user-scoped MCP server configs in Settings, connect/disconnect with serverInfo and tool list, readable connection errors, standalone CLI, and — as an approved scope extension — chat tool calling with lazy auto-connect. Known deferred review findings: WR-01, 03, 04, 05, 06, 08 (see .planning/phases/07-mcp-connection-day-16/07-REVIEW.md).
+
+Phase 8 (Scheduler, Day 18) complete (2026-09-26): jobs stored per user, poll loop with atomic claim in the Agent lifespan, headless LLM+MCP runner, REST API, LLM tools, live sidebar panel; 928 tests; demo run end to end through Playwright with real LM Studio and MCP. Accepted limitation: the local qwen3.5-9b may execute a "через минуту …" request immediately instead of calling `schedule_task` (an explicit "запланируй …" works). Review findings CR-01, WR-01/02/03/08 fixed in gap-closure plan 08-09; WR-04..07 and INFO items parked as backlog 999.7–999.10 (see .planning/phases/08-scheduler-day-18/08-REVIEW.md).
 
 ## Context
 
@@ -127,4 +131,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-09-24 — Phase 7 (MCP Connection) complete*
+*Last updated: 2026-09-26 — Phase 8 (Scheduler, Day 18) complete*
