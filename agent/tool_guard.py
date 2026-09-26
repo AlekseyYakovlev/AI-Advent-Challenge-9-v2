@@ -103,6 +103,30 @@ def _is_negated_or_future(sentence: str, verb_start: int) -> bool:
     return _NEGATION_OR_FUTURE_RE.search(window) is not None
 
 
+_CANCEL_INTENT_RE = re.compile(
+    r"(?<!\w)(?:"
+    r"(?:отмени|отменить|отмена|останови|остановить|прекрати|прекратить|удали|удалить"
+    r"|удаление|убери|убрать|выключи|выключить)(?:те)?"
+    r"|cancel|stop|delete|remove|disable"
+    r")(?!\w)",
+    re.IGNORECASE,
+)
+
+_NEGATION_WORDS = frozenset(
+    {"не", "нельзя", "don't", "don’t", "dont", "not", "never"},
+)
+_NEGATION_WINDOW_WORDS = 2
+
+
+def user_asked_to_cancel(text: str) -> bool:
+    """Return True when the text asks to cancel/stop/delete something and does not negate it."""
+    for match in _CANCEL_INTENT_RE.finditer(text):
+        preceding = re.findall(r"[\w'’]+", text[: match.start()].lower())
+        if not _NEGATION_WORDS.intersection(preceding[-_NEGATION_WINDOW_WORDS:]):
+            return True
+    return False
+
+
 def _sentence_claims_action(sentence: str) -> bool:
     """Return True when one sentence states a completed action on a file-like object."""
     stripped = sentence.strip()

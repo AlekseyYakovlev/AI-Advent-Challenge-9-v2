@@ -28,6 +28,7 @@ from agent.state import (
     CORS_ORIGINS,
     active_streams,
     chat_locks,
+    current_chat_model,
     ws_rate_limiter,
 )
 from agent.schemas import (
@@ -63,6 +64,8 @@ IDLE_TIMEOUT_SECONDS = 300.0
 RATE_LIMIT_MAX = 10
 RATE_LIMIT_WINDOW = 60.0
 TASK_TOOL_NAMES = ("create_task", "transition_task", "pause_task", "resume_task")
+SCHEDULER_TOOL_NAMES = ("schedule_task", "list_scheduled_tasks", "cancel_scheduled_task")
+NON_MEMORY_TOOL_NAMES = TASK_TOOL_NAMES + SCHEDULER_TOOL_NAMES
 
 active_connections: set[WebSocket] = set()
 
@@ -547,11 +550,11 @@ async def _run_tool_rounds(
 
 
 def _collect_memory_writes(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Return the successful non-task memory writes among the tool results."""
+    """Return the successful memory writes, leaving out task and scheduler tool results."""
     return [
         r["write"]
         for r in results
-        if r["ok"] and r["write"] is not None and r["name"] not in TASK_TOOL_NAMES
+        if r["ok"] and r["write"] is not None and r["name"] not in NON_MEMORY_TOOL_NAMES
     ]
 
 
@@ -669,6 +672,7 @@ async def _handle_chat_message(
     payload: MessagePayload,
 ) -> None:
     """Process one inbound chat message under the per-chat lock."""
+    current_chat_model.set(payload.model)
     if chat_id not in chat_locks:
         chat_locks[chat_id] = asyncio.Lock()
     async with chat_locks[chat_id]:
