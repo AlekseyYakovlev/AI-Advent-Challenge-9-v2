@@ -11,9 +11,11 @@ from httpx import ASGITransport, AsyncClient
 from starlette.testclient import TestClient
 
 os.environ.setdefault("DB_PATH", "test_app.db")
+os.environ.setdefault("SCHEDULER_ENABLED", "false")
 
 from agent import mcp_client
 from agent import state as agent_state
+from agent.events import hub as events_hub
 from agent.main import app
 from shared.config import settings
 from shared.database import async_session_factory, engine, init_db
@@ -28,6 +30,8 @@ async def clean_test_db() -> None:
     `with TestClient(app):` block spins its own event loop, so a stale
     `asyncio.Lock` left in `chat_locks` from an earlier test's (now-closed)
     loop would otherwise deadlock a later test that reuses the same chat id.
+    The per-user event hub is cleared for the same reason: queues bound to a
+    closed loop must not leak into later tests.
     """
     db_path = Path(settings.DB_PATH)
     if db_path.exists():
@@ -36,6 +40,7 @@ async def clean_test_db() -> None:
     agent_state.active_streams.clear()
     agent_state.ws_rate_limiter.clear()
     agent_state.chat_locks.clear()
+    events_hub.clear()
     yield
     await mcp_client.cleanup_all_sessions()
     await engine.dispose()
