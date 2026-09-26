@@ -123,7 +123,7 @@ Plans:
 | 5. Invariants (Day 14) | v1.0 | 4/4 | Complete | 2026-09-20 |
 | 6. Controlled Transitions (Day 15) | v1.0 | 4/4 | Complete | 2026-09-21 |
 | 7. MCP Connection (Day 16) | v2.0 | 6/6 | Complete   | 2026-09-23 |
-| 8. Scheduler (Day 18) | v2.0 | 8/8 | Complete   | 2026-09-26 |
+| 8. Scheduler (Day 18) | v2.0 | 9/9 | Complete   | 2026-09-26 |
 
 ## Backlog
 
