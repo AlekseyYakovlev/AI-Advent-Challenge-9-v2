@@ -35,12 +35,13 @@ TOOL_ERROR_REMINDER = (
 MULTI_STEP_TOOL_HINT = (
     "Finish ALL steps of a multi-step request by calling tools one after another before "
     "the final answer. Filesystem tools act on the LOCAL disk; GitLab tools act on the REMOTE "
-    "repository. A local folder that contains .git is a clone of a GitLab project: read "
-    "<folder>/.git/config to find its remote URL and project. Remote file paths are relative "
-    "to the repository root and are never local folder names. To commit local changes, read "
-    "the local files, then call the GitLab commit tool (commit_files with branch, commit "
-    "message, actions), then create_merge_request. When a tool returns an error, read it and "
-    "try another approach."
+    "repository. To find the local folder for a GitLab task, first call list_projects for the "
+    "project path (group/name): the matching local folder is named like its last segment and "
+    "its <folder>/.git/config remote URL points to that project. Never explore folders whose "
+    "remote is another project. Remote file paths are relative to the repository root, never "
+    "local folder names. To commit local changes, read the local files, then call commit_files "
+    "(branch, commit message, actions), then create_merge_request. When a tool returns an "
+    "error, read it and try another approach."
 )
 
 _CYRILLIC_RE = re.compile(r"[А-Яа-яЁё]")
