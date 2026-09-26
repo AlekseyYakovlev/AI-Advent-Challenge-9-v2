@@ -24,7 +24,7 @@ Full details: [milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
 ### 🚧 v2.0 Week 4: MCP Integration (In Progress)
 
 - [x] **Phase 7: MCP Connection (Day 16)** — The agent connects to an MCP server configured in Settings and shows the server's tool list (completed 2026-09-23)
-- [ ] **Phase 8: Scheduler (Day 18)** — Delayed and periodic jobs with persisted status/results, run by the agent and shown in the UI
+- [x] **Phase 8: Scheduler (Day 18)** — Delayed and periodic jobs with persisted status/results, run by the agent and shown in the UI (completed 2026-09-26)
 
 ## Phase Details
 
@@ -109,7 +109,7 @@ Plans:
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
-- [ ] 08-08-PLAN.md — Docs sync (API_SPEC, ARCHITECTURE, TESTING_GUIDE), full suite, human demo walkthrough (wave 5, checkpoint)
+- [x] 08-08-PLAN.md — Docs sync (API_SPEC, ARCHITECTURE, TESTING_GUIDE), full suite, human demo walkthrough (wave 5, checkpoint)
 
 ## Progress
 
@@ -122,7 +122,7 @@ Plans:
 | 5. Invariants (Day 14) | v1.0 | 4/4 | Complete | 2026-09-20 |
 | 6. Controlled Transitions (Day 15) | v1.0 | 4/4 | Complete | 2026-09-21 |
 | 7. MCP Connection (Day 16) | v2.0 | 6/6 | Complete   | 2026-09-23 |
-| 8. Scheduler (Day 18) | v2.0 | 7/8 | In Progress|  |
+| 8. Scheduler (Day 18) | v2.0 | 8/8 | Complete   | 2026-09-26 |
 
 ## Backlog
 
