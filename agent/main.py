@@ -55,6 +55,7 @@ from agent.state import CORS_ORIGINS, chat_locks, cleanup_chat_caches
 from agent.context_engine import compute_chat_stats
 from agent import invariants, mcp_client, mcp_config, memory, profile, tasks
 from agent.events import ws_events
+from agent.scheduler import scheduler
 from agent.ws import ws_chat
 from shared.auth import (
     SESSION_COOKIE_NAME,
@@ -385,11 +386,17 @@ async def _build_tree_path(
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    """Initialize the database on startup and dispose the engine on shutdown."""
+    """Init the database and scheduler on startup; stop the scheduler and dispose the engine on exit."""
     logger.info("agent_starting")
     await init_db()
+    # The supervisor hard-kills the Agent, so shutdown hooks may never have run: fail any
+    # run left RUNNING before the loop can claim or block on it.
+    await scheduler.recover_orphaned_runs()
+    if app_config.SCHEDULER_ENABLED:
+        await scheduler.start()
     yield
     logger.info("agent_shutting_down")
+    await scheduler.stop()
     await mcp_client.cleanup_all_sessions()
     await engine.dispose()
 
