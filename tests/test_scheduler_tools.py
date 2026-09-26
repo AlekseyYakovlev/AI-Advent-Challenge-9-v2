@@ -1,10 +1,36 @@
 """Tests for the scheduler LLM tools, the cancel-intent heuristic and the ws exclusions."""
 
-import pytest
-from pydantic import ValidationError
+import json
+from datetime import datetime, timedelta, timezone
+from typing import Any
 
+import httpx
+import pytest
+import respx
+from httpx import AsyncClient
+from pydantic import ValidationError
+from sqlmodel import select
+from starlette.testclient import TestClient
+
+from agent import scheduler_ops
+from agent.main import app
 from agent.schemas import CancelScheduledTaskArgs, ListScheduledTasksArgs, ScheduleTaskArgs
+from agent.state import current_chat_model
 from agent.tool_guard import user_asked_to_cancel
+from agent.tools import TOOL_REGISTRY, build_tool_schemas, dispatch_tool_calls
+from agent.ws import SCHEDULER_TOOL_NAMES
+from shared.config import settings
+from shared.database import async_session_factory
+from shared.models import (
+    Chat,
+    Message,
+    RunStatus,
+    RunTrigger,
+    ScheduledTask,
+    ScheduledTaskStatus,
+    TaskRun,
+)
+from tests.conftest import login_test_client
 
 
 @pytest.mark.parametrize(
@@ -128,3 +154,490 @@ def test_no_scheduler_schema_enum_contains_cancelled() -> None:
     for model in (ScheduleTaskArgs, ListScheduledTasksArgs, CancelScheduledTaskArgs):
         for prop in model.model_json_schema().get("properties", {}).values():
             assert "cancelled" not in prop.get("enum", [])
+
+
+# --- tool dispatch and integration -------------------------------------------------
+
+
+@pytest.fixture
+def chat_model():
+    """Set the per-turn chat model ContextVar for the duration of a test."""
+    token = current_chat_model.set("m1")
+    yield "m1"
+    current_chat_model.reset(token)
+
+
+def _call(call_id: str, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": call_id,
+        "type": "function",
+        "function": {"name": name, "arguments": json.dumps(arguments)},
+    }
+
+
+async def _seed_chat(user_id: int, leaf_text: str | None = None, role: str = "user") -> int:
+    """Create a chat whose current leaf is a message with the given text."""
+    async with async_session_factory() as session:
+        chat = Chat(title="c", user_id=user_id)
+        session.add(chat)
+        await session.commit()
+        await session.refresh(chat)
+        if leaf_text is not None:
+            message = Message(chat_id=chat.id, role=role, content=leaf_text)
+            session.add(message)
+            await session.commit()
+            await session.refresh(message)
+            chat.current_leaf_message_id = message.id
+            session.add(chat)
+            await session.commit()
+        return chat.id
+
+
+async def _dispatch(user_id: int, chat_id: int, name: str, arguments: dict[str, Any]) -> dict:
+    """Run one tool call through the dispatcher and return its single result."""
+    async with async_session_factory() as session:
+        results = await dispatch_tool_calls(
+            session, user_id, chat_id, [_call("c1", name, arguments)]
+        )
+    return results[0]
+
+
+async def _make_job(user_id: int, **overrides: Any) -> ScheduledTask:
+    fields: dict[str, Any] = {
+        "title": "job",
+        "prompt": "do it",
+        "model": "m",
+        "schedule_type": "interval",
+        "interval_seconds": 60,
+    }
+    fields.update(overrides)
+    async with async_session_factory() as session:
+        return await scheduler_ops.create_scheduled_task(session, user_id, **fields)
+
+
+async def _job(task_id: int) -> ScheduledTask | None:
+    async with async_session_factory() as session:
+        return await session.get(ScheduledTask, task_id)
+
+
+async def _add_run(task_id: int, user_id: int) -> None:
+    async with async_session_factory() as session:
+        session.add(
+            TaskRun(
+                scheduled_task_id=task_id,
+                user_id=user_id,
+                status=RunStatus.SUCCESS,
+                trigger=RunTrigger.MANUAL,
+                started_at=datetime.now(timezone.utc),
+                model="m",
+            )
+        )
+        await session.commit()
+
+
+async def test_schedule_task_once_creates_job(
+    authenticated_client: AsyncClient, chat_model: str
+) -> None:
+    """A once job via delay_seconds is stored for the caller with the chat model and origin."""
+    user_id = authenticated_client.seeded_user_id
+    chat_id = await _seed_chat(user_id)
+    before = datetime.now(timezone.utc)
+
+    result = await _dispatch(
+        user_id,
+        chat_id,
+        "schedule_task",
+        {"schedule_type": "once", "delay_seconds": 60, "title": "t", "prompt": "p"},
+    )
+
+    assert result["ok"] is True
+    body = json.loads(result["content"])
+    assert body["status"] == "scheduled"
+    assert body["next_run_at"].endswith(("Z", "+00:00"))
+    assert body["next_run_at_local"]
+    row = await _job(body["id"])
+    assert row is not None
+    assert row.user_id == user_id
+    assert row.model == "m1"
+    assert row.origin_chat_id == chat_id
+    delta = row.next_run_at.replace(tzinfo=timezone.utc) - before
+    assert timedelta(seconds=55) <= delta <= timedelta(seconds=70)
+
+
+async def test_schedule_task_interval_and_cron(
+    authenticated_client: AsyncClient, chat_model: str
+) -> None:
+    """Interval and cron jobs are accepted with their schedule fields."""
+    user_id = authenticated_client.seeded_user_id
+    chat_id = await _seed_chat(user_id)
+
+    interval = await _dispatch(
+        user_id,
+        chat_id,
+        "schedule_task",
+        {
+            "schedule_type": "interval",
+            "interval_seconds": 30,
+            "title": "i",
+            "prompt": "p",
+            "max_runs": 3,
+        },
+    )
+    cron = await _dispatch(
+        user_id,
+        chat_id,
+        "schedule_task",
+        {"schedule_type": "cron", "cron": "*/5 * * * *", "title": "c", "prompt": "p"},
+    )
+
+    assert interval["ok"] is True and json.loads(interval["content"])["max_runs"] == 3
+    assert cron["ok"] is True
+
+
+async def test_schedule_task_without_model_is_model_unknown(
+    authenticated_client: AsyncClient,
+) -> None:
+    """Without a chat model in context no job is created."""
+    user_id = authenticated_client.seeded_user_id
+    chat_id = await _seed_chat(user_id)
+
+    result = await _dispatch(
+        user_id,
+        chat_id,
+        "schedule_task",
+        {"schedule_type": "once", "delay_seconds": 60, "title": "t", "prompt": "p"},
+    )
+
+    assert result["ok"] is False
+    assert json.loads(result["content"])["code"] == "model_unknown"
+    async with async_session_factory() as session:
+        assert (await session.exec(select(ScheduledTask))).all() == []
+
+
+async def test_schedule_task_invalid_schedule(
+    authenticated_client: AsyncClient, chat_model: str
+) -> None:
+    """A 6-field cron and a too-short interval come back as invalid_schedule."""
+    user_id = authenticated_client.seeded_user_id
+    chat_id = await _seed_chat(user_id)
+
+    bad_cron = await _dispatch(
+        user_id,
+        chat_id,
+        "schedule_task",
+        {"schedule_type": "cron", "cron": "* * * * * *", "title": "t", "prompt": "p"},
+    )
+    bad_interval = await _dispatch(
+        user_id,
+        chat_id,
+        "schedule_task",
+        {"schedule_type": "interval", "interval_seconds": 5, "title": "t", "prompt": "p"},
+    )
+
+    for result in (bad_cron, bad_interval):
+        assert result["ok"] is False
+        assert json.loads(result["content"])["code"] == "invalid_schedule"
+    assert json.loads(bad_cron["content"])["error"]
+
+
+async def test_schedule_task_cap_reports_too_many(
+    authenticated_client: AsyncClient, chat_model: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reaching the per-user cap is reported as too_many."""
+    monkeypatch.setattr(settings, "SCHEDULER_MAX_ACTIVE_TASKS_PER_USER", 1)
+    user_id = authenticated_client.seeded_user_id
+    chat_id = await _seed_chat(user_id)
+    await _make_job(user_id)
+
+    result = await _dispatch(
+        user_id,
+        chat_id,
+        "schedule_task",
+        {"schedule_type": "once", "delay_seconds": 60, "title": "t", "prompt": "p"},
+    )
+
+    assert result["ok"] is False
+    assert json.loads(result["content"])["code"] == "too_many"
+
+
+async def test_list_scheduled_tasks_only_live_jobs_of_caller(
+    authenticated_client: AsyncClient, second_authenticated_client: AsyncClient
+) -> None:
+    """The list shows the caller's active/paused jobs only, with last run status."""
+    user_id = authenticated_client.seeded_user_id
+    other_id = second_authenticated_client.seeded_user_id
+    chat_id = await _seed_chat(user_id)
+    active = await _make_job(user_id, title="active")
+    paused = await _make_job(user_id, title="paused")
+    cancelled = await _make_job(user_id, title="cancelled")
+    await _make_job(other_id, title="foreign")
+    async with async_session_factory() as session:
+        await scheduler_ops.pause_task(session, user_id, paused.id)
+        await scheduler_ops.cancel_task(session, user_id, cancelled.id)
+    await _add_run(active.id, user_id)
+
+    result = await _dispatch(user_id, chat_id, "list_scheduled_tasks", {})
+
+    assert result["ok"] is True
+    tasks = json.loads(result["content"])["tasks"]
+    by_title = {t["title"]: t for t in tasks}
+    assert set(by_title) == {"active", "paused"}
+    assert by_title["active"]["last_run_status"] == "success"
+    assert by_title["paused"]["last_run_status"] is None
+    assert by_title["active"]["schedule"] == "every 60 s"
+    assert by_title["active"]["next_run_at_local"]
+
+
+async def test_cancel_blocked_when_latest_message_has_no_cancel_intent(
+    authenticated_client: AsyncClient,
+) -> None:
+    """The flag alone is not enough: the user's latest message must ask to cancel."""
+    user_id = authenticated_client.seeded_user_id
+    chat_id = await _seed_chat(user_id, "покажи задания")
+    job = await _make_job(user_id)
+
+    result = await _dispatch(
+        user_id,
+        chat_id,
+        "cancel_scheduled_task",
+        {"task_id": job.id, "user_requested_cancellation": True},
+    )
+
+    assert result["ok"] is False
+    assert json.loads(result["content"])["code"] == "cancel_not_requested"
+    assert (await _job(job.id)).status == ScheduledTaskStatus.ACTIVE
+
+
+async def test_cancel_blocked_when_flag_is_false(authenticated_client: AsyncClient) -> None:
+    """Cancel intent in the message is not enough without the explicit flag."""
+    user_id = authenticated_client.seeded_user_id
+    chat_id = await _seed_chat(user_id, "отмени задание")
+    job = await _make_job(user_id)
+
+    result = await _dispatch(
+        user_id,
+        chat_id,
+        "cancel_scheduled_task",
+        {"task_id": job.id, "user_requested_cancellation": False},
+    )
+
+    assert json.loads(result["content"])["code"] == "cancel_not_requested"
+    assert (await _job(job.id)).status == ScheduledTaskStatus.ACTIVE
+
+
+async def test_cancel_blocked_when_leaf_is_not_a_user_message(
+    authenticated_client: AsyncClient,
+) -> None:
+    """An assistant leaf carrying cancel words does not authorise a cancel."""
+    user_id = authenticated_client.seeded_user_id
+    chat_id = await _seed_chat(user_id, "отмени задание", role="assistant")
+    job = await _make_job(user_id)
+
+    result = await _dispatch(
+        user_id,
+        chat_id,
+        "cancel_scheduled_task",
+        {"task_id": job.id, "user_requested_cancellation": True},
+    )
+
+    assert json.loads(result["content"])["code"] == "cancel_not_requested"
+
+
+async def test_cancel_succeeds_when_user_asked(authenticated_client: AsyncClient) -> None:
+    """A cancel request plus the flag soft-cancels the job and keeps its runs."""
+    user_id = authenticated_client.seeded_user_id
+    chat_id = await _seed_chat(user_id, "отмени задание")
+    job = await _make_job(user_id)
+    await _add_run(job.id, user_id)
+
+    result = await _dispatch(
+        user_id,
+        chat_id,
+        "cancel_scheduled_task",
+        {"task_id": job.id, "user_requested_cancellation": True},
+    )
+
+    assert result["ok"] is True
+    assert json.loads(result["content"])["status"] == "cancelled"
+    assert (await _job(job.id)).status == ScheduledTaskStatus.CANCELLED
+    async with async_session_factory() as session:
+        assert len((await session.exec(select(TaskRun))).all()) == 1
+
+
+async def test_cancel_foreign_missing_and_finished_jobs(
+    authenticated_client: AsyncClient, second_authenticated_client: AsyncClient
+) -> None:
+    """Foreign and missing ids are not_found; an already cancelled job is a conflict."""
+    user_id = authenticated_client.seeded_user_id
+    other_id = second_authenticated_client.seeded_user_id
+    chat_id = await _seed_chat(user_id, "cancel job")
+    foreign = await _make_job(other_id)
+    mine = await _make_job(user_id)
+
+    foreign_result = await _dispatch(
+        user_id,
+        chat_id,
+        "cancel_scheduled_task",
+        {"task_id": foreign.id, "user_requested_cancellation": True},
+    )
+    missing_result = await _dispatch(
+        user_id,
+        chat_id,
+        "cancel_scheduled_task",
+        {"task_id": 9999, "user_requested_cancellation": True},
+    )
+    cancel_args = {"task_id": mine.id, "user_requested_cancellation": True}
+    first = await _dispatch(user_id, chat_id, "cancel_scheduled_task", cancel_args)
+    second = await _dispatch(user_id, chat_id, "cancel_scheduled_task", cancel_args)
+
+    assert json.loads(foreign_result["content"])["code"] == "not_found"
+    assert json.loads(missing_result["content"])["code"] == "not_found"
+    assert (await _job(foreign.id)).status == ScheduledTaskStatus.ACTIVE
+    assert first["ok"] is True
+    assert json.loads(second["content"])["code"] == "conflict"
+
+
+async def test_cancel_without_chat_is_blocked(authenticated_client: AsyncClient) -> None:
+    """A headless call (chat id 0) has no latest message and cannot cancel."""
+    user_id = authenticated_client.seeded_user_id
+    job = await _make_job(user_id)
+
+    result = await _dispatch(
+        user_id,
+        0,
+        "cancel_scheduled_task",
+        {"task_id": job.id, "user_requested_cancellation": True},
+    )
+
+    assert json.loads(result["content"])["code"] == "cancel_not_requested"
+    assert (await _job(job.id)).status == ScheduledTaskStatus.ACTIVE
+
+
+async def test_cancel_uses_only_own_chat(
+    authenticated_client: AsyncClient, second_authenticated_client: AsyncClient
+) -> None:
+    """Another user's chat cannot authorise a cancel."""
+    user_id = authenticated_client.seeded_user_id
+    other_id = second_authenticated_client.seeded_user_id
+    foreign_chat = await _seed_chat(other_id, "cancel job")
+    job = await _make_job(user_id)
+
+    result = await _dispatch(
+        user_id,
+        foreign_chat,
+        "cancel_scheduled_task",
+        {"task_id": job.id, "user_requested_cancellation": True},
+    )
+
+    assert json.loads(result["content"])["code"] == "cancel_not_requested"
+
+
+async def test_chat_delete_keeps_job_with_null_origin(
+    authenticated_client: AsyncClient, chat_model: str
+) -> None:
+    """Deleting the origin chat leaves the job in place with origin_chat_id NULL."""
+    user_id = authenticated_client.seeded_user_id
+    chat_id = await _seed_chat(user_id)
+    result = await _dispatch(
+        user_id,
+        chat_id,
+        "schedule_task",
+        {"schedule_type": "once", "delay_seconds": 60, "title": "t", "prompt": "p"},
+    )
+    task_id = json.loads(result["content"])["id"]
+    assert (await _job(task_id)).origin_chat_id == chat_id
+
+    resp = await authenticated_client.delete(f"/api/v1/chats/{chat_id}")
+
+    assert resp.status_code == 204
+    row = await _job(task_id)
+    assert row is not None
+    assert row.origin_chat_id is None
+
+
+def test_tool_schema_list_has_nine_tools_and_scheduler_tools_registered() -> None:
+    """The three scheduler tools are registered and no property enum offers 'cancelled'."""
+    schemas = build_tool_schemas()
+    assert len(schemas) == 9
+    assert set(SCHEDULER_TOOL_NAMES) <= set(TOOL_REGISTRY)
+    for schema in schemas:
+        for prop in schema["function"]["parameters"].get("properties", {}).values():
+            assert "cancelled" not in prop.get("enum", [])
+
+
+# --- full websocket turn ----------------------------------------------------------
+
+BASE_URL = settings.LM_STUDIO_BASE_URL
+WS_ORIGIN = "http://localhost:8000"
+WS_MODEL = "ws-test-model"
+
+
+def _sse(lines: list[str]) -> httpx.Response:
+    return httpx.Response(200, content=("\n".join(lines) + "\n").encode())
+
+
+def _plain_response(text: str) -> httpx.Response:
+    chunk = {"choices": [{"delta": {"content": text}, "finish_reason": None}]}
+    return _sse(
+        [
+            f"data: {json.dumps(chunk)}",
+            'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}',
+            "data: [DONE]",
+        ]
+    )
+
+
+def _tool_response(call_id: str, name: str, arguments: dict[str, Any]) -> httpx.Response:
+    delta = [
+        {
+            "index": 0,
+            "id": call_id,
+            "type": "function",
+            "function": {"name": name, "arguments": json.dumps(arguments)},
+        }
+    ]
+    first = {"choices": [{"delta": {"tool_calls": delta}, "finish_reason": None}]}
+    second = {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]}
+    return _sse([f"data: {json.dumps(first)}", f"data: {json.dumps(second)}", "data: [DONE]"])
+
+
+async def _all_jobs() -> list[ScheduledTask]:
+    async with async_session_factory() as session:
+        return list((await session.exec(select(ScheduledTask))).all())
+
+
+@respx.mock
+def test_ws_turn_schedule_task_is_not_a_memory_write() -> None:
+    """A schedule_task call in a chat turn creates the job but never shows up in memory_writes."""
+    queue = [
+        _tool_response(
+            "call_1",
+            "schedule_task",
+            {"schedule_type": "once", "delay_seconds": 60, "title": "t", "prompt": "p"},
+        ),
+        _plain_response("Scheduled it."),
+    ]
+    respx.post(f"{BASE_URL}/v1/chat/completions").mock(
+        side_effect=lambda _request: queue.pop(0)
+    )
+
+    with TestClient(app) as client:
+        login_test_client(client)
+        chat_id = client.post("/api/v1/chats", json={"title": "Sched"}).json()["id"]
+        with client.websocket_connect(
+            f"/ws/chat/{chat_id}", headers={"Origin": WS_ORIGIN}
+        ) as ws:
+            ws.send_json({"content": "run p in a minute", "model": WS_MODEL})
+            frames = []
+            while True:
+                frame = ws.receive_json()
+                frames.append(frame)
+                if frame.get("type") == "done":
+                    break
+
+        done = frames[-1]
+        assert done["memory_writes"] == []
+        jobs = client.portal.call(_all_jobs)
+        assert len(jobs) == 1
+        assert jobs[0].model == WS_MODEL
+        assert jobs[0].origin_chat_id == chat_id

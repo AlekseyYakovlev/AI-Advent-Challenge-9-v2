@@ -330,4 +330,4 @@ async def test_builtin_dispatch_unchanged_with_bindings_and_mixed_order() -> Non
     assert [r["name"] for r in results] == ["save_working_memory", "mcp__fixture__echo"]
     assert results[0]["ok"] is True and results[0]["mcp"] is None
     assert results[1]["ok"] is True
-    assert len(build_tool_schemas()) == 6
+    assert len(build_tool_schemas()) == 9

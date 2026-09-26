@@ -54,6 +54,7 @@ from agent.llm_client import LMStudioClient
 from agent.state import CORS_ORIGINS, chat_locks, cleanup_chat_caches
 from agent.context_engine import compute_chat_stats
 from agent import invariants, mcp_client, mcp_config, memory, profile, tasks
+from agent import scheduler_tools  # noqa: F401  (registers the scheduler LLM tools)
 from agent.events import ws_events
 from agent.scheduler import scheduler
 from agent.scheduler_api import router as scheduler_router
