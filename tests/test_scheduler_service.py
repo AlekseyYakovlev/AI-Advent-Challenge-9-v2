@@ -658,9 +658,11 @@ async def test_loop_runs_due_job_and_stop_ends_it(
 
     await svc.start()
     assert svc.is_running_loop
+    # Wait for the run task itself to end, not just for the SUCCESS row: _finish_run keeps
+    # querying after that commit, and cancelling it there orphans a DB connection.
     for _ in range(200):
         runs = await _runs(task_id)
-        if runs and runs[0].status == RunStatus.SUCCESS:
+        if runs and runs[0].status == RunStatus.SUCCESS and not svc._runs:
             break
         await asyncio.sleep(0.02)
     await svc.stop()
