@@ -119,3 +119,90 @@ def fallback_title(user_text: str) -> str | None:
     if len(text) > TITLE_MAX_CHARS:
         text = _cut_at_word(text, TITLE_MAX_CHARS - 1) + "…"
     return text if text and _is_usable(text) else None
+
+
+async def request_title(user_text: str, assistant_text: str, model: str) -> str | None:
+    """Ask the model for a title once; any failure or unusable output yields None."""
+    try:
+        raw = await asyncio.wait_for(
+            llm_client.complete_chat(
+                messages=build_title_messages(user_text, assistant_text),
+                model=model,
+                temperature=TITLE_TEMPERATURE,
+                max_tokens=TITLE_MAX_TOKENS,
+            ),
+            timeout=TITLE_TIMEOUT_SECONDS,
+        )
+    except Exception as exc:
+        logger.warning("chat_title_llm_failed", error_type=type(exc).__name__, error=str(exc))
+        return None
+    return clean_title(raw)
+
+
+async def apply_title(chat_id: int, title: str) -> bool:
+    """Set the title only while the chat still has the default one; True when written."""
+    async with async_session_factory() as session:
+        try:
+            result = await session.exec(
+                update(Chat)
+                .where(Chat.id == chat_id, Chat.title == DEFAULT_CHAT_TITLE)
+                .values(title=title)
+            )
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        return result.rowcount == 1
+
+
+def _publish_title(user_id: int, chat_id: int, title: str) -> None:
+    """Push the new title to the chat owner's event queues."""
+    # Function-local: agent.events imports agent.ws, which imports this module.
+    from agent.events import hub
+
+    hub.publish(user_id, {"type": "chat_title_updated", "chat_id": chat_id, "title": title})
+
+
+async def generate_and_apply_title(
+    chat_id: int, user_id: int | None, user_text: str, assistant_text: str, model: str
+) -> None:
+    """Generate (or derive) a title, store it once and notify the owner; never raises."""
+    try:
+        title = await request_title(user_text, assistant_text, model)
+        source = "llm"
+        if title is None:
+            title = fallback_title(user_text)
+            source = "fallback"
+        if title is None:
+            logger.info("chat_title_skipped", chat_id=chat_id, reason="empty_fallback")
+            return
+        if not await apply_title(chat_id, title):
+            logger.info("chat_title_not_applied", chat_id=chat_id)
+            return
+        if user_id is not None:
+            _publish_title(user_id, chat_id, title)
+        logger.info("chat_title_set", chat_id=chat_id, source=source, length=len(title))
+    except asyncio.CancelledError:
+        return
+    except Exception as exc:
+        logger.warning("chat_title_failed", chat_id=chat_id, error=str(exc))
+
+
+def _forget_task(chat_id: int, task: "asyncio.Task[None]") -> None:
+    """Drop the registry entry when it still points at the finished task."""
+    if title_tasks.get(chat_id) is task:
+        title_tasks.pop(chat_id, None)
+
+
+def schedule_title_generation(
+    chat_id: int, user_id: int | None, user_text: str, assistant_text: str, model: str
+) -> None:
+    """Start the one-off title job unless one is already running for the chat."""
+    existing = title_tasks.get(chat_id)
+    if existing is not None and not existing.done():
+        return
+    task = asyncio.create_task(
+        generate_and_apply_title(chat_id, user_id, user_text, assistant_text, model)
+    )
+    title_tasks[chat_id] = task
+    task.add_done_callback(lambda finished: _forget_task(chat_id, finished))
