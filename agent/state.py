@@ -12,6 +12,8 @@ CORS_ORIGINS = [
 active_streams: dict[int, Any] = {}
 ws_rate_limiter: dict[int, list[float]] = {}
 chat_locks: dict[int, asyncio.Lock] = {}
+# One in-flight auto-title job per chat (agent/titles.py)
+title_tasks: dict[int, asyncio.Task[None]] = {}
 
 # Set per chat turn in ws._handle_chat_message so tool handlers know the chat's model;
 # it is overwritten on every turn, so nothing needs to clear it.
@@ -23,3 +25,6 @@ def cleanup_chat_caches(chat_id: int) -> None:
     active_streams.pop(chat_id, None)
     ws_rate_limiter.pop(chat_id, None)
     chat_locks.pop(chat_id, None)
+    title_task = title_tasks.pop(chat_id, None)
+    if title_task is not None and not title_task.done():
+        title_task.cancel()
