@@ -38,6 +38,7 @@ from agent.schemas import (
     ToolCallEvent,
 )
 from agent.text_tool_calls import TextToolCallFilter
+from agent.titles import DEFAULT_CHAT_TITLE, schedule_title_generation
 from agent.tool_guard import (
     ACTION_ANNOUNCE_REMINDER,
     ACTION_CLAIM_REMINDER,
@@ -956,6 +957,12 @@ async def _handle_chat_message(
                 payload.model,
             )
             stats = await compute_chat_stats(session, chat_id, payload.model)
+            # Scheduled before the done frame so a client that already disconnected cannot
+            # skip it; nothing is awaited before the send, so the title call never delays the turn.
+            if chat.title == DEFAULT_CHAT_TITLE and user_msg.parent_id is None:
+                schedule_title_generation(
+                    chat_id, chat.user_id, payload.content, assistant_text, payload.model
+                )
             await websocket.send_json(
                 {
                     "type": "done",
