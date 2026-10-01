@@ -26,6 +26,10 @@ Full details: [milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
 - [x] **Phase 7: MCP Connection (Day 16)** — The agent connects to an MCP server configured in Settings and shows the server's tool list (completed 2026-09-23)
 - [x] **Phase 8: Scheduler (Day 18)** — Delayed and periodic jobs with persisted status/results, run by the agent and shown in the UI
  (completed 2026-09-26)
+- [ ] **Phase 9: Auto-rename chats with LLM (Day 21)** — The LLM generates a short chat title after the first Q&A turn instead of 'New Chat'
+- [ ] **Phase 10: Modals close only via x button (Day 21)** — A modal closes only on its 'x'; a backdrop click no longer closes it
+- [ ] **Phase 11: Edit and delete long-term memory entries via UI (Day 21)** — "Редактировать" / "Удалить" buttons per long-term memory entry
+- [ ] **Phase 12: LLM providers section in Settings (Day 21)** — 'Провайдеры LLM' section with connection check; provider models appear in the LLM picker
 
 ## Phase Details
 
@@ -112,6 +116,61 @@ Plans:
 
 - [x] 08-08-PLAN.md — Docs sync (API_SPEC, ARCHITECTURE, TESTING_GUIDE), full suite, human demo walkthrough (wave 5, checkpoint)
 
+### Phase 9: Auto-rename chats with LLM (Day 21)
+
+**Goal**: every chat is currently titled 'New Chat'; the LLM should generate a short title per chat
+**Branch**: `Day21`
+**Depends on**: Phase 8
+**Promoted from**: backlog 999.4 (2026-10-02)
+**Chosen approach (2026-09-26): title after first Q&A turn.** Trigger once when the chat has 2 messages and the title is still the default 'New Chat' (never overwrite a user-edited title); input = first user message + short summary of the first answer; 3–8 words / ~50 chars, temperature 0, max_tokens ~30, plain text (not JSON, for small LM Studio models), user text wrapped in tags against prompt injection; title in the user's language; fallback = truncated first user message if the LLM call fails; run after the `done` event as a non-blocking extra call and push a WebSocket event so the sidebar updates. Open: which model generates the title (default: the chat's current model)
+**Refs**: ChatOllama blog (2025-09-09), OpenSearch-Dashboards PR #12786, NodeSpace issue #1698, LibreChat PR #13395, open-webui discussion #9567
+**Requirements**: TBD
+**Plans**: 0 plans
+**UI hint**: yes
+
+Plans:
+- [ ] TBD (run /bm:plan-phase 9 to break down)
+
+### Phase 10: Modals close only via x button (Day 21)
+
+**Goal**: change modal behavior: a modal closes only when its 'x' is clicked; clicking outside the modal (on the backdrop) must not close it
+**Branch**: `Day21`
+**Depends on**: Phase 8
+**Promoted from**: backlog 999.5 (2026-10-02)
+**Requirements**: TBD
+**Plans**: 0 plans
+**UI hint**: yes
+
+Plans:
+- [ ] TBD (run /bm:plan-phase 10 to break down)
+
+### Phase 11: Edit and delete long-term memory entries via UI (Day 21)
+
+**Goal**: the user must be able to edit long-term memory fields through the UI ("Редактировать" and "Удалить" buttons per entry)
+**Branch**: `Day21`
+**Depends on**: Phase 8
+**Promoted from**: backlog 999.6 (2026-10-02)
+**Requirements**: TBD
+**Plans**: 0 plans
+**UI hint**: yes
+
+Plans:
+- [ ] TBD (run /bm:plan-phase 11 to break down)
+
+### Phase 12: LLM providers section in Settings (Day 21)
+
+**Goal**: add a 'Провайдеры LLM' section to Settings, styled like the 'MCP серверы' section: a '+ Добавить провайдера' button, with already-added providers listed below it
+**Behavior**: after a new provider is saved, run a connection check and show a success or error indicator; the LLMs the provider exposes appear in the LLM picker, and each picker entry is prefixed with the provider name
+**Branch**: `Day21`
+**Depends on**: Phase 8
+**Promoted from**: backlog 999.11 (2026-10-02)
+**Requirements**: TBD
+**Plans**: 0 plans
+**UI hint**: yes
+
+Plans:
+- [ ] TBD (run /bm:plan-phase 12 to break down)
+
 ## Progress
 
 | Phase | Milestone | Plans Complete | Status | Completed |
@@ -124,6 +183,10 @@ Plans:
 | 6. Controlled Transitions (Day 15) | v1.0 | 4/4 | Complete | 2026-09-21 |
 | 7. MCP Connection (Day 16) | v2.0 | 6/6 | Complete   | 2026-09-23 |
 | 8. Scheduler (Day 18) | v2.0 | 9/9 | Complete   | 2026-09-26 |
+| 9. Auto-rename chats with LLM (Day 21) | v2.0 | 0/0 | Not started | - |
+| 10. Modals close only via x button (Day 21) | v2.0 | 0/0 | Not started | - |
+| 11. Edit and delete long-term memory entries via UI (Day 21) | v2.0 | 0/0 | Not started | - |
+| 12. LLM providers section in Settings (Day 21) | v2.0 | 0/0 | Not started | - |
 
 ## Backlog
 
@@ -153,35 +216,6 @@ Plans:
 
 **Goal:** model burns rounds on list_allowed_directories/get_file_info and commit_files 'update' on missing files; TOOL_ERROR_REMINDER can append a second answer after an already good final answer
 **Deferred to:** Day 20
-**Requirements:** TBD
-**Plans:** 0 plans
-
-Plans:
-- [ ] TBD (promote with /bm:review-backlog when ready)
-
-### Phase 999.4: Auto-rename chats with LLM instead of 'New Chat' (BACKLOG)
-
-**Goal:** every chat is currently titled 'New Chat'; the LLM should generate a short title per chat
-**Chosen approach (2026-09-26): title after first Q&A turn.** Trigger once when the chat has 2 messages and the title is still the default 'New Chat' (never overwrite a user-edited title); input = first user message + short summary of the first answer; 3–8 words / ~50 chars, temperature 0, max_tokens ~30, plain text (not JSON, for small LM Studio models), user text wrapped in tags against prompt injection; title in the user's language; fallback = truncated first user message if the LLM call fails; run after the `done` event as a non-blocking extra call and push a WebSocket event so the sidebar updates. Open: which model generates the title (default: the chat's current model)
-**Refs:** ChatOllama blog (2025-09-09), OpenSearch-Dashboards PR #12786, NodeSpace issue #1698, LibreChat PR #13395, open-webui discussion #9567
-**Requirements:** TBD
-**Plans:** 0 plans
-
-Plans:
-- [ ] TBD (promote with /bm:review-backlog when ready)
-
-### Phase 999.5: Modal windows close only via 'x' button (BACKLOG)
-
-**Goal:** change modal behavior: a modal closes only when its 'x' is clicked; clicking outside the modal (on the backdrop) must not close it
-**Requirements:** TBD
-**Plans:** 0 plans
-
-Plans:
-- [ ] TBD (promote with /bm:review-backlog when ready)
-
-### Phase 999.6: Edit and delete long-term memory fields via UI (BACKLOG)
-
-**Goal:** the user must be able to edit long-term memory fields through the UI ("Редактировать" and "Удалить" buttons per entry)
 **Requirements:** TBD
 **Plans:** 0 plans
 
@@ -228,16 +262,6 @@ Plans:
 Plans:
 - [ ] TBD (promote with /bm:review-backlog when ready)
 
-### Phase 999.11: LLM providers section in Settings (BACKLOG)
-
-**Goal:** add a 'Провайдеры LLM' section to Settings, styled like the 'MCP серверы' section: a '+ Добавить провайдера' button, with already-added providers listed below it
-**Behavior:** after a new provider is saved, run a connection check and show a success or error indicator; the LLMs the provider exposes appear in the LLM picker, and each picker entry is prefixed with the provider name
-**Requirements:** TBD
-**Plans:** 0 plans
-
-Plans:
-- [ ] TBD (promote with /bm:review-backlog when ready)
-
 ---
 *Roadmap created: 2026-09-19*
-*Last updated: 2026-09-23 — v1.0 milestone archived*
+*Last updated: 2026-10-02 — backlog 999.4/999.5/999.6/999.11 promoted to Phases 9-12 (Day 21)*

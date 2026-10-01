@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: "Week 4: MCP Integration"
-status: milestone_complete
-last_updated: 2026-09-26T15:27:35.709Z
-last_activity: 2026-09-26 -- Phase 08 execution started
+status: ready_to_plan
+last_updated: 2026-10-02T00:00:00.000Z
+last_activity: 2026-10-02 -- Backlog 999.4/5/6/11 promoted to Phases 9-12 (Day 21)
 progress:
-  total_phases: 8
+  total_phases: 12
   completed_phases: 1
   total_plans: 14
   completed_plans: 15
   percent: 13
-stopped_at: Milestone complete (Phase 08 was final phase)
+stopped_at: Phases 9-12 (Day 21) added from backlog, not planned yet
 ---
 
 # Project State
@@ -20,14 +20,14 @@ stopped_at: Milestone complete (Phase 08 was final phase)
 
 **Project:** AiAdventAgentV2 — Week 4: MCP Integration
 **Core value:** The agent must demonstrably separate and manage distinct kinds of state — short-term dialog, working task data, long-term profile/knowledge, and task lifecycle — making explicit, inspectable decisions about what goes where.
-**Current focus:** Milestone complete
+**Current focus:** Day 21 — Phases 9-12 (promoted backlog items)
 
 ## Current Position
 
-Phase: 08
+Phase: 09
 Plan: Not started
-Status: Milestone complete
-Last activity: 2026-09-26
+Status: Ready to plan
+Last activity: 2026-10-02
 
 ## Performance Metrics
 
@@ -50,6 +50,7 @@ No phases executed yet — metrics will populate after Phase 1 completes.
 ### Roadmap Evolution
 
 - Phase 8 added: Scheduler (Day 18) — delayed/periodic jobs, written from scratch in Python (not a fork of mcp-cron), branch `Day18`
+- Phases 9-12 added (2026-10-02): backlog 999.4 / 999.5 / 999.6 / 999.11 promoted as Day 21 work, all on branch `Day21` (auto-rename chats, modals close only via x, edit/delete long-term memory in UI, LLM providers section in Settings)
 
 ### Open Questions (flagged by research, need resolution during phase planning)
 
@@ -95,7 +96,7 @@ Items acknowledged and deferred at milestone close on 2026-09-23:
 ## Session Continuity
 
 **Last session:** 2026-09-26T10:51:08.498Z
-**Next action:** Run `/bm:plan-phase 1` to plan Auth Foundation.
+**Next action:** Run `/bm:discuss-phase 9` (or `/bm:plan-phase 9`) to start Day 21.
 
 ---
 *State initialized: 2026-09-19*
