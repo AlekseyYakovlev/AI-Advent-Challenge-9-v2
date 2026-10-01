@@ -11,7 +11,7 @@
 - GET  /api/v1/settings?chat_id={id}
 - PUT  /api/v1/settings
 - WS   /ws/chat/{chat_id}
-- WS   /ws/events (see "Scheduler")
+- WS   /ws/events (see "Scheduler" and "Chat titles")
 - GET/POST/DELETE /api/v1/scheduler/... (see "Scheduler")
 
 ## LM Studio
@@ -230,7 +230,7 @@ succeeded), `error` (Russian text, `null` unless the run failed or was skipped) 
 
 ### WS /ws/events
 
-User-level live channel for scheduler changes; one socket per browser tab, separate from
+User-level live channel for scheduler changes and chat title updates; one socket per browser tab, separate from
 `/ws/chat/{chat_id}`.
 
 - Handshake: the `Origin` header must be an allowed app origin (same policy as `/ws/chat`) and the
@@ -251,6 +251,7 @@ snapshot so the UI can update the card without a refetch):
 { "type": "run_finished", "task_id": 7, "run": { "...": "RunSummary" }, "task": { "...": "ScheduledTaskOut" } }
 { "type": "task_updated", "task": { "...": "ScheduledTaskOut" } }
 { "type": "task_deleted", "task_id": 7 }
+{ "type": "chat_title_updated", "chat_id": 12, "title": "Настройка WebSocket в FastAPI" }
 ```
 
 - `run_started`: a run was claimed (schedule) or started manually.
@@ -258,6 +259,10 @@ snapshot so the UI can update the card without a refetch):
 - `task_updated`: the job was created, paused, resumed, cancelled, completed, or a manual run was
   started.
 - `task_deleted`: the job and its runs were removed.
+- `chat_title_updated`: sent once per chat after its first successful question/answer turn when the
+  title was still `New Chat`; `title` is plain text, one line, at most 50 characters; delivered only
+  to the chat owner's sockets; not replayed after a reconnect (the UI reloads the chat list on
+  reconnect).
 
 ### LLM tools
 
@@ -280,6 +285,15 @@ the chatting user's jobs.
   (`agent/tool_guard.py::user_asked_to_cancel`, Russian and English verbs). Other error codes:
   `not_found` (missing or foreign job) and `conflict` (job already finished). There is no implicit
   "current job"; the id must be explicit.
+
+## Chat titles (Day 21)
+
+`POST /api/v1/chats` creates a chat titled `New Chat` unless a title is given. The Agent replaces the
+default title automatically (there is no rename endpoint). The title comes from the model that
+answered the turn (non-streaming call, temperature 0, max_tokens 30, 20 s timeout). On any failure the
+title is the first user message cut to 50 characters with `…`. A non-default title is never
+overwritten. The `done` frame of `/ws/chat/{chat_id}` is unchanged and is not delayed; the new title
+arrives separately as a `chat_title_updated` frame on `/ws/events`.
 
 ## Environment Settings
 
