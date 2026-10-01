@@ -19,6 +19,7 @@
 - **Switch:** Click chat in sidebar
 - **Delete:** Right-click chat in sidebar
 - **Branch:** Click "↩ отсюда" button on any message
+- **Title:** A new chat is named automatically after the first answer (short title in the language of the message); until then it is shown as "New Chat"
 
 ### Using Branches
 - Messages can have multiple responses (branches)

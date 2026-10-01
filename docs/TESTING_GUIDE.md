@@ -3,12 +3,13 @@
 ## Required Tests
 - test_database.py: WAL, retry_on_locked_db, CASCADE
 - test_settings_fallback.py: global → per-chat inheritance
-- test_cascade_delete.py: delete chat → cleanup in-memory caches
+- test_cascade_delete.py: delete chat → cleanup in-memory caches (including the pending title job)
 - test_lm_studio_client.py: load/unload/timeout scenarios
 - test_concurrent_ws.py: 5 parallel WS messages, no IntegrityError
 - test_ws_security.py: origin validation, rate limiting, idle timeout
 - test_supervisor.py: agent crash → restart within 5 seconds
 - test_scheduler_*.py: see "Scheduler (Day 18)" below
+- test_titles.py / test_titles_ws.py: see "Chat auto-titling (Day 21)" below
 
 ## Fixtures
 - Use conftest.py for shared fixtures
@@ -155,3 +156,23 @@ runner against a `respx`-mocked LM Studio. Never wait for wall-clock ticks.
   the subscription is removed on close.
 - Hub: delivery only to the user's queues, oldest frame dropped when a queue is full, publish without
   subscribers is a no-op, the user key is removed with the last queue.
+
+## Chat auto-titling (Day 21)
+
+### test_titles.py
+- Sanitizer table: think-blocks, labels, quotes, markup and angle brackets, length cap.
+- Fallback title; tag-breakout stripping including nested tags; request arguments.
+- Fallback on error, empty output and timeout.
+- Never overwrite: custom title, rename mid-flight, race of two jobs, deleted chat.
+- Owner-only frame; ownerless chat produces no frame; one job per chat; cancel on cleanup.
+
+### test_titles_ws.py
+- The first turn triggers the job once with the turn's model; a chat created with an empty body gets
+  the default title.
+- A custom title, a second turn and a failed turn do not trigger.
+- Request shape: non-streaming, temperature 0, max_tokens 30, no tools, system prompt only.
+- Fallback on HTTP 500 and ConnectError.
+- Owner-only delivery; the socket may be closed after the turn; `done` is not delayed.
+
+Title tests must create chats titled `New Chat` and classify mocked LLM requests by `stream` and the
+`<user_message>` tag instead of an ordered response queue.
