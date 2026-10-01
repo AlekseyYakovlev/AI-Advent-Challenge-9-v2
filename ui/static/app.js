@@ -2511,6 +2511,7 @@ state.eventsShouldReconnect = true;
 state.eventsReconnectTimer = null;
 state.schedulerPollTimer = null;
 state.eventsPingTimer = null;
+state.eventsHasConnected = false;
 
 function startSchedulerPolling() {
     if (state.schedulerPollTimer) return;
@@ -2562,6 +2563,39 @@ function notifySchedulerRunFinished(frame) {
     }
 }
 
+function applyChatTitleUpdate(frame) {
+    if (!frame || typeof frame.chat_id !== 'number') return;
+    if (typeof frame.title !== 'string' || !frame.title.trim()) return;
+    const chat = state.chats.find((c) => c.id === frame.chat_id);
+    if (!chat) {
+        loadChats().catch(() => {});
+        return;
+    }
+    chat.title = frame.title.slice(0, 200);
+    renderChatList();
+    if (state.currentChatId === frame.chat_id) {
+        $('chat-title').textContent = chat.title;
+    }
+}
+
+function handleEventFrame(frame) {
+    if (frame && frame.type === 'chat_title_updated') {
+        applyChatTitleUpdate(frame);
+        return;
+    }
+    applySchedulerEvent(frame);
+}
+
+async function refreshChatsAfterEventsReconnect() {
+    try {
+        await loadChats();
+    } catch {
+        return;
+    }
+    const chat = state.chats.find((c) => c.id === state.currentChatId);
+    if (chat) $('chat-title').textContent = chat.title;
+}
+
 function applySchedulerEvent(frame) {
     if (!frame || typeof frame !== 'object') return;
     if (state.lastSchedulerTasks === null) {
@@ -2611,6 +2645,8 @@ function connectEventsWs() {
         state.eventsPingTimer = setInterval(() => {
             if (ws.readyState === WebSocket.OPEN) ws.send('ping');
         }, EVENTS_PING_INTERVAL_MS);
+        if (state.eventsHasConnected) refreshChatsAfterEventsReconnect();
+        state.eventsHasConnected = true;
     };
 
     ws.onmessage = (event) => {
@@ -2620,7 +2656,7 @@ function connectEventsWs() {
         } catch {
             return;
         }
-        applySchedulerEvent(frame);
+        handleEventFrame(frame);
     };
 
     ws.onclose = (event) => {
