@@ -150,11 +150,11 @@ Plans:
 **Depends on**: Phase 8
 **Promoted from**: backlog 999.5 (2026-10-02)
 **Requirements**: TBD
-**Plans**: 0 plans
+**Plans**: 1 plan
 **UI hint**: yes
 
 Plans:
-- [ ] TBD (run /bm:plan-phase 10 to break down)
+- [ ] 10-01-PLAN.md — Remove backdrop-click and Escape modal closers in app.js, add a source guard test, browser UAT on an isolated copy
 
 ### Phase 11: Edit and delete long-term memory entries via UI (Day 21)
 
