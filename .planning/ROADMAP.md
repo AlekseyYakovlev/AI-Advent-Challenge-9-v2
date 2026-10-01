@@ -132,8 +132,8 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 09-01-PLAN.md — Title service `agent/titles.py`: tag-wrapped prompt, output sanitizer, fallback, conditional UPDATE, owner-only `chat_title_updated` publish, `title_tasks` registry + unit tests (wave 1)
-- [ ] 09-02-PLAN.md — Frontend: `/ws/events` frame dispatcher, sidebar + header title update, chat-list reload on events reconnect (wave 1)
+- [x] 09-01-PLAN.md — Title service `agent/titles.py`: tag-wrapped prompt, output sanitizer, fallback, conditional UPDATE, owner-only `chat_title_updated` publish, `title_tasks` registry + unit tests (wave 1)
+- [x] 09-02-PLAN.md — Frontend: `/ws/events` frame dispatcher, sidebar + header title update, chat-list reload on events reconnect (wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -195,7 +195,7 @@ Plans:
 | 6. Controlled Transitions (Day 15) | v1.0 | 4/4 | Complete | 2026-09-21 |
 | 7. MCP Connection (Day 16) | v2.0 | 6/6 | Complete   | 2026-09-23 |
 | 8. Scheduler (Day 18) | v2.0 | 9/9 | Complete   | 2026-09-26 |
-| 9. Auto-rename chats with LLM (Day 21) | v2.0 | 0/4 | Planned | - |
+| 9. Auto-rename chats with LLM (Day 21) | v2.0 | 2/4 | In Progress|  |
 | 10. Modals close only via x button (Day 21) | v2.0 | 0/0 | Not started | - |
 | 11. Edit and delete long-term memory entries via UI (Day 21) | v2.0 | 0/0 | Not started | - |
 | 12. LLM providers section in Settings (Day 21) | v2.0 | 0/0 | Not started | - |
