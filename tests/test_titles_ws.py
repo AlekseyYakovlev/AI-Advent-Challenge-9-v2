@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -60,7 +61,7 @@ def test_first_turn_of_default_titled_chat_schedules_title(
             frames = _send_and_drain(ws, "Как дела?")
 
     assert frames[-1]["type"] == "done"
-    assert calls == [(chat_id, user_id, "Как дела?", "Привет всем", MODEL)]
+    assert calls == [(chat_id, user_id, "Как дела?", "Привет всем", MODEL, None)]
 
 
 @respx.mock
@@ -432,9 +433,10 @@ def test_done_is_not_delayed_by_blocked_title_call(monkeypatch: pytest.MonkeyPat
                 completion_tokens=None,
             )
 
-        monkeypatch.setattr(
-            "agent.titles.llm_client.complete_chat_detailed", _fake_complete_chat
-        )
+        async def _resolve(user_id: Any, provider_id: Any) -> Any:
+            return SimpleNamespace(complete_chat_detailed=_fake_complete_chat)
+
+        monkeypatch.setattr("agent.titles._resolve_title_client", _resolve)
         queue = client.portal.call(_subscribe, user_id)
         chat_id = _new_chat(client)
         frames = _run_first_turn(client, chat_id)

@@ -5,6 +5,7 @@ import json
 import re
 import sqlite3
 import time
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -33,6 +34,15 @@ from shared.models import Chat
 from tests.conftest import _create_user
 
 LONG_TEXT = "слово " * 20  # 120 chars with a trailing space
+
+
+def _use_fake_llm(monkeypatch: pytest.MonkeyPatch, fake: Any) -> None:
+    """Route the title job to a fake completion function instead of a real provider client."""
+
+    async def _resolve(user_id: int | None, provider_id: int | None) -> SimpleNamespace:
+        return SimpleNamespace(complete_chat_detailed=fake)
+
+    monkeypatch.setattr(titles, "_resolve_title_client", _resolve)
 
 
 @pytest.mark.parametrize(
@@ -237,7 +247,7 @@ async def test_success_sets_title_and_publishes_to_owner_only(
     owner_q = hub.subscribe(owner)
     other_q = hub.subscribe(other)
     fake = _fake_returning("Настройка WebSocket в FastAPI")
-    monkeypatch.setattr(titles.llm_client, "complete_chat_detailed", fake)
+    _use_fake_llm(monkeypatch, fake)
 
     await titles.generate_and_apply_title(chat_id, owner, "вопрос", "ответ", "model-x")
 
@@ -272,7 +282,7 @@ async def test_failure_modes_use_fallback_title(
     owner = await _create_user("title_fail", "pw")
     chat_id = await _make_chat(owner)
     queue = hub.subscribe(owner)
-    monkeypatch.setattr(titles.llm_client, "complete_chat_detailed", fake_factory())
+    _use_fake_llm(monkeypatch, fake_factory())
     user_text = "Как настроить сервер?"
 
     await titles.generate_and_apply_title(chat_id, owner, user_text, "ответ", "m")
@@ -292,7 +302,7 @@ async def test_timeout_uses_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
         return _result("never")
 
     monkeypatch.setattr(titles, "TITLE_TIMEOUT_SECONDS", 0.05)
-    monkeypatch.setattr(titles.llm_client, "complete_chat_detailed", slow)
+    _use_fake_llm(monkeypatch, slow)
 
     started = time.monotonic()
     await titles.generate_and_apply_title(chat_id, owner, "вопрос про таймаут", "a", "m")
@@ -306,7 +316,7 @@ async def test_empty_fallback_leaves_default_title(monkeypatch: pytest.MonkeyPat
     owner = await _create_user("title_empty", "pw")
     chat_id = await _make_chat(owner)
     queue = hub.subscribe(owner)
-    monkeypatch.setattr(titles.llm_client, "complete_chat_detailed", _fake_raising(RuntimeError("x")))
+    _use_fake_llm(monkeypatch, _fake_raising(RuntimeError("x")))
 
     await titles.generate_and_apply_title(chat_id, owner, "   ", "ответ", "m")
 
@@ -318,7 +328,7 @@ async def test_existing_title_is_never_overwritten(monkeypatch: pytest.MonkeyPat
     owner = await _create_user("title_keep", "pw")
     chat_id = await _make_chat(owner, title="My project")
     queue = hub.subscribe(owner)
-    monkeypatch.setattr(titles.llm_client, "complete_chat_detailed", _fake_returning("Другое имя"))
+    _use_fake_llm(monkeypatch, _fake_returning("Другое имя"))
 
     await titles.generate_and_apply_title(chat_id, owner, "вопрос", "ответ", "m")
 
@@ -339,7 +349,7 @@ async def test_rename_mid_flight_wins(monkeypatch: pytest.MonkeyPatch) -> None:
             await session.commit()
         return _result("Сгенерированный заголовок")
 
-    monkeypatch.setattr(titles.llm_client, "complete_chat_detailed", renaming)
+    _use_fake_llm(monkeypatch, renaming)
 
     await titles.generate_and_apply_title(chat_id, owner, "вопрос", "ответ", "m")
 
@@ -356,7 +366,7 @@ async def test_race_publishes_exactly_one_frame(monkeypatch: pytest.MonkeyPatch)
     async def varying(**kwargs: Any) -> ChatCompletionResult:
         return _result(next(answers))
 
-    monkeypatch.setattr(titles.llm_client, "complete_chat_detailed", varying)
+    _use_fake_llm(monkeypatch, varying)
 
     await asyncio.gather(
         titles.generate_and_apply_title(chat_id, owner, "вопрос", "ответ", "m"),
@@ -371,7 +381,7 @@ async def test_race_publishes_exactly_one_frame(monkeypatch: pytest.MonkeyPatch)
 async def test_missing_chat_is_silent(monkeypatch: pytest.MonkeyPatch) -> None:
     owner = await _create_user("title_gone", "pw")
     queue = hub.subscribe(owner)
-    monkeypatch.setattr(titles.llm_client, "complete_chat_detailed", _fake_returning("Заголовок"))
+    _use_fake_llm(monkeypatch, _fake_returning("Заголовок"))
 
     await titles.generate_and_apply_title(9999, owner, "вопрос", "ответ", "m")
 
@@ -383,7 +393,7 @@ async def test_ownerless_chat_titled_without_frame(monkeypatch: pytest.MonkeyPat
     b = await _create_user("title_legacy_b", "pw")
     chat_id = await _make_chat(None)
     qa, qb = hub.subscribe(a), hub.subscribe(b)
-    monkeypatch.setattr(titles.llm_client, "complete_chat_detailed", _fake_returning("Старый чат"))
+    _use_fake_llm(monkeypatch, _fake_returning("Старый чат"))
 
     await titles.generate_and_apply_title(chat_id, None, "вопрос", "ответ", "m")
 
@@ -397,7 +407,7 @@ async def test_schedule_runs_one_task_and_clears_registry(
     owner = await _create_user("title_sched", "pw")
     chat_id = await _make_chat(owner)
     fake = _fake_returning("Планирование задач")
-    monkeypatch.setattr(titles.llm_client, "complete_chat_detailed", fake)
+    _use_fake_llm(monkeypatch, fake)
 
     titles.schedule_title_generation(chat_id, owner, "вопрос", "ответ", "m")
     first = title_tasks[chat_id]
@@ -420,7 +430,7 @@ async def test_cleanup_cancels_in_flight_job(monkeypatch: pytest.MonkeyPatch) ->
         await asyncio.sleep(30)
         return _result("never")
 
-    monkeypatch.setattr(titles.llm_client, "complete_chat_detailed", blocked)
+    _use_fake_llm(monkeypatch, blocked)
     titles.schedule_title_generation(chat_id, owner, "вопрос", "ответ", "m")
     task = title_tasks[chat_id]
     await started.wait()
@@ -623,9 +633,7 @@ async def test_db_failure_log_has_no_title_text(monkeypatch: pytest.MonkeyPatch)
     secret = "мой пароль от банка 12345"
     owner = await _create_user("title_db_fail", "pw")
     chat_id = await _make_chat(owner)
-    monkeypatch.setattr(
-        titles.llm_client, "complete_chat_detailed", _fake_raising(RuntimeError("down"))
-    )
+    _use_fake_llm(monkeypatch, _fake_raising(RuntimeError("down")))
 
     async def failing_apply(target_chat_id: int, title: str) -> bool:
         raise OperationalError(
@@ -644,6 +652,77 @@ async def test_db_failure_log_has_no_title_text(monkeypatch: pytest.MonkeyPatch)
     values = [str(v) for _, _, kw in recorder.records for v in kw.values()]
     assert not any(secret in v for v in values)
     assert await _get_title(chat_id) == "New Chat"
+
+
+# ------------------------------------------------------------------ provider routing
+
+DEEPSEEK_URL = "https://api.deepseek.com/v1/chat/completions"
+
+
+async def _deepseek_provider(user_id: int) -> int:
+    from agent import providers
+
+    async with async_session_factory() as session:
+        row = await providers.create_provider(
+            session,
+            user_id,
+            {
+                "name": "DeepSeek",
+                "base_url": "https://api.deepseek.com",
+                "api_key_env": "DEEPSEEK_API_KEY",
+                "enabled": True,
+            },
+        )
+    return row.id
+
+
+@respx.mock
+async def test_title_uses_selected_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+    owner = await _create_user("title_ds_owner", "pw")
+    provider_id = await _deepseek_provider(owner)
+    chat_id = await _make_chat(owner)
+    route = respx.post(DEEPSEEK_URL).mock(return_value=_ok_answer("Заголовок от DeepSeek"))
+
+    await titles.generate_and_apply_title(
+        chat_id, owner, "вопрос", "ответ", "deepseek-x", provider_id=provider_id
+    )
+
+    assert await _get_title(chat_id) == "Заголовок от DeepSeek"
+    request = route.calls[0].request
+    assert request.headers["Authorization"] == "Bearer sk-test"
+    body = json.loads(request.content)
+    assert body["model"] == "deepseek-x"
+    assert body["reasoning_effort"] == "none"
+
+
+@respx.mock
+async def test_title_with_deleted_provider_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    recorder = _install_recorder(monkeypatch)
+    owner = await _create_user("title_ds_gone", "pw")
+    chat_id = await _make_chat(owner)
+    route = respx.post(DEEPSEEK_URL).mock(return_value=_ok_answer())
+
+    await titles.generate_and_apply_title(
+        chat_id, owner, "вопрос", "ответ", "m", provider_id=987654
+    )
+
+    assert not route.called
+    assert await _get_title(chat_id) == fallback_title("вопрос")
+    assert recorder.events("chat_title_provider_unavailable")
+
+
+@respx.mock
+async def test_title_without_provider_uses_lm_studio() -> None:
+    owner = await _create_user("title_lm_default", "pw")
+    chat_id = await _make_chat(owner)
+    route = respx.post(COMPLETIONS_URL).mock(return_value=_ok_answer("Локальный заголовок"))
+
+    await titles.generate_and_apply_title(chat_id, owner, "вопрос", "ответ", "m")
+
+    assert route.called
+    assert "Authorization" not in route.calls[0].request.headers
+    assert await _get_title(chat_id) == "Локальный заголовок"
 
 
 # ------------------------------------------------------------------ bounded input

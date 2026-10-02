@@ -6,7 +6,8 @@ import re
 import httpx
 from sqlalchemy import update
 
-from agent.llm_client import ChatCompletionResult, llm_client
+from agent.llm_client import ChatCompletionResult, LLMClient
+from agent.providers import ProviderUnavailableError, resolve_client
 from agent.state import title_tasks
 from agent.tool_guard import TOOL_TRACE_HEADER
 from shared.database import async_session_factory
@@ -155,10 +156,17 @@ def fallback_title(user_text: str) -> str | None:
     return text if text and _is_usable(text) else None
 
 
-async def _complete_title(messages: list[dict[str, str]], model: str) -> ChatCompletionResult:
+async def _resolve_title_client(user_id: int | None, provider_id: int | None) -> LLMClient:
+    """Resolve the client of the provider that answered the turn; patched in tests."""
+    return (await resolve_client(user_id, provider_id))[0]
+
+
+async def _complete_title(
+    client: LLMClient, messages: list[dict[str, str]], model: str
+) -> ChatCompletionResult:
     """Call the model with reasoning disabled; repeat once without it when the backend rejects it."""
     try:
-        return await llm_client.complete_chat_detailed(
+        return await client.complete_chat_detailed(
             messages=messages,
             model=model,
             temperature=TITLE_TEMPERATURE,
@@ -172,7 +180,7 @@ async def _complete_title(messages: list[dict[str, str]], model: str) -> ChatCom
         logger.info(
             "chat_title_reasoning_control_rejected", model=model, status_code=status_code
         )
-    return await llm_client.complete_chat_detailed(
+    return await client.complete_chat_detailed(
         messages=messages,
         model=model,
         temperature=TITLE_TEMPERATURE,
@@ -181,13 +189,15 @@ async def _complete_title(messages: list[dict[str, str]], model: str) -> ChatCom
     )
 
 
-async def request_title(user_text: str, assistant_text: str, model: str) -> str | None:
+async def request_title(
+    user_text: str, assistant_text: str, model: str, client: LLMClient
+) -> str | None:
     """Ask the model for a title with reasoning disabled (one retry without the field on
     HTTP 400/422); any failure or unusable output yields None."""
     messages = build_title_messages(user_text, assistant_text)
     try:
         result = await asyncio.wait_for(
-            _complete_title(messages, model), timeout=TITLE_TIMEOUT_SECONDS
+            _complete_title(client, messages, model), timeout=TITLE_TIMEOUT_SECONDS
         )
     except Exception as exc:
         logger.warning("chat_title_llm_failed", error_type=type(exc).__name__, error=str(exc))
@@ -230,11 +240,23 @@ def _publish_title(user_id: int, chat_id: int, title: str) -> None:
 
 
 async def generate_and_apply_title(
-    chat_id: int, user_id: int | None, user_text: str, assistant_text: str, model: str
+    chat_id: int,
+    user_id: int | None,
+    user_text: str,
+    assistant_text: str,
+    model: str,
+    provider_id: int | None = None,
 ) -> None:
     """Generate (or derive) a title, store it once and notify the owner; never raises."""
     try:
-        title = await request_title(user_text, assistant_text, model)
+        try:
+            client = await _resolve_title_client(user_id, provider_id)
+            title = await request_title(user_text, assistant_text, model, client)
+        except ProviderUnavailableError:
+            logger.info(
+                "chat_title_provider_unavailable", chat_id=chat_id, provider_id=provider_id
+            )
+            title = None
         source = "llm"
         if title is None:
             title = fallback_title(user_text)
@@ -269,14 +291,21 @@ def _forget_task(chat_id: int, task: "asyncio.Task[None]") -> None:
 
 
 def schedule_title_generation(
-    chat_id: int, user_id: int | None, user_text: str, assistant_text: str, model: str
+    chat_id: int,
+    user_id: int | None,
+    user_text: str,
+    assistant_text: str,
+    model: str,
+    provider_id: int | None = None,
 ) -> None:
     """Start the one-off title job unless one is already running for the chat."""
     existing = title_tasks.get(chat_id)
     if existing is not None and not existing.done():
         return
     task = asyncio.create_task(
-        generate_and_apply_title(chat_id, user_id, user_text, assistant_text, model)
+        generate_and_apply_title(
+            chat_id, user_id, user_text, assistant_text, model, provider_id
+        )
     )
     title_tasks[chat_id] = task
     task.add_done_callback(lambda finished: _forget_task(chat_id, finished))
