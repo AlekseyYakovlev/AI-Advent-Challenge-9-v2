@@ -41,6 +41,16 @@
 - [ ] **TITLE-05**: The title is persisted and pushed as a `chat_title_updated` frame to the owner's `/ws/events` sockets only; the sidebar item and the chat header update live without a reload
 - [ ] **TITLE-06**: Prompt-injection hardening: user/assistant text is wrapped in tags and treated as data, tag-breakout attempts are stripped, the model output is sanitized (one line, length cap, no markup), and the title is rendered via `textContent`
 
+### LLM providers (Day 21)
+
+- [ ] **PROV-01**: User can add, edit, delete and enable/disable OpenAI-compatible LLM providers (name, base URL, name of the `.env` variable holding the API key) in the Settings section "Провайдеры LLM"; rows are stored in SQLite scoped by `user_id`, foreign ids return 404, names are unique per user (409), the key value is never stored, logged or returned
+- [ ] **PROV-02**: An "LM Studio" provider (base URL `LM_STUDIO_BASE_URL`, no key) and, when the `DEEPSEEK_API_KEY` variable resolves, a "DeepSeek" provider (`https://api.deepseek.com`, key variable `DEEPSEEK_API_KEY`) are seeded per user, idempotently, and a deleted seeded provider is never re-created
+- [ ] **PROV-03**: After a provider is saved, and on the per-provider "Проверить" button, the Agent runs `GET {base_url}/v1/models` with the resolved key and the row shows an ok badge with the model count or an error badge with a classified Russian message (missing env variable, bad key 401/403, unreachable, timeout, other HTTP status, malformed response)
+- [ ] **PROV-04**: The models of every enabled, reachable provider are fetched live, cached in memory per process, and listed in the header model picker (and the scheduler model select) as `<optgroup>` per provider with entries "Provider · model"; disabled or failing providers add no entries and a failing provider only raises a non-blocking toast; LM Studio entries keep the `✓` loaded mark and the confirm-to-load flow
+- [ ] **PROV-05**: Every LLM call routes through the selected provider via a `provider_id` next to the model id: chat streaming, invariant self-critique, fact extraction, auto-title and headless scheduled runs (`ScheduledTask.provider_id`); a missing `provider_id` (old clients, existing jobs) resolves to the user's seeded LM Studio provider; token counting stays provider-independent
+- [ ] **PROV-06**: A deleted or disabled provider makes the chat turn fail with a `PROVIDER_UNAVAILABLE` WebSocket error (no user message persisted) and a scheduled run end `failed` with "Провайдер недоступен (удалён или отключён)" (no fallback); the UI falls back to the first available picker entry
+- [ ] **PROV-07**: The DeepSeek title request is verified through the new routing (live check against `https://api.deepseek.com`), closing backlog 999.11 / Phase 09 UAT test 1
+
 ## Future Requirements
 
 Later Week 4 days (not yet announced) — likely candidates:
@@ -87,12 +97,19 @@ Later Week 4 days (not yet announced) — likely candidates:
 | TITLE-04 | Phase 9 | Pending |
 | TITLE-05 | Phase 9 | Pending |
 | TITLE-06 | Phase 9 | Pending |
+| PROV-01 | Phase 12 | Pending |
+| PROV-02 | Phase 12 | Pending |
+| PROV-03 | Phase 12 | Pending |
+| PROV-04 | Phase 12 | Pending |
+| PROV-05 | Phase 12 | Pending |
+| PROV-06 | Phase 12 | Pending |
+| PROV-07 | Phase 12 | Pending |
 
 **Coverage:**
-- v2.0 requirements: 27 total
-- Mapped to phases: 27
+- v2.0 requirements: 34 total
+- Mapped to phases: 34
 - Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-09-23*
-*Last updated: 2026-10-02 — TITLE-01..06 added for Phase 9 (Auto-rename chats, Day 21)*
+*Last updated: 2026-10-02 — PROV-01..07 added for Phase 12 (LLM providers, Day 21)*

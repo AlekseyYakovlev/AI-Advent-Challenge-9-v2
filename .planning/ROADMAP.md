@@ -187,12 +187,17 @@ Plans:
 **Branch**: `Day21`
 **Depends on**: Phase 8
 **Promoted from**: backlog 999.11 (2026-10-02)
-**Requirements**: TBD
-**Plans**: 0 plans
+**Requirements**: PROV-01, PROV-02, PROV-03, PROV-04, PROV-05, PROV-06, PROV-07
+**Plans**: 6 plans
 **UI hint**: yes
 
 Plans:
-- [ ] TBD (run /bm:plan-phase 12 to break down)
+- [ ] 12-01-PLAN.md — Provider foundation: env-secret resolver, LlmProvider/LlmProviderSeed tables, ScheduledTask.provider_id migration, agent/providers.py (CRUD, seeding, resolver, check, cache) (wave 1)
+- [ ] 12-02-PLAN.md — REST /api/v1/llm-providers (CRUD, check, models) + provider-aware LM Studio routes (wave 2)
+- [ ] 12-03-PLAN.md — Route chat WS, self-critique, facts and auto-title through the selected provider; PROVIDER_UNAVAILABLE (wave 2)
+- [ ] 12-04-PLAN.md — Scheduler: provider_id on jobs (REST + schedule_task tool) and provider-routed headless runs (wave 3)
+- [ ] 12-05-PLAN.md — Frontend: "Провайдеры LLM" Settings section + provider-grouped model picker and scheduler select (wave 3)
+- [ ] 12-06-PLAN.md — Live DeepSeek title check (closes 999.11), docs, Playwright UAT on the isolated copy (wave 4)
 
 ## Progress
 
@@ -209,7 +214,7 @@ Plans:
 | 9. Auto-rename chats with LLM (Day 21) | v2.0 | 6/6 | Complete   | 2026-10-02 |
 | 10. Modals close only via x button (Day 21) | v2.0 | 0/0 | Not started | - |
 | 11. Edit and delete long-term memory entries via UI (Day 21) | v2.0 | 0/0 | Not started | - |
-| 12. LLM providers section in Settings (Day 21) | v2.0 | 0/0 | Not started | - |
+| 12. LLM providers section in Settings (Day 21) | v2.0 | 0/6 | Planned | - |
 
 ## Backlog
 
