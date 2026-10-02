@@ -15,6 +15,11 @@
 - GET/POST/DELETE /api/v1/scheduler/... (see "Scheduler")
 
 ## LM Studio
+Each route accepts an optional `provider_id` (query for models and unload-model, body for load-model)
+that must reference the user's LM Studio provider; without it the configured `LM_STUDIO_BASE_URL`
+host is used. A foreign or missing id gives 404 `Провайдер не найден`, a provider of another kind
+gives 400 `Провайдер не является LM Studio`.
+
 - GET  /api/v1/lm-studio/models
 - POST /api/v1/lm-studio/load-model
 - POST /api/v1/lm-studio/unload-model/{model_id}
@@ -99,6 +104,23 @@ Returns real-time statistics for a chat.
   MCP result or the preview was cut.
 - MCP failures (disconnected server, timeout, `isError`) are reported only here with `ok: false`;
   no `TOOL_ERROR` frame is sent for them. Built-in tool failures still send `TOOL_ERROR`.
+
+**Client -> Server (chat message):** the payload may carry an optional `provider_id` (integer, the id
+from `GET /api/v1/llm-providers`) next to `model`. Without it the turn goes to the user's LM Studio
+provider (legacy behaviour). The same client serves the answer, tool follow-ups, the auto-title and
+fact extraction of that turn.
+
+**error (provider unavailable):**
+```json
+{
+  "type": "error",
+  "code": "PROVIDER_UNAVAILABLE",
+  "detail": "Провайдер «Stub» недоступен. Выберите другую модель или проверьте настройки провайдера."
+}
+```
+Sent when the provider is deleted, disabled or belongs to another user (a foreign provider's name is
+never disclosed) and also when the provider answers HTTP 401/403 during the turn (the detail names
+the provider, never the key). No user message is stored for such a turn.
 
 **error (context overflow):**
 ```json
@@ -286,6 +308,68 @@ the chatting user's jobs.
   `not_found` (missing or foreign job) and `conflict` (job already finished). There is no implicit
   "current job"; the id must be explicit.
 
+## LLM providers (Day 21)
+
+User-scoped OpenAI-compatible providers. Every route needs the session cookie; mutating routes also
+require an allowed `Origin` and `Content-Type: application/json` (DELETE and `check` need only the
+origin). A missing or foreign id is always 404 `Провайдер не найден` (never 403).
+
+- GET    /api/v1/llm-providers
+- POST   /api/v1/llm-providers
+- PUT    /api/v1/llm-providers/{provider_id}
+- DELETE /api/v1/llm-providers/{provider_id}
+- POST   /api/v1/llm-providers/{provider_id}/check
+- GET    /api/v1/llm-providers/models?refresh=false
+
+### Request and response shapes
+
+Create body: `{"name": "OpenRouter", "base_url": "https://openrouter.ai/api", "api_key_env": "OPENROUTER_API_KEY", "enabled": true}`.
+Update body: any subset of the same fields; an explicit empty or null `api_key_env` clears the key
+reference. Response (`LlmProviderOut`):
+
+```json
+{
+  "id": 3, "name": "Stub", "base_url": "http://127.0.0.1:18766", "kind": "openai",
+  "api_key_env": "STUB_KEY", "enabled": true,
+  "created_at": "2026-10-02T10:00:00Z", "updated_at": "2026-10-02T10:00:00Z",
+  "check": {"status": "ok", "model_count": 1, "checked_at": "2026-10-02T10:00:01Z"}
+}
+```
+
+`check.status` is `not_checked`, `ok` or `error`; on `error` the body adds `code` and a Russian
+`message`. `GET .../models` returns one group per enabled provider:
+`[{"provider_id": 3, "name": "Stub", "kind": "openai", "models": [{"id": "stub-model", "loaded": null}], "error": null}]`;
+a failing provider has an empty `models` list and a non-null `error`. `refresh=true` re-fetches every
+provider instead of using the cached check.
+
+### Errors
+- 404 `Провайдер не найден`
+- 409 duplicate name for the same user (names are unique per user)
+- 422 with a Russian `detail` shown verbatim by the UI: empty or too long name, a base URL that does
+  not start with `http://` or `https://`, a malformed environment variable name
+
+A connection check never raises an HTTP error: failures are returned in `check` with one of the codes
+`env_missing` (variable not resolvable, no request made), `bad_key` (HTTP 401/403), `unreachable`,
+`timeout`, `http` (any other status) and `bad_response` (the model list is not an OpenAI-style
+`data` list). Redirects are not followed.
+
+### Keys are referenced by variable name
+A provider stores only `api_key_env`, the name of a variable; the key value is never stored,
+returned or logged. A name resolves when it is declared in the `.env` file (`LLM_PROVIDER_ENV_FILE`)
+or is `DEEPSEEK_API_KEY`; a process variable overrides the file value for a declared name. Undeclared
+process variables cannot be referenced. An empty `api_key_env` means no `Authorization` header.
+
+### Seeding and URLs
+On first access each user gets an "LM Studio" provider (kind `lm_studio`, from `LM_STUDIO_BASE_URL`)
+and, when a `DEEPSEEK_API_KEY` is configured, a "DeepSeek" provider (`https://api.deepseek.com`).
+A seeded provider that the user deleted is never created again. Base URLs are normalized: surrounding
+whitespace, trailing slashes and a trailing `/v1` are removed.
+
+### Scheduler
+`POST /api/v1/scheduler/tasks` accepts an optional `provider_id` (a foreign or missing id gives 422
+`Провайдер не найден`) and the task output carries it; a run uses that provider and fails with a recorded error
+when it was deleted or disabled. Tasks created by the `schedule_task` tool inherit the chat's provider.
+
 ## Chat titles (Day 21)
 
 `POST /api/v1/chats` creates a chat titled `New Chat` unless a title is given. The Agent replaces the
@@ -297,7 +381,8 @@ attempt). If the backend answers HTTP 400 or 422 the call is repeated once witho
 from the first user message (at most 50 characters, `…` when cut); if that is empty the chat keeps
 `New Chat`. A non-default title is never
 overwritten. The `done` frame of `/ws/chat/{chat_id}` is unchanged and is not delayed; the new title
-arrives separately as a `chat_title_updated` frame on `/ws/events`.
+arrives separately as a `chat_title_updated` frame on `/ws/events`. The title request goes through the
+same provider as the turn (`provider_id`).
 
 ## Environment Settings
 
@@ -312,6 +397,8 @@ arrives separately as a `chat_title_updated` frame on `/ws/events`.
 | SCHEDULER_MAX_ACTIVE_TASKS_PER_USER | 50 | Cap on active plus paused jobs per user |
 | MCP_TOOL_CALL_TIMEOUT | 30.0 | Seconds allowed for one MCP tool call made from a chat turn |
 | MCP_TOOL_RESULT_MAX_CHARS | 20000 | Maximum characters of an MCP tool result sent to the model |
+| LLM_PROVIDER_CHECK_TIMEOUT | 10.0 | Seconds allowed for a provider connection check or model-list request (not `LLM_TIMEOUT`) |
+| LLM_PROVIDER_ENV_FILE | .env | File whose declared variable names provider `api_key_env` references may resolve |
 | MCP_AUTO_CONNECT | true | Connect the user's enabled, unconnected MCP servers at the start of a chat turn (failures not retried until manual reconnect/edit) |
 
 With `MCP_AUTO_CONNECT` on, the first chat turn may wait up to `MCP_CONNECT_TIMEOUT` for a server

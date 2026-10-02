@@ -196,3 +196,66 @@ first use).
 
 Title tests must create chats titled `New Chat` and classify mocked LLM requests by `stream` and the
 `<user_message>` tag instead of an ordered response queue.
+
+## LLM providers (Day 21)
+
+### test_llm_providers_config.py
+- Environment variable names are validated (valid and invalid forms).
+- A secret resolves from the `.env` file; a process variable wins for a declared name; an undeclared
+  process variable never resolves; `DEEPSEEK_API_KEY` is the builtin name; empty values give None.
+- Migration adds `ScheduledTask.provider_id` once; provider names are unique per user; deleting a user
+  cascades to providers.
+
+### test_llm_providers_service.py
+- Seeding: LM Studio always, DeepSeek only with a key (also when the key appears later); idempotent,
+  concurrency-safe and restart-safe; a deleted seed is not resurrected; a name collision does not
+  break seeding.
+- `get_provider_row` / `resolve_client`: None selects LM Studio; foreign, missing and disabled rows
+  raise `ProviderUnavailableError`.
+- Field validation messages (name, URL, env name) and URL normalization.
+- Connection check codes: ok, bad_key, unreachable, timeout, http, bad_response, env_missing (no
+  request made); redirects are not followed; no key means no `Authorization` header.
+- Model groups: ok, failing and disabled providers; cache reuse without refresh; update and delete
+  drop the cache.
+
+### test_llm_providers_api.py
+- List seeds LM Studio and DeepSeek without leaking the key value; create normalizes the URL and
+  rejects invalid input; duplicate names give 409.
+- Update keeps other fields, clears `api_key_env` on empty or null, conflicts on a taken name.
+- Another user's provider is always 404; delete does not resurrect a seed.
+- `check` reports failures as data; `models` groups work with `refresh`.
+- Foreign origin and non-JSON content type are rejected on mutations.
+- LM Studio routes honour `provider_id` (400 for another kind, 404 for foreign) and keep working
+  without it.
+
+### test_llm_providers_routing.py
+- A legacy payload streams from LM Studio without auth; a payload with `provider_id` streams from
+  the provider with the bearer key of its variable.
+- Deleted, disabled and foreign providers give a `PROVIDER_UNAVAILABLE` frame and store no message;
+  a foreign provider's name is never disclosed.
+- HTTP 401 during the stream or the tool follow-up names the provider, never the key.
+- The turn's provider reaches the title job, fact extraction and self-critique.
+
+### test_scheduler_providers.py
+- REST create stores its own `provider_id`, accepts none, rejects a foreign one; the
+  `schedule_task` tool inherits the chat's provider.
+- A headless turn calls the job's provider with its bearer key, falls back to LM Studio without one,
+  and fails for deleted or disabled providers (run recorded as failed).
+- A connect error on an OpenAI provider names the server; LM Studio keeps its legacy message.
+
+### test_live_deepseek_title.py (opt-in)
+- Skipped unless `RUN_LIVE_DEEPSEEK=1` and a real `DEEPSEEK_API_KEY` is in the repository `.env`.
+- Checks the seeded DeepSeek provider (status ok), picks `deepseek-chat` or the first model, and
+  requires a non-empty title of at most 50 characters that differs from the user text. Paid call;
+  the key is never printed.
+
+### scripts/e2e_llm_providers_playwright.py (browser UAT, not part of pytest)
+- Runs a temporary copy of the app at UI :18000 / Agent :18001 with a stub OpenAI-compatible provider
+  on :18766; never touches :8000/:8001. Exit 0 all passed, 1 a check failed, 2 ports busy, 4
+  Playwright missing.
+- Scenarios: provider section and seeded cards; URL validation message; save with automatic check;
+  wrong key variable gives the error badge; unreachable LM Studio badge; picker grouped by provider
+  as "Provider · model"; chat answered by the stub with its bearer key and title routed through it;
+  disabling the provider removes its entries and shows the fallback toast; delete with confirm; no
+  API response contains a key value; optional DeepSeek chat when a real key exists.
+
