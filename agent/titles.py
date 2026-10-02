@@ -45,7 +45,8 @@ _MD_UNWRAP_PASSES = 3
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 _WHITESPACE_RE = re.compile(r"\s+")
 _THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.IGNORECASE | re.DOTALL)
-_LABEL_RE = re.compile(r"^(?:chat\s+title|title|название|заголовок)\s*:\s*", re.IGNORECASE)
+_THINK_CLOSE_RE = re.compile(r"</think\s*>", re.IGNORECASE)
+_LABEL_RE =re.compile(r"^(?:chat\s+title|title|название|заголовок)\s*:\s*", re.IGNORECASE)
 _QUOTE_CHARS = "\"'«»“”„"
 _TRAILING_PUNCT = ".,:;!?… "
 
@@ -119,6 +120,11 @@ def clean_title(raw: object) -> str | None:
     if not isinstance(raw, str) or TOOL_TRACE_HEADER in raw:
         return None
     text = _THINK_BLOCK_RE.sub("", raw)
+    # A chat template that prefills <think> leaves only the closing tag in the content;
+    # everything up to the last one is reasoning.
+    closings = list(_THINK_CLOSE_RE.finditer(text))
+    if closings:
+        text = text[closings[-1].end():]
     if re.search(r"<think", text, re.IGNORECASE):
         return None
     lines = [line for line in text.splitlines() if line.strip()]

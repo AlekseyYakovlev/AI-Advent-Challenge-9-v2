@@ -43,6 +43,9 @@ LONG_TEXT = "слово " * 20  # 120 chars with a trailing space
         ("**Рецепт борща**.", "Рецепт борща"),
         ("«Заголовок: Погода в Москве»", "Погода в Москве"),
         ("<think>hmm</think>\nПлан поездки в Казань", "План поездки в Казань"),
+        ("thinking</think>План поездки", "План поездки"),
+        ("step one\nstep two</THINK>\n\nПлан поездки", "План поездки"),
+        ("<think>a</think>b</think>План поездки", "План поездки"),
         ("<img src=x onerror=alert(1)> Привет мир", "Привет мир"),
         ("Основы C# и F# для новичков", "Основы C# и F# для новичков"),
         ("Fix user_id bug in __init__", "Fix user_id bug in __init__"),
@@ -61,6 +64,8 @@ def test_clean_title_accepts_and_normalizes(raw: str, expected: str) -> None:
     "raw",
     [
         "<think>still thinking",
+        "only reasoning, no answer</think>",
+        "reasoning</think>answer<think>more reasoning",
         "",
         "   ",
         None,
