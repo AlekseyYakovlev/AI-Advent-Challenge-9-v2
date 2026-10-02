@@ -12,8 +12,9 @@ const state = {
     messages: [],
     childrenByParent: new Map(),
     activeChildByParent: new Map(),
-    models: [],
+    modelGroups: [],
     selectedModel: '',
+    selectedProviderId: null,
     isStreaming: false,
     ws: null,
     reconnectAttempt: 0,
@@ -1281,6 +1282,13 @@ function handleWsMessage(data) {
                 const suggestedStrategy = data.suggested_strategy || 'sliding';
                 blockInputWithMessage(data.detail, suggestedStrategy);
                 showToast('⚠️ ' + data.detail, 'error');
+            } else if (data.code === 'PROVIDER_UNAVAILABLE') {
+                const input = $('message-input');
+                if (input && !input.value && state.lastFailedMessage) {
+                    input.value = state.lastFailedMessage;
+                }
+                showToast(data.detail || 'Провайдер недоступен', 'error');
+                refreshModelSelector();
             } else {
                 showToast(data.detail || 'Ошибка', 'error');
             }
@@ -1298,7 +1306,7 @@ function trySendPending() {
     if (!state.pendingMessage) return;
     if (!state.currentChatId) return;
     if (state.isStreaming) return;
-    if (!state.selectedModel) return;
+    if (!state.selectedModel || state.selectedProviderId === null) return;
     if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
 
     const queued = state.pendingMessage;
@@ -1309,7 +1317,7 @@ function trySendPending() {
 async function sendMessage(content) {
     if (!state.currentChatId || !content.trim() || state.isStreaming) return;
 
-    if (!state.selectedModel) {
+    if (!state.selectedModel || state.selectedProviderId === null) {
         state.pendingMessage = content.trim();
         showToast('Модель ещё загружается — сообщение будет отправлено автоматически', 'info');
         return;
@@ -1332,6 +1340,7 @@ async function sendMessage(content) {
     state.ws.send(JSON.stringify({
         content: trimmed,
         model: state.selectedModel,
+        provider_id: state.selectedProviderId,
     }));
 
     const input = $('message-input');
@@ -1369,85 +1378,182 @@ async function switchBranch(parentRef, direction) {
     loadChatStats(state.currentChatId);
 }
 
-async function loadModels() {
-    const select = $('model-select');
-    try {
-        state.models = await apiFetch('/api/v1/lm-studio/models');
-        populateModelSelect();
-    } catch (err) {
-        select.innerHTML = '<option value="">⚠️ LM Studio не запущен</option>';
-        showToast('⚠️ LM Studio не запущен. Запустите LM Studio и обновите страницу.', 'error');
+function encodeModelValue(providerId, modelId) {
+    return `${providerId}::${modelId}`;
+}
+
+function parseModelValue(value) {
+    if (!value) return null;
+    const sep = value.indexOf('::');
+    if (sep < 1) return null;
+    const providerId = Number(value.slice(0, sep));
+    const modelId = value.slice(sep + 2);
+    if (!Number.isInteger(providerId) || !modelId) return null;
+    return { providerId, modelId };
+}
+
+function findModelEntry(providerId, modelId) {
+    for (const group of state.modelGroups) {
+        if (group.provider_id !== providerId || group.error) continue;
+        const model = group.models.find((m) => m.id === modelId);
+        if (model) return { group, model };
     }
+    return null;
+}
+
+function usableModelGroups() {
+    return state.modelGroups.filter((g) => !g.error && g.models.length > 0);
+}
+
+async function fetchModelGroups(refresh) {
+    return await apiFetch(`/api/v1/llm-providers/models?refresh=${refresh ? 'true' : 'false'}`) || [];
+}
+
+function setModelSelectPlaceholder(text) {
+    const select = $('model-select');
+    select.replaceChildren();
+    const opt = mcpEl('option', '', text);
+    opt.value = '';
+    opt.disabled = true;
+    opt.selected = true;
+    select.appendChild(opt);
+}
+
+async function loadModels() {
+    try {
+        state.modelGroups = await fetchModelGroups(true);
+    } catch (err) {
+        setModelSelectPlaceholder('⚠️ Модели недоступны');
+        showToast(err.message, 'error');
+        return;
+    }
+    state.modelGroups.forEach((group) => {
+        if (group.error) {
+            showToast(`Провайдер «${group.name}» недоступен: ${group.error}`, 'error');
+        }
+    });
+    populateModelSelect();
+}
+
+function pickDefaultModelEntry(groups) {
+    for (const group of groups) {
+        if (group.kind !== 'lm_studio') continue;
+        const loaded = group.models.find((m) => m.loaded);
+        if (loaded) return { group, model: loaded };
+    }
+    return { group: groups[0], model: groups[0].models[0] };
 }
 
 function populateModelSelect() {
     const select = $('model-select');
-    select.innerHTML = '';
-    if (!state.models.length) {
-        select.innerHTML = '<option value="">Нет моделей</option>';
+    const groups = usableModelGroups();
+    const hadSelection = Boolean(state.selectedModel) && state.selectedProviderId !== null;
+    const previousProvider = state.selectedProviderId;
+    const previousModel = state.selectedModel;
+
+    if (!groups.length) {
+        setModelSelectPlaceholder('Нет доступных моделей');
+        state.selectedModel = '';
+        state.selectedProviderId = null;
+        if (hadSelection) state.contextWindow = null;
+        populateSchedulerModelSelectIfPresent();
         return;
     }
-    state.models.forEach((model) => {
-        const opt = document.createElement('option');
-        opt.value = model.id;
-        const loaded = model.loaded ? ' ✓' : '';
-        opt.textContent = `${model.id}${loaded}`;
-        select.appendChild(opt);
+
+    select.replaceChildren();
+    groups.forEach((group) => {
+        const optgroup = document.createElement('optgroup');
+        optgroup.label = group.name;
+        group.models.forEach((model) => {
+            const opt = document.createElement('option');
+            opt.value = encodeModelValue(group.provider_id, model.id);
+            const loaded = group.kind === 'lm_studio' && model.loaded ? ' ✓' : '';
+            opt.textContent = `${group.name} · ${model.id}${loaded}`;
+            optgroup.appendChild(opt);
+        });
+        select.appendChild(optgroup);
     });
-    const loaded = state.models.find((m) => m.loaded);
-    if (loaded) {
-        select.value = loaded.id;
-        state.selectedModel = loaded.id;
-    } else if (state.models.length) {
-        select.value = state.models[0].id;
-        state.selectedModel = state.models[0].id;
+
+    const previousEntry = hadSelection ? findModelEntry(previousProvider, previousModel) : null;
+    const chosen = previousEntry || pickDefaultModelEntry(groups);
+    if (hadSelection && !previousEntry) {
+        showToast('Провайдер недоступен. Выбрана другая модель.', 'warning');
     }
+    const providerId = chosen.group.provider_id;
+    const modelId = chosen.model.id;
+    select.value = encodeModelValue(providerId, modelId);
+    if (providerId !== previousProvider || modelId !== previousModel) {
+        state.contextWindow = null;
+    }
+    state.selectedProviderId = providerId;
+    state.selectedModel = modelId;
+    populateSchedulerModelSelectIfPresent();
     trySendPending();
+}
+
+function populateSchedulerModelSelectIfPresent() {
+    if ($('scheduler-model')) populateSchedulerModelSelect();
 }
 
 async function refreshModelSelector() {
     try {
-        state.models = await apiFetch('/api/v1/lm-studio/models');
-        populateModelSelect();
-    } catch {
-        $('model-select').innerHTML = '<option value="">⚠️ LM Studio не запущен</option>';
+        state.modelGroups = await fetchModelGroups(true);
+    } catch (err) {
+        showToast(err.message, 'error');
+        return;
     }
+    populateModelSelect();
 }
 
-async function onModelSelect(modelId) {
-    if (!modelId) return;
+function selectModelEntry(providerId, modelId) {
+    state.selectedProviderId = providerId;
+    state.selectedModel = modelId;
     state.contextWindow = null;
+    populateSchedulerModelSelectIfPresent();
+}
+
+async function onModelSelect(value) {
+    const parsed = parseModelValue(value);
+    if (!parsed) return;
+    const { providerId, modelId } = parsed;
+    const current = findModelEntry(providerId, modelId);
+    if (current && current.group.kind !== 'lm_studio') {
+        selectModelEntry(providerId, modelId);
+        return;
+    }
     try {
-        state.models = await apiFetch('/api/v1/lm-studio/models');
-    } catch {
-        showToast('⚠️ LM Studio не запущен. Запустите LM Studio и попробуйте снова.', 'error');
+        state.modelGroups = await fetchModelGroups(true);
+    } catch (err) {
+        showToast(err.message, 'error');
+        populateModelSelect();
         return;
     }
-    const model = state.models.find((m) => m.id === modelId);
-    if (!model) {
+    const entry = findModelEntry(providerId, modelId);
+    if (!entry) {
         showToast('Модель не найдена', 'error');
+        populateModelSelect();
         return;
     }
-    if (model.loaded) {
-        state.selectedModel = modelId;
+    if (entry.model.loaded || entry.group.kind !== 'lm_studio') {
+        selectModelEntry(providerId, modelId);
         return;
     }
-    const confirmed = confirm(`Модель «${modelId}» не загружена. Загрузить?`);
-    if (!confirmed) {
+    if (!confirm(`Модель «${modelId}» не загружена. Загрузить?`)) {
         populateModelSelect();
         return;
     }
     try {
         const result = await apiFetch('/api/v1/lm-studio/load-model', {
             method: 'POST',
-            body: JSON.stringify({ model_id: modelId, gpu_offload: 0 }),
+            body: JSON.stringify({ model_id: modelId, gpu_offload: 0, provider_id: providerId }),
         });
         if (result.status === 'LOADED') {
-            state.selectedModel = modelId;
+            selectModelEntry(providerId, modelId);
             showToast(`Модель ${modelId} загружена`, 'success');
             await refreshModelSelector();
         } else if (result.status === 'UNREACHABLE') {
             showToast('⚠️ LM Studio не запущен. Запустите LM Studio и попробуйте снова.', 'error');
+            populateModelSelect();
         } else {
             showToast(result.message || 'Ошибка загрузки модели', 'error');
             populateModelSelect();
@@ -1843,6 +1949,193 @@ async function disconnectMcpServer(server) {
 }
 
 // ---- end MCP servers ----
+
+// ---- LLM providers ----
+
+const LLM_PROVIDER_STATUS_BADGE_CLASSES = {
+    not_checked: 'text-slate-400',
+    disabled: 'text-slate-400',
+    checking: 'text-sky-400',
+    ok: 'text-emerald-400',
+    error: 'text-red-400',
+};
+
+const LLM_PROVIDER_ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+state.llmProviders = [];
+state.llmProviderEditingId = null;
+state.llmProviderChecking = new Set();
+state.llmProviderSaving = false;
+
+function llmProviderStatus(provider) {
+    if (!provider.enabled) return 'disabled';
+    if (state.llmProviderChecking.has(provider.id)) return 'checking';
+    return provider.check.status;
+}
+
+function llmProviderStatusLabel(provider, status) {
+    switch (status) {
+        case 'disabled': return 'отключён';
+        case 'checking': return 'проверка…';
+        case 'ok': return `доступен · ${provider.check.model_count} моделей`;
+        case 'error': return 'ошибка';
+        default: return 'не проверен';
+    }
+}
+
+async function loadLlmProviders() {
+    state.llmProviders = await apiFetch('/api/v1/llm-providers') || [];
+    renderLlmProviderList();
+}
+
+function renderLlmProviderRow(provider) {
+    const status = llmProviderStatus(provider);
+    const busy = state.llmProviderChecking.has(provider.id);
+    const card = mcpEl('div', 'rounded-lg bg-slate-800 border border-slate-700 p-4 space-y-2');
+
+    const header = mcpEl('div', 'flex flex-wrap items-center justify-between gap-2');
+    const title = mcpEl('div', 'flex items-center gap-2 min-w-0');
+    title.appendChild(mcpEl('span', `text-sm font-semibold truncate${provider.enabled ? '' : ' opacity-60'}`, provider.name));
+    title.appendChild(mcpEl('span', `text-xs ${LLM_PROVIDER_STATUS_BADGE_CLASSES[status] || 'text-slate-400'}`, llmProviderStatusLabel(provider, status)));
+    header.appendChild(title);
+
+    const actions = mcpEl('div', 'flex items-center gap-2');
+    const checkBtn = mcpEl('button', MCP_NEUTRAL_BTN_CLASSES, 'Проверить');
+    checkBtn.type = 'button';
+    checkBtn.disabled = busy || !provider.enabled;
+    checkBtn.addEventListener('click', () => checkLlmProvider(provider.id));
+    const editBtn = mcpEl('button', MCP_NEUTRAL_BTN_CLASSES, 'Изменить');
+    editBtn.type = 'button';
+    editBtn.disabled = busy;
+    editBtn.addEventListener('click', () => openLlmProviderForm(provider));
+    const delBtn = mcpEl('button', 'text-xs text-red-400 hover:text-red-300 disabled:opacity-50 disabled:cursor-not-allowed', 'Удалить');
+    delBtn.type = 'button';
+    delBtn.disabled = busy;
+    delBtn.addEventListener('click', () => {
+        deleteLlmProvider(provider).catch((err) => showToast(err.message, 'error'));
+    });
+    actions.append(checkBtn, editBtn, delBtn);
+    header.appendChild(actions);
+    card.appendChild(header);
+
+    const keyPart = provider.api_key_env ? ` · ключ: ${provider.api_key_env}` : ' · без ключа';
+    card.appendChild(mcpEl('div', 'text-xs text-slate-500', `${provider.base_url}${keyPart}`));
+    if (status === 'error') {
+        card.appendChild(mcpEl('div', 'text-xs text-red-400', provider.check.message || ''));
+    } else if (status === 'ok') {
+        card.appendChild(mcpEl('div', 'text-xs text-slate-500', `${provider.check.model_count} моделей`));
+    }
+    return card;
+}
+
+function renderLlmProviderList() {
+    const list = $('llm-provider-list');
+    $('llm-provider-empty').classList.toggle('hidden', state.llmProviders.length > 0);
+    list.replaceChildren();
+    state.llmProviders.forEach((provider) => list.appendChild(renderLlmProviderRow(provider)));
+}
+
+function openLlmProviderForm(provider) {
+    state.llmProviderEditingId = provider ? provider.id : null;
+    $('llm-provider-name').value = provider ? provider.name : '';
+    $('llm-provider-base-url').value = provider ? provider.base_url : '';
+    $('llm-provider-key-env').value = provider && provider.api_key_env ? provider.api_key_env : '';
+    $('llm-provider-enabled').checked = provider ? provider.enabled : true;
+    $('llm-provider-form-error').textContent = '';
+    $('llm-provider-form').classList.remove('hidden');
+    $('llm-provider-name').focus();
+}
+
+function closeLlmProviderForm() {
+    state.llmProviderEditingId = null;
+    $('llm-provider-name').value = '';
+    $('llm-provider-base-url').value = '';
+    $('llm-provider-key-env').value = '';
+    $('llm-provider-enabled').checked = true;
+    $('llm-provider-form-error').textContent = '';
+    $('llm-provider-form').classList.add('hidden');
+}
+
+function validateLlmProviderForm() {
+    const name = $('llm-provider-name').value.trim();
+    const baseUrl = $('llm-provider-base-url').value.trim();
+    const keyEnv = $('llm-provider-key-env').value.trim();
+    if (!name) return { error: 'Укажите название.' };
+    if (!/^https?:\/\//i.test(baseUrl)) return { error: 'Base URL должен начинаться с http:// или https://.' };
+    if (keyEnv && !LLM_PROVIDER_ENV_NAME_RE.test(keyEnv)) return { error: 'Недопустимое имя переменной окружения.' };
+    return {
+        body: {
+            name,
+            base_url: baseUrl,
+            api_key_env: keyEnv || null,
+            enabled: $('llm-provider-enabled').checked,
+        },
+    };
+}
+
+async function saveLlmProvider() {
+    if (state.llmProviderSaving) return;
+    const errorEl = $('llm-provider-form-error');
+    errorEl.textContent = '';
+    const validated = validateLlmProviderForm();
+    if (validated.error) {
+        errorEl.textContent = validated.error;
+        return;
+    }
+    const saveBtn = $('btn-llm-provider-save');
+    state.llmProviderSaving = true;
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Сохранение…';
+    let saved;
+    try {
+        const editingId = state.llmProviderEditingId;
+        saved = await apiFetch(
+            editingId === null ? '/api/v1/llm-providers' : `/api/v1/llm-providers/${editingId}`,
+            { method: editingId === null ? 'POST' : 'PUT', body: JSON.stringify(validated.body) },
+        );
+    } catch (err) {
+        errorEl.textContent = err.message;
+        return;
+    } finally {
+        state.llmProviderSaving = false;
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'Сохранить провайдера';
+    }
+    if (!saved) return;
+    showToast('Провайдер сохранён', 'success');
+    closeLlmProviderForm();
+    await loadLlmProviders();
+    await checkLlmProvider(saved.id);
+}
+
+async function checkLlmProvider(id) {
+    state.llmProviderChecking.add(id);
+    renderLlmProviderList();
+    try {
+        const updated = await apiFetch(`/api/v1/llm-providers/${id}/check`, { method: 'POST' });
+        if (updated) {
+            state.llmProviders = state.llmProviders.map((p) => (p.id === updated.id ? updated : p));
+        }
+    } catch (err) {
+        showToast(err.message, 'error');
+    } finally {
+        state.llmProviderChecking.delete(id);
+        renderLlmProviderList();
+    }
+    await refreshModelSelector();
+}
+
+async function deleteLlmProvider(provider) {
+    const message = `Удалить провайдера «${provider.name}»? Чаты и задачи, использующие его модели, перестанут работать, пока вы не выберете другую модель.`;
+    if (!confirm(message)) return;
+    await apiFetch(`/api/v1/llm-providers/${provider.id}`, { method: 'DELETE' });
+    if (state.llmProviderEditingId === provider.id) closeLlmProviderForm();
+    showToast('Провайдер удалён', 'success');
+    await loadLlmProviders();
+    await refreshModelSelector();
+}
+
+// ---- end LLM providers ----
 
 // ---- Scheduler ----
 
@@ -2250,7 +2543,8 @@ function closeSchedulerRunModal() {
 function populateSchedulerModelSelect() {
     const select = $('scheduler-model');
     select.replaceChildren();
-    if (!state.models.length) {
+    const groups = usableModelGroups();
+    if (!groups.length) {
         const empty = mcpEl('option', '', 'Нет моделей');
         empty.value = '';
         empty.disabled = true;
@@ -2258,15 +2552,21 @@ function populateSchedulerModelSelect() {
         select.appendChild(empty);
         return;
     }
-    state.models.forEach((model) => {
-        const option = mcpEl('option', '', model.id);
-        option.value = model.id;
-        select.appendChild(option);
+    groups.forEach((group) => {
+        const optgroup = document.createElement('optgroup');
+        optgroup.label = group.name;
+        group.models.forEach((model) => {
+            const option = mcpEl('option', '', `${group.name} · ${model.id}`);
+            option.value = encodeModelValue(group.provider_id, model.id);
+            optgroup.appendChild(option);
+        });
+        select.appendChild(optgroup);
     });
-    const preselected = state.models.some((m) => m.id === state.selectedModel)
-        ? state.selectedModel
-        : state.models[0].id;
-    select.value = preselected;
+    const hasHeaderSelection = state.selectedProviderId !== null && state.selectedModel
+        && findModelEntry(state.selectedProviderId, state.selectedModel);
+    select.value = hasHeaderSelection
+        ? encodeModelValue(state.selectedProviderId, state.selectedModel)
+        : encodeModelValue(groups[0].provider_id, groups[0].models[0].id);
 }
 
 function updateSchedulerTypeFields() {
@@ -2324,9 +2624,9 @@ function buildSchedulerCreateBody() {
     const prompt = $('scheduler-prompt').value.trim();
     if (!title || !prompt) throw new Error('Заполните название и промпт');
     const type = $('scheduler-type').value;
-    const model = $('scheduler-model').value;
-    if (!model) throw new Error('Выберите модель');
-    const body = { title, prompt, model, schedule_type: type, ...buildSchedulerScheduleFields(type) };
+    const parsed = parseModelValue($('scheduler-model').value);
+    if (!parsed) throw new Error('Выберите модель');
+    const body = { title, prompt, model: parsed.modelId, provider_id: parsed.providerId, schedule_type: type, ...buildSchedulerScheduleFields(type) };
     const maxRuns = parseInt($('scheduler-max-runs').value, 10);
     if (type !== 'once' && maxRuns >= 1) body.max_runs = maxRuns;
     return body;
@@ -2704,6 +3004,7 @@ async function openSettingsModal() {
     $('settings-system-prompt').value = settings.system_prompt;
     $('settings-modal').classList.remove('hidden');
     loadMcpServers().catch((err) => showToast(err.message, 'error'));
+    loadLlmProviders().catch((err) => showToast(err.message, 'error'));
 }
 
 function closeSettingsModal() {
@@ -2864,6 +3165,18 @@ function bindEvents() {
     $('btn-mcp-cancel').addEventListener('click', closeMcpForm);
     $('btn-mcp-save').addEventListener('click', () => {
         saveMcpServer().catch((err) => showToast(err.message, 'error'));
+    });
+    $('btn-llm-provider-add').addEventListener('click', () => openLlmProviderForm(null));
+    $('btn-llm-provider-cancel').addEventListener('click', closeLlmProviderForm);
+    $('btn-llm-provider-save').addEventListener('click', () => {
+        saveLlmProvider().catch((err) => showToast(err.message, 'error'));
+    });
+    ['llm-provider-name', 'llm-provider-base-url', 'llm-provider-key-env'].forEach((id) => {
+        $(id).addEventListener('keydown', (e) => {
+            if (e.key !== 'Enter') return;
+            e.preventDefault();
+            saveLlmProvider().catch((err) => showToast(err.message, 'error'));
+        });
     });
     setupFoldablePanels();
     bindSchedulerModals();
