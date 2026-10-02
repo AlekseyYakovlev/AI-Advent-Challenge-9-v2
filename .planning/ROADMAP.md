@@ -203,7 +203,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 12-02-PLAN.md — REST /api/v1/llm-providers (CRUD, check, models) + provider-aware LM Studio routes (wave 2)
+- [x] 12-02-PLAN.md — REST /api/v1/llm-providers (CRUD, check, models) + provider-aware LM Studio routes (wave 2)
 - [ ] 12-03-PLAN.md — Route chat WS, self-critique, facts and auto-title through the selected provider; PROVIDER_UNAVAILABLE (wave 2)
 
 **Wave 3** *(blocked on Wave 2 completion)*
@@ -230,7 +230,7 @@ Plans:
 | 9. Auto-rename chats with LLM (Day 21) | v2.0 | 6/6 | Complete   | 2026-10-02 |
 | 10. Modals close only via x button (Day 21) | v2.0 | 0/0 | Not started | - |
 | 11. Edit and delete long-term memory entries via UI (Day 21) | v2.0 | 0/0 | Not started | - |
-| 12. LLM providers section in Settings (Day 21) | v2.0 | 1/6 | In Progress|  |
+| 12. LLM providers section in Settings (Day 21) | v2.0 | 2/6 | In Progress|  |
 
 ## Backlog
 
