@@ -303,8 +303,9 @@ extraction, self-critique) is unchanged and never sends the field. No tools, mem
 system prompt are sent.
 
 **Output sanitizing and fallback.** `clean_title` removes think-blocks, keeps the first line, strips
-labels (`Title:`), quotes, markdown characters and angle brackets, and caps the result at 50
-characters on a word boundary. If the output is empty, unusable or the request fails, `fallback_title`
+labels (`Title:`), quotes, HTML-like tags, angle brackets and markdown markers (paired `**`, `*`,
+`` ` ``, `~~` and a leading `#` heading; the wrapped text is kept, and `C#`, `user_id`, `__init__`
+pass through unchanged), and caps the result at 50 characters on a word boundary. If the output is empty, unusable or the request fails, `fallback_title`
 cuts the first user message to 50 characters with `…`. An answer with no usable title is logged as
 `chat_title_llm_unusable` (fields `model`, `finish_reason`, `content_empty`, `has_reasoning`,
 `completion_tokens`; no text content) before the fallback is applied. `fallback_title` reads only

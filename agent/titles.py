@@ -35,8 +35,13 @@ TITLE_SYSTEM_PROMPT = (
 )
 
 _WRAPPER_TAG_RE = re.compile(r"<\s*/?\s*(?:user_message|assistant_answer)\s*>", re.IGNORECASE)
-_TAG_LIKE_RE = re.compile(r"<[^>]*>")
-_MARKDOWN_RE = re.compile(r"[*_#`~]")
+# Real tags only: the name must follow the bracket, so "a < b" is left alone.
+_TAG_LIKE_RE = re.compile(r"</?[A-Za-z][^<>]*>")
+# Paired emphasis / code markers hugging their content and not glued to a word, so "2*3*4"
+# and "2 * 3 * 4" survive. Underscores are never treated as markup: user_id, __init__.
+_MD_WRAP_RE = re.compile(r"(?<!\w)(\*\*|\*|`|~~)(?=\S)(.+?)(?<=\S)\1(?!\w)")
+_MD_HEADING_RE = re.compile(r"^\s*#{1,6}\s+")
+_MD_UNWRAP_PASSES = 3
 _CONTROL_RE = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 _WHITESPACE_RE = re.compile(r"\s+")
 _THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.IGNORECASE | re.DOTALL)
@@ -78,11 +83,17 @@ def build_title_messages(user_text: str, assistant_text: str) -> list[dict[str, 
 
 
 def _strip_markup(text: str) -> str:
-    """Drop tags, angle brackets, markdown characters and control characters."""
+    """Drop tags, angle brackets, markdown markers (not their content) and control characters."""
     text = _TAG_LIKE_RE.sub(" ", text)
     text = text.replace("<", "").replace(">", "")
     text = _CONTROL_RE.sub(" ", text)
-    text = _MARKDOWN_RE.sub("", text)
+    text = _MD_HEADING_RE.sub("", text)
+    # A few passes cover nesting such as ***bold italic***; the count keeps the work bounded.
+    for _ in range(_MD_UNWRAP_PASSES):
+        unwrapped = _MD_WRAP_RE.sub(r"\2", text)
+        if unwrapped == text:
+            break
+        text = unwrapped
     return _WHITESPACE_RE.sub(" ", text).strip()
 
 

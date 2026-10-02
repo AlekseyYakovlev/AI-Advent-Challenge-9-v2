@@ -44,6 +44,13 @@ LONG_TEXT = "слово " * 20  # 120 chars with a trailing space
         ("«Заголовок: Погода в Москве»", "Погода в Москве"),
         ("<think>hmm</think>\nПлан поездки в Казань", "План поездки в Казань"),
         ("<img src=x onerror=alert(1)> Привет мир", "Привет мир"),
+        ("Основы C# и F# для новичков", "Основы C# и F# для новичков"),
+        ("Fix user_id bug in __init__", "Fix user_id bug in __init__"),
+        ("Сравнение a < b и c > d в Python", "Сравнение a b и c d в Python"),
+        ("Вычислить 2*3*4 и 5 * 6 * 7", "Вычислить 2*3*4 и 5 * 6 * 7"),
+        ("## Рецепт борща", "Рецепт борща"),
+        ("***Рецепт*** `борща` ~~старый~~", "Рецепт борща старый"),
+        ("**Title:** Docker setup tips", "Docker setup tips"),
     ],
 )
 def test_clean_title_accepts_and_normalizes(raw: str, expected: str) -> None:
@@ -112,6 +119,10 @@ def test_fallback_title_rejects_unusable(text: str) -> None:
 
 def test_fallback_title_strips_tags() -> None:
     assert fallback_title("<b>жирный</b> текст") == "жирный текст"
+
+
+def test_fallback_title_keeps_code_characters() -> None:
+    assert fallback_title("Как в C# сделать user_id?") == "Как в C# сделать user_id?"
 
 
 def test_build_title_messages_structure() -> None:
