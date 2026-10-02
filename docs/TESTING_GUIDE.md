@@ -10,6 +10,7 @@
 - test_supervisor.py: agent crash → restart within 5 seconds
 - test_scheduler_*.py: see "Scheduler (Day 18)" below
 - test_titles.py / test_titles_ws.py: see "Chat auto-titling (Day 21)" below
+- test_llm_complete_chat.py: see "Chat auto-titling (Day 21)" below
 
 ## Fixtures
 - Use conftest.py for shared fixtures
@@ -165,14 +166,33 @@ runner against a `respx`-mocked LM Studio. Never wait for wall-clock ticks.
 - Fallback on error, empty output and timeout.
 - Never overwrite: custom title, rename mid-flight, race of two jobs, deleted chat.
 - Owner-only frame; ownerless chat produces no frame; one job per chat; cancel on cleanup.
+- Reasoning-style answer (content empty, finish_reason length, reasoning_content set): the request
+  carries `reasoning_effort: "none"` and max_tokens 30, `chat_title_llm_unusable` is logged, the
+  fallback title is applied.
+- HTTP 400 / 422 on the first call: one repeat without the field, title stored with source llm; two
+  rejections or an HTTP 500: fallback, no further retry.
+- Title log events never contain message or model text.
+- Input bound: `fallback_title` and `build_title_messages` finish under 0.5 s on 100 000-character
+  hostile input.
 
 ### test_titles_ws.py
 - The first turn triggers the job once with the turn's model; a chat created with an empty body gets
   the default title.
 - A custom title, a second turn and a failed turn do not trigger.
-- Request shape: non-streaming, temperature 0, max_tokens 30, no tools, system prompt only.
+- Request shape: non-streaming, temperature 0, max_tokens 30, reasoning_effort none, no tools,
+  system prompt only.
 - Fallback on HTTP 500 and ConnectError.
+- A reasoning-only title answer still ends the turn with `done` and delivers the fallback title.
 - Owner-only delivery; the socket may be closed after the turn; `done` is not delayed.
+
+### test_llm_complete_chat.py
+- `complete_chat` payload is exactly the five core keys and returns a string.
+- `complete_chat_detailed` sends `extra_body` fields without overriding core keys, parses
+  `finish_reason`, the reasoning flag and `completion_tokens`, tolerates missing fields and null
+  content, and raises `httpx.HTTPStatusError` on HTTP 400.
+
+Log assertions replace `agent.titles.logger` with a recording stub (structlog loggers are cached on
+first use).
 
 Title tests must create chats titled `New Chat` and classify mocked LLM requests by `stream` and the
 `<user_message>` tag instead of an ordered response queue.

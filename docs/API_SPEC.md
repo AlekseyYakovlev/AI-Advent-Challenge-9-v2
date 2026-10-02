@@ -290,8 +290,12 @@ the chatting user's jobs.
 
 `POST /api/v1/chats` creates a chat titled `New Chat` unless a title is given. The Agent replaces the
 default title automatically (there is no rename endpoint). The title comes from the model that
-answered the turn (non-streaming call, temperature 0, max_tokens 30, 20 s timeout). On any failure the
-title is the first user message cut to 50 characters with `…`. A non-default title is never
+answered the turn (non-streaming call, temperature 0, max_tokens 30, body field
+`reasoning_effort: "none"` so reasoning models answer directly, 20 s timeout covering the whole
+attempt). If the backend answers HTTP 400 or 422 the call is repeated once without
+`reasoning_effort`. When the call fails, times out or returns no usable text, the title is derived
+from the first user message (at most 50 characters, `…` when cut); if that is empty the chat keeps
+`New Chat`. A non-default title is never
 overwritten. The `done` frame of `/ws/chat/{chat_id}` is unchanged and is not delayed; the new title
 arrives separately as a `chat_title_updated` frame on `/ws/events`.
 

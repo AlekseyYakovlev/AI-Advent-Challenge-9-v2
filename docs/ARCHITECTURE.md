@@ -294,13 +294,27 @@ lock and with its own DB session, so `done` is not delayed.
 
 **Request.** The same `llm_client` and model as the turn; one system message plus one user message
 wrapped in `<user_message>` / `<assistant_answer>` tags (first 500 / 300 characters, tag-breakout
-sequences stripped repeatedly). Non-streaming, temperature 0, max_tokens 30, 20 s timeout. No tools,
-memory, profile or chat system prompt are sent.
+sequences stripped repeatedly). The call goes through `LLMClient.complete_chat_detailed` (returns
+content, `finish_reason`, a reasoning flag and the completion token count). Parameters:
+non-streaming, temperature 0, max_tokens 30, `reasoning_effort: "none"`, and one 20 s
+`asyncio.wait_for` around the whole attempt. An HTTP 400 / 422 answer triggers exactly one repeat
+without `reasoning_effort` (event `chat_title_reasoning_control_rejected`). `complete_chat` (facts
+extraction, self-critique) is unchanged and never sends the field. No tools, memory, profile or chat
+system prompt are sent.
 
 **Output sanitizing and fallback.** `clean_title` removes think-blocks, keeps the first line, strips
 labels (`Title:`), quotes, markdown characters and angle brackets, and caps the result at 50
 characters on a word boundary. If the output is empty, unusable or the request fails, `fallback_title`
-cuts the first user message to 50 characters with `…`.
+cuts the first user message to 50 characters with `…`. An answer with no usable title is logged as
+`chat_title_llm_unusable` (fields `model`, `finish_reason`, `content_empty`, `has_reasoning`,
+`completion_tokens`; no text content) before the fallback is applied. `fallback_title` reads only
+the first 500 characters of the message and `_snippet` only the first 4x its limit, so the regex
+work is bounded.
+
+**Log events.** `chat_title_set` (`source` = `llm` or `fallback`), `chat_title_llm_failed`,
+`chat_title_llm_unusable`, `chat_title_reasoning_control_rejected`, `chat_title_skipped`,
+`chat_title_not_applied`, `chat_title_failed`. A run of `source=fallback` together with
+`chat_title_llm_unusable` means the model is not producing titles.
 
 **Race guard.** The write is `UPDATE chat SET title = ... WHERE id = ... AND title = 'New Chat'` and
 the job checks `rowcount`; no extra column is needed. A renamed, deleted or already-titled chat is
@@ -316,5 +330,6 @@ which updates the sidebar and the open chat header via `textContent` only. The c
 when the events socket reconnects.
 
 **Known limits.** No retry: a hard failure or an Agent restart mid-job leaves `New Chat`. Existing
-chats are not retitled retroactively. Reasoning models that spend the 30 tokens thinking get the
-fallback title.
+chats are not retitled retroactively. A backend that accepts `reasoning_effort` but ignores it still
+spends the 30 tokens on reasoning and gets the fallback title; this shows up in the log as
+`chat_title_llm_unusable` with `finish_reason` `length` and `has_reasoning` true.
