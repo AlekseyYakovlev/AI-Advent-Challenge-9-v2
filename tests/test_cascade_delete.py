@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 from httpx import AsyncClient
-from agent.state import chat_locks, ws_rate_limiter
+from agent.state import chat_locks, title_tasks, ws_rate_limiter
 from shared.database import async_session_factory
 from shared.models import (
     Chat,
@@ -32,6 +32,21 @@ async def test_delete_chat_cleans_in_memory_caches(authenticated_client: AsyncCl
     assert resp.status_code == 204
     assert chat_id not in ws_rate_limiter
     assert chat_id not in chat_locks
+
+
+@pytest.mark.asyncio
+async def test_delete_chat_cancels_title_task(authenticated_client: AsyncClient) -> None:
+    """DELETE should drop and cancel a pending auto-title job."""
+    chat_resp = await authenticated_client.post("/api/v1/chats", json={"title": "Delete me"})
+    chat_id = chat_resp.json()["id"]
+    task = asyncio.create_task(asyncio.sleep(30))
+    title_tasks[chat_id] = task
+
+    resp = await authenticated_client.delete(f"/api/v1/chats/{chat_id}")
+    assert resp.status_code == 204
+    assert chat_id not in title_tasks
+    await asyncio.sleep(0)
+    assert task.cancelled()
 
 
 @pytest.mark.asyncio

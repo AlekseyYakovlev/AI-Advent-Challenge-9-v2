@@ -32,6 +32,15 @@
 - [x] **SCHED-13**: The sidebar `#scheduler-panel` lists jobs with status badges, expandable run history, the full result in a Markdown modal (DOMPurify), a create form, and pause / resume / run now / cancel / delete actions with live updates (per 08-UI-SPEC.md)
 - [x] **SCHED-14**: pytest covers schedule math, claim atomicity, catch-up, overlap skip, max_runs, orphan recovery, the headless runner (success / tool round / timeout / model down / disallowed tool), REST scoping, event isolation, the cancel gate and chat-delete SET NULL; the full suite passes
 
+### Chat auto-titling (Day 21)
+
+- [ ] **TITLE-01**: After the first completed Q&A turn of a chat whose title is still the default `New Chat`, the Agent generates a short title (3-8 words, at most ~50 characters, in the user's language) once per chat, using the chat's current model (the model that answered the turn; no separate title-model setting)
+- [ ] **TITLE-02**: The title call is a non-blocking extra call that never delays or breaks the turn; it uses temperature 0 and max_tokens ~30, returns plain text (not JSON) and is bounded by a timeout
+- [ ] **TITLE-03**: If the title call fails, times out or returns unusable text, the chat gets the fallback title: the truncated first user message
+- [ ] **TITLE-04**: A non-default title is never overwritten, including under races (conditional UPDATE on the default title)
+- [ ] **TITLE-05**: The title is persisted and pushed as a `chat_title_updated` frame to the owner's `/ws/events` sockets only; the sidebar item and the chat header update live without a reload
+- [ ] **TITLE-06**: Prompt-injection hardening: user/assistant text is wrapped in tags and treated as data, tag-breakout attempts are stripped, the model output is sanitized (one line, length cap, no markup), and the title is rendered via `textContent`
+
 ## Future Requirements
 
 Later Week 4 days (not yet announced) — likely candidates:
@@ -72,12 +81,18 @@ Later Week 4 days (not yet announced) — likely candidates:
 | SCHED-12 | Phase 8 | Complete |
 | SCHED-13 | Phase 8 | Complete |
 | SCHED-14 | Phase 8 | Complete |
+| TITLE-01 | Phase 9 | Pending |
+| TITLE-02 | Phase 9 | Pending |
+| TITLE-03 | Phase 9 | Pending |
+| TITLE-04 | Phase 9 | Pending |
+| TITLE-05 | Phase 9 | Pending |
+| TITLE-06 | Phase 9 | Pending |
 
 **Coverage:**
-- v2.0 requirements: 21 total
-- Mapped to phases: 21
+- v2.0 requirements: 27 total
+- Mapped to phases: 27
 - Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-09-23*
-*Last updated: 2026-09-26 — SCHED-01..14 added for Phase 8 (Scheduler, Day 18)*
+*Last updated: 2026-10-02 — TITLE-01..06 added for Phase 9 (Auto-rename chats, Day 21)*

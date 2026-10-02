@@ -26,7 +26,7 @@ async def clean_test_db() -> None:
     """Remove and recreate the test database before each test.
 
     Also clears agent.state's in-memory dicts (chat_locks, active_streams,
-    ws_rate_limiter): the DB resets chat ids back to 1 each test, but each
+    ws_rate_limiter, title_tasks): the DB resets chat ids back to 1 each test, but each
     `with TestClient(app):` block spins its own event loop, so a stale
     `asyncio.Lock` left in `chat_locks` from an earlier test's (now-closed)
     loop would otherwise deadlock a later test that reuses the same chat id.
@@ -40,6 +40,7 @@ async def clean_test_db() -> None:
     agent_state.active_streams.clear()
     agent_state.ws_rate_limiter.clear()
     agent_state.chat_locks.clear()
+    agent_state.title_tasks.clear()
     events_hub.clear()
     yield
     await mcp_client.cleanup_all_sessions()

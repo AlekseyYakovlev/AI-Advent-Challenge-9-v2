@@ -3,6 +3,7 @@
 import asyncio
 import json
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -17,6 +18,16 @@ logger = get_logger(__name__)
 LOAD_TIMEOUT = 120.0
 UNLOAD_TIMEOUT = 10.0
 EMERGENCY_UNLOAD_TIMEOUT = 5.0
+
+
+@dataclass(frozen=True)
+class ChatCompletionResult:
+    """Content and metadata of a non-streaming chat completion."""
+
+    content: str | None
+    finish_reason: str | None
+    has_reasoning: bool
+    completion_tokens: int | None
 
 
 class LLMClient:
@@ -37,6 +48,17 @@ class LLMClient:
         """Count tokens using the cl100k_base encoding."""
         return len(self._encoding.encode(text))
 
+    async def _post_chat_completion(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """POST a non-streaming chat completion and return the decoded JSON body."""
+        url = f"{self._base_url}/v1/chat/completions"
+        headers = {"Content-Type": "application/json"}
+        if self._api_key:
+            headers["Authorization"] = f"Bearer {self._api_key}"
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            response = await client.post(url, json=payload, headers=headers)
+            response.raise_for_status()
+            return response.json()
+
     async def complete_chat(
         self,
         messages: list[dict[str, str]],
@@ -45,22 +67,48 @@ class LLMClient:
         max_tokens: int = 1024,
     ) -> str:
         """Return a full non-streaming chat completion."""
-        url = f"{self._base_url}/v1/chat/completions"
-        headers = {"Content-Type": "application/json"}
-        if self._api_key:
-            headers["Authorization"] = f"Bearer {self._api_key}"
-        payload = {
+        payload: dict[str, Any] = {
             "model": model,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": False,
         }
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
-            response = await client.post(url, json=payload, headers=headers)
-            response.raise_for_status()
-            body = response.json()
+        body = await self._post_chat_completion(payload)
         return body["choices"][0]["message"]["content"]
+
+    async def complete_chat_detailed(
+        self,
+        messages: list[dict[str, str]],
+        model: str,
+        temperature: float = 0.0,
+        max_tokens: int = 1024,
+        extra_body: dict[str, Any] | None = None,
+    ) -> ChatCompletionResult:
+        """Non-streaming completion with optional extra body fields and response metadata."""
+        payload: dict[str, Any] = dict(extra_body or {})
+        payload.update(
+            {
+                "model": model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "stream": False,
+            }
+        )
+        body = await self._post_chat_completion(payload)
+        choices = body.get("choices")
+        choice = choices[0] if isinstance(choices, list) and choices else {}
+        message = choice.get("message") or {}
+        content = message.get("content")
+        usage = body.get("usage") or {}
+        tokens = usage.get("completion_tokens")
+        return ChatCompletionResult(
+            content=content if isinstance(content, str) else None,
+            finish_reason=choice.get("finish_reason"),
+            has_reasoning=bool(message.get("reasoning_content") or message.get("reasoning")),
+            completion_tokens=tokens if isinstance(tokens, int) else None,
+        )
 
     async def stream_chat(
         self,

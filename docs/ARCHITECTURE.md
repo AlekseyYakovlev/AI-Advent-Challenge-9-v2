@@ -279,3 +279,60 @@ passed through the `current_chat_model` context variable. Cancellation from chat
 **Known limits:** jobs fire only while the Agent process is up (missed slots are caught up once, not
 replayed); a run interrupted by an Agent kill is not retried; there is no per-job destructive-tool
 confirmation, so MCP tools run unattended with the same trust model as chat.
+
+## Chat auto-titling
+
+A chat created with the default title `New Chat` is renamed automatically after its first answer.
+The logic lives in `agent/titles.py`; running jobs are tracked in the registry
+`agent/state.py::title_tasks` (chat id -> task).
+
+**Trigger.** `agent/ws.py::_handle_chat_message` schedules the job when the chat title is still
+`New Chat` and the user message has no parent (the first turn). A failed turn never reaches the hook,
+and scheduled headless runs are never titled. The job is created immediately before the `done` frame
+is sent, so a client disconnect cannot skip it. It runs as a fire-and-forget task without the chat
+lock and with its own DB session, so `done` is not delayed.
+
+**Request.** The same `llm_client` and model as the turn; one system message plus one user message
+wrapped in `<user_message>` / `<assistant_answer>` tags (first 500 / 300 characters, tag-breakout
+sequences stripped repeatedly). The call goes through `LLMClient.complete_chat_detailed` (returns
+content, `finish_reason`, a reasoning flag and the completion token count). Parameters:
+non-streaming, temperature 0, max_tokens 30, `reasoning_effort: "none"`, and one 20 s
+`asyncio.wait_for` around the whole attempt. An HTTP 400 / 422 answer triggers exactly one repeat
+without `reasoning_effort` (event `chat_title_reasoning_control_rejected`). `complete_chat` (facts
+extraction, self-critique) is unchanged and never sends the field. No tools, memory, profile or chat
+system prompt are sent.
+
+**Output sanitizing and fallback.** `clean_title` removes think-blocks, keeps the first line, strips
+labels (`Title:`), quotes, HTML-like tags, angle brackets and markdown markers (paired `**`, `*`,
+`` ` ``, `~~` and a leading `#` heading; the wrapped text is kept, and `C#`, `user_id`, `__init__`
+pass through unchanged), and caps the result at 50 characters on a word boundary. If the output is empty, unusable or the request fails, `fallback_title`
+cuts the first user message to 50 characters with `…`. An answer with no usable title is logged as
+`chat_title_llm_unusable` (fields `model`, `finish_reason`, `content_empty`, `has_reasoning`,
+`completion_tokens`; no text content) before the fallback is applied. `fallback_title` reads only
+the first 500 characters of the message, `_snippet` only the first 4x its limit and `clean_title`
+only the first 1000 characters of the model output (`max_tokens` is a request the backend may
+ignore), so the regex work is bounded. Output whose closing `</think>` lies past that cut is treated
+as unusable.
+
+**Log events.** `chat_title_set` (`source` = `llm` or `fallback`), `chat_title_llm_failed`,
+`chat_title_llm_unusable`, `chat_title_reasoning_control_rejected`, `chat_title_skipped`,
+`chat_title_not_applied`, `chat_title_failed`. A run of `source=fallback` together with
+`chat_title_llm_unusable` means the model is not producing titles.
+
+**Race guard.** The write is `UPDATE chat SET title = ... WHERE id = ... AND title = 'New Chat'` and
+the job checks `rowcount`; no extra column is needed. A renamed, deleted or already-titled chat is
+left untouched, and only one job per chat runs at a time.
+
+**Delivery.** After a successful write the job calls `hub.publish(chat.user_id, {"type":
+"chat_title_updated", ...})`. `hub` is imported function-locally because `agent/events.py` imports
+`agent/ws.py`. A chat without an owner produces no frame. `cleanup_chat_caches` cancels a pending job
+when the chat is deleted.
+
+**Frontend.** `ui/static/app.js::handleEventFrame` dispatches the frame to `applyChatTitleUpdate`,
+which updates the sidebar and the open chat header via `textContent` only. The chat list is reloaded
+when the events socket reconnects.
+
+**Known limits.** No retry: a hard failure or an Agent restart mid-job leaves `New Chat`. Existing
+chats are not retitled retroactively. A backend that accepts `reasoning_effort` but ignores it still
+spends the 30 tokens on reasoning and gets the fallback title; this shows up in the log as
+`chat_title_llm_unusable` with `finish_reason` `length` and `has_reasoning` true.
