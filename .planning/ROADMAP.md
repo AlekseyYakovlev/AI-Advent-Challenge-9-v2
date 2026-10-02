@@ -36,7 +36,7 @@ Full details: [milestones/v2.0-ROADMAP.md](milestones/v2.0-ROADMAP.md)
 
 ### 🚧 v3.0 Week 5: RAG (In Progress)
 
-- [ ] **Phase 10: Modals close only via x button (Day 21)** — carried over from v2.0; a modal closes only on its 'x'; a backdrop click no longer closes it
+- [x] **Phase 10: Modals close only via x button (Day 21)** — carried over from v2.0; a modal closes only on its 'x'; a backdrop click no longer closes it (completed 2026-10-02)
 - [ ] **Phase 11: Edit and delete long-term memory entries via UI (Day 21)** — carried over from v2.0; "Редактировать" / "Удалить" buttons per long-term memory entry
 - [ ] **Phase 13: Knowledge base indexing (Day 21)** — upload PDF/TXT/MD, chunk (fixed or structural), embed via LM Studio, persist FAISS + SQLite, background indexing with live progress
 - [ ] **Phase 14: First RAG query (Day 22)** — attach a KB to a chat, toggle RAG, retrieve top-K chunks into the LLM request, show sources, frozen 10-question eval and Day22 report
@@ -59,7 +59,7 @@ Full details: [milestones/v2.0-ROADMAP.md](milestones/v2.0-ROADMAP.md)
 
 Plans:
 
-- [ ] 10-01-PLAN.md — Remove backdrop-click and Escape modal closers in app.js, add a source guard test, browser UAT on an isolated copy
+- [x] 10-01-PLAN.md — Remove backdrop-click and Escape modal closers in app.js, add a source guard test, browser UAT on an isolated copy
 
 ### Phase 11: Edit and delete long-term memory entries via UI (Day 21)
 
@@ -176,7 +176,7 @@ Plans:
 | 8. Scheduler (Day 18) | v2.0 | 9/9 | Complete   | 2026-09-26 |
 | 9. Auto-rename chats with LLM (Day 21) | v2.0 | 6/6 | Complete   | 2026-10-02 |
 | 12. LLM providers section in Settings (Day 21) | v2.0 | 6/6 | Complete   | 2026-10-02 |
-| 10. Modals close only via x button (Day 21) | v3.0 | 0/1 | Planned | - |
+| 10. Modals close only via x button (Day 21) | v3.0 | 1/1 | Complete   | 2026-10-02 |
 | 11. Edit and delete long-term memory entries via UI (Day 21) | v3.0 | 0/4 | Planned | - |
 | 13. Knowledge base indexing (Day 21) | v3.0 | 0/TBD | Not started | - |
 | 14. First RAG query (Day 22) | v3.0 | 0/TBD | Not started | - |
