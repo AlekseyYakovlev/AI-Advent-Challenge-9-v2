@@ -94,12 +94,56 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
+| MODAL-01 | Phase 10 | Pending |
+| MEMUI-01 | Phase 11 | Pending |
+| MEMUI-02 | Phase 11 | Pending |
+| MEMUI-03 | Phase 11 | Pending |
+| MEMUI-04 | Phase 11 | Pending |
+| MEMUI-05 | Phase 11 | Pending |
+| MEMUI-06 | Phase 11 | Pending |
+| KB-01 | Phase 13 | Pending |
+| KB-02 | Phase 13 | Pending |
+| KB-03 | Phase 13 | Pending |
+| KB-04 | Phase 13 | Pending |
+| KB-05 | Phase 13 | Pending |
+| KB-06 | Phase 13 | Pending |
+| KB-07 | Phase 13 | Pending |
+| KB-08 | Phase 13 | Pending |
+| KB-09 | Phase 13 | Pending |
+| KB-10 | Phase 13 | Pending |
+| KB-11 | Phase 13 | Pending |
+| RAG-01 | Phase 14 | Pending |
+| RAG-02 | Phase 14 | Pending |
+| RAG-03 | Phase 14 | Pending |
+| RAG-04 | Phase 14 | Pending |
+| RAG-05 | Phase 14 | Pending |
+| RAG-06 | Phase 14 | Pending |
+| RAG-07 | Phase 14 | Pending |
+| RAG-08 | Phase 14 | Pending |
+| RANK-01 | Phase 15 | Pending |
+| RANK-02 | Phase 15 | Pending |
+| RANK-03 | Phase 15 | Pending |
+| RANK-04 | Phase 15 | Pending |
+| RANK-05 | Phase 15 | Pending |
+| RANK-06 | Phase 15 | Pending |
+| RANK-07 | Phase 15 | Pending |
+| RANK-08 | Phase 15 | Pending |
+| RANK-09 | Phase 15 | Pending |
+| CITE-01 | Phase 16 | Pending |
+| CITE-02 | Phase 16 | Pending |
+| CITE-03 | Phase 16 | Pending |
+| CITE-04 | Phase 16 | Pending |
+| RCHAT-01 | Phase 17 | Pending |
+| RCHAT-02 | Phase 17 | Pending |
+| RCHAT-03 | Phase 17 | Pending |
+| RCHAT-04 | Phase 17 | Pending |
+| RCHAT-05 | Phase 17 | Pending |
 
 **Coverage:**
 - v3.0 requirements: 44 total
-- Mapped to phases: 0
-- Unmapped: 44 ⚠️
+- Mapped to phases: 44
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-10-03*
-*Last updated: 2026-10-03 after initial definition*
+*Last updated: 2026-10-03 after roadmap creation (traceability filled)*

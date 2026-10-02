@@ -2,13 +2,13 @@
 gsd_state_version: 1.0
 milestone: v3.0
 milestone_name: "Week 5: RAG"
-status: planning
+status: ready_to_execute
 last_updated: "2026-10-02T23:10:38.210Z"
 last_activity: 2026-10-02
 progress:
-  total_phases: 0
+  total_phases: 7
   completed_phases: 0
-  total_plans: 0
+  total_plans: 5
   completed_plans: 0
   percent: 0
 ---
@@ -19,14 +19,14 @@ progress:
 
 **Project:** AiAdventAgentV2 — Week 5: RAG
 **Core value:** The agent must demonstrably separate and manage distinct kinds of state — short-term dialog, working task data, long-term profile/knowledge, and task lifecycle — making explicit, inspectable decisions about what goes where.
-**Current focus:** Milestone v3.0 — defining requirements (Phases 10-11 carried over, RAG phases 13+)
+**Current focus:** Phase 10 — Modals close only via x button (then Phase 11, then RAG phases 13-17)
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Defining requirements
-Last activity: 2026-10-02 — Milestone v3.0 started
+Phase: 10 — ready to execute (plans exist)
+Plan: 10-01 (0/1)
+Status: Ready to execute
+Last activity: 2026-10-03 — v3.0 roadmap created
 
 ## Performance Metrics
 
@@ -55,6 +55,7 @@ No phases executed yet — metrics will populate after Phase 1 completes.
 
 - Phase 8 added: Scheduler (Day 18) — delayed/periodic jobs, written from scratch in Python (not a fork of mcp-cron), branch `Day18`
 - Phases 9-12 added (2026-10-02): backlog 999.4 / 999.5 / 999.6 / 999.11 promoted as Day 21 work, all on branch `Day21` (auto-rename chats, modals close only via x, edit/delete long-term memory in UI, LLM providers section in Settings)
+- v3.0 roadmap created 2026-10-03: carried-over 10-11 + RAG phases 13-17 (Days 21-25)
 
 ### Open Questions (flagged by research, need resolution during phase planning)
 
@@ -105,7 +106,7 @@ Items acknowledged and deferred at milestone close on 2026-09-23:
 ## Session Continuity
 
 **Last session:** 2026-10-02T14:58:58.105Z
-**Next action:** Run `/bm:discuss-phase 9` (or `/bm:plan-phase 9`) to start Day 21.
+**Next action:** Run `/bm:execute-phase 10` (carried over, plans exist), then 11, then `/bm:discuss-phase 13` (Day 21 RAG).
 
 ---
 *State initialized: 2026-09-19*

@@ -4,7 +4,7 @@
 
 - ✅ **v1.0 Week 3: Agent Memory & Task State** — Phases 1-6 (shipped 2026-09-23)
 - ✅ **v2.0 Week 4: MCP Integration** — Phases 7-9, 12 (shipped 2026-10-02)
-- 🚧 **v3.0 Week 5: RAG** — Phases 10-11 (carried over), 13+ (in progress)
+- 🚧 **v3.0 Week 5: RAG** — Phases 10-11 (carried over), 13-17 (in progress)
 
 ## Phases
 
@@ -38,6 +38,11 @@ Full details: [milestones/v2.0-ROADMAP.md](milestones/v2.0-ROADMAP.md)
 
 - [ ] **Phase 10: Modals close only via x button (Day 21)** — carried over from v2.0; a modal closes only on its 'x'; a backdrop click no longer closes it
 - [ ] **Phase 11: Edit and delete long-term memory entries via UI (Day 21)** — carried over from v2.0; "Редактировать" / "Удалить" buttons per long-term memory entry
+- [ ] **Phase 13: Knowledge base indexing (Day 21)** — upload PDF/TXT/MD, chunk (fixed or structural), embed via LM Studio, persist FAISS + SQLite, background indexing with live progress
+- [ ] **Phase 14: First RAG query (Day 22)** — attach a KB to a chat, toggle RAG, retrieve top-K chunks into the LLM request, show sources, frozen 10-question eval and Day22 report
+- [ ] **Phase 15: Reranking and filtering (Day 23)** — two-stage retrieval with threshold, lexical/LLM rerank, hybrid FTS5, query rewrite, "Детали поиска", Day23 report
+- [ ] **Phase 16: Citations and anti-hallucination (Day 24)** — sources and verified quotes on every answer, code-enforced "не знаю" with a clarifying question
+- [ ] **Phase 17: Mini-chat with RAG and task memory (Day 25)** — the existing chat as RAG mini-chat with per-chat task memory, two long scripted scenarios, Day25 report
 
 ## Phase Details
 
@@ -48,7 +53,7 @@ Full details: [milestones/v2.0-ROADMAP.md](milestones/v2.0-ROADMAP.md)
 **Depends on**: Phase 8
 **Milestone**: v3.0 (carried over from v2.0)
 **Promoted from**: backlog 999.5 (2026-10-02)
-**Requirements**: TBD
+**Requirements**: MODAL-01
 **Plans**: 1 plan
 **UI hint**: yes
 
@@ -63,7 +68,7 @@ Plans:
 **Depends on**: Phase 8
 **Milestone**: v3.0 (carried over from v2.0)
 **Promoted from**: backlog 999.6 (2026-10-02)
-**Requirements**: TBD
+**Requirements**: MEMUI-01, MEMUI-02, MEMUI-03, MEMUI-04, MEMUI-05, MEMUI-06
 **Plans**: 4 plans
 **UI hint**: yes
 
@@ -81,6 +86,82 @@ Plans:
 
 - [ ] 11-04-PLAN.md — Playwright browser UAT (S1-S11) on the isolated copy at 18000/18001 with an exit-code / result-file gate and a capped fix-and-rerun loop (wave 3)
 
+### Phase 13: Knowledge base indexing (Day 21)
+
+**Goal**: users can build a knowledge base from PDF/TXT/MD files, choosing a chunking strategy and embedding model, and get a persisted, searchable FAISS + SQLite index with live indexing progress
+**Branch**: `Day21`
+**Depends on**: Phase 10 (the KB modal holds a file selection and must close only via ×)
+**Requirements**: KB-01, KB-02, KB-03, KB-04, KB-05, KB-06, KB-07, KB-08, KB-09, KB-10, KB-11
+**Success Criteria** (what must be TRUE):
+  1. User opens "Добавить" in the sidebar "База знаний" block, fills the modal (name, files, chunking strategy, size/overlap, embedding model) and clicks "Индексировать"; the KB appears in the list with name, status and file/chunk counts
+  2. Both PDFs from `C:\Projects\RAG` (ФЗ-196, КоАП РФ) index successfully with each chunking strategy; a scanned PDF without a text layer fails with a readable message and invalid size/overlap is rejected in Russian
+  3. While indexing runs, the UI shows live status and progress (queued / x of y / ready / failed) and the Agent keeps passing health checks; a job interrupted by an Agent restart shows as failed
+  4. A "тест поиска" query against a ready KB returns top chunks with scores and metadata (source, section, chunk_id)
+  5. Deleting a KB removes its rows, on-disk index and uploaded files; another user's KB is never visible (404)
+**Plans**: TBD
+**UI hint**: yes
+**Research flag**: needs deeper research (embedding round trip and per-model prefixes, КоАП header/footer patterns, VRAM co-loading with the chat model); start with a short spike
+
+### Phase 14: First RAG query (Day 22)
+
+**Goal**: users can attach a knowledge base to a chat and get answers grounded in retrieved chunks, with the sources visible, and compare answers with and without RAG on a frozen control set
+**Branch**: `Day22`
+**Depends on**: Phase 13
+**Requirements**: RAG-01, RAG-02, RAG-03, RAG-04, RAG-05, RAG-06, RAG-07, RAG-08
+**Success Criteria** (what must be TRUE):
+  1. User attaches a KB to a chat and switches between "без RAG" and "с RAG"; the current mode and KB are visibly indicated in the chat
+  2. With RAG on, an answer is based on the top-K retrieved chunks and shows its sources (file, section, chunk_id, score) under the message; the stored user message remains the raw question
+  3. If the embedding model is unavailable or the KB was deleted, the turn still answers without RAG and shows a visible warning; a large RAG block never deletes the user message
+  4. `scripts/rag_eval.py` runs the frozen 10-question control set (including out-of-corpus questions) and `Day22_report.md` compares no-RAG vs RAG answers and giga vs nomic embeddings on hit@k
+**Plans**: TBD
+**UI hint**: yes
+**Research flag**: standard patterns; decide the retrieval result shape, `rag_sources` storage and eval fixture here
+
+### Phase 15: Reranking and filtering (Day 23)
+
+**Goal**: retrieval quality improves through two-stage candidate selection, a calibrated relevance cut-off, optional rerankers and query rewrite, with every step inspectable
+**Branch**: `Day23`
+**Depends on**: Phase 14
+**Requirements**: RANK-01, RANK-02, RANK-03, RANK-04, RANK-05, RANK-06, RANK-07, RANK-08, RANK-09
+**Success Criteria** (what must be TRUE):
+  1. User can configure candidate top-K, final top-K and the similarity threshold per chat, and low-scoring chunks are cut before reaching the LLM
+  2. User can enable the lexical reranker, the LLM reranker, hybrid FTS5 retrieval and query rewrite independently; rewrite falls back to the original question on bad output
+  3. A collapsible "Детали поиска" block under each RAG answer shows the (rewritten) query, candidates with scores, what was cut and why, and the final chunks
+  4. The threshold is calibrated per embedding model on the control set, and `Day23_report.md` compares no filter vs filter, each reranker and rewrite (optional LLM-judge column, manual verdict primary)
+**Plans**: TBD
+**UI hint**: yes
+**Research flag**: needs deeper research (empirical threshold calibration, rewrite drift on a 9B local model)
+
+### Phase 16: Citations and anti-hallucination (Day 24)
+
+**Goal**: every RAG answer carries verifiable sources and quotes, and the assistant says "не знаю" instead of guessing when retrieval is not relevant enough
+**Branch**: `Day24`
+**Depends on**: Phase 15
+**Requirements**: CITE-01, CITE-02, CITE-03, CITE-04
+**Success Criteria** (what must be TRUE):
+  1. Each RAG answer shows the answer text, a list of sources (source + section / chunk_id) and quotes taken from the retrieved chunks
+  2. Each quote is marked verified or unverified by a server-side substring check against the cited chunk, and sources are rendered from chunk metadata, not from model text
+  3. An out-of-corpus question gets "не знаю" plus a clarifying question, enforced in code when best relevance is below the threshold
+  4. The Day 24 report section records, per control question, sources present, quotes present, meaning matches quotes, and correct "не знаю" on out-of-corpus questions
+**Plans**: TBD
+**UI hint**: yes
+**Research flag**: needs deeper research (local-model compliance with `[n]` citations and verbatim quotes)
+
+### Phase 17: Mini-chat with RAG and task memory (Day 25)
+
+**Goal**: the existing chat works as a RAG mini-chat that keeps the dialog goal, clarifications and constraints in task memory and answers every turn with sources
+**Branch**: `Day25`
+**Depends on**: Phase 16
+**Requirements**: RCHAT-01, RCHAT-02, RCHAT-03, RCHAT-04, RCHAT-05
+**Success Criteria** (what must be TRUE):
+  1. In a RAG chat, history is kept, retrieval runs on every new question and every answer shows its sources
+  2. Task memory (goal, clarified points, constraints/terms) updates after each turn and is visible in the UI
+  3. A follow-up question that depends on earlier turns retrieves correctly because task memory and recent history feed the query rewrite and the system prompt
+  4. Two scripted 10-15 message scenarios run end to end with the goal kept and sources on every turn, documented in `Day25_report.md`
+**Plans**: TBD
+**UI hint**: yes
+**Research flag**: standard patterns; confirm `dialog_state` rendering in the memory panel during planning
+
 ## Progress
 
 | Phase | Milestone | Plans Complete | Status | Completed |
@@ -97,6 +178,11 @@ Plans:
 | 12. LLM providers section in Settings (Day 21) | v2.0 | 6/6 | Complete   | 2026-10-02 |
 | 10. Modals close only via x button (Day 21) | v3.0 | 0/1 | Planned | - |
 | 11. Edit and delete long-term memory entries via UI (Day 21) | v3.0 | 0/4 | Planned | - |
+| 13. Knowledge base indexing (Day 21) | v3.0 | 0/TBD | Not started | - |
+| 14. First RAG query (Day 22) | v3.0 | 0/TBD | Not started | - |
+| 15. Reranking and filtering (Day 23) | v3.0 | 0/TBD | Not started | - |
+| 16. Citations and anti-hallucination (Day 24) | v3.0 | 0/TBD | Not started | - |
+| 17. Mini-chat with RAG and task memory (Day 25) | v3.0 | 0/TBD | Not started | - |
 
 ## Backlog
 
@@ -192,4 +278,4 @@ Plans:
 
 ---
 *Roadmap created: 2026-09-19*
-*Last updated: 2026-10-02 — Phase 9 planned (4 plans, TITLE-01..06); backlog 999.4/999.5/999.6/999.11 promoted to Phases 9-12 (Day 21)*
+*Last updated: 2026-10-03 — v3.0 roadmap: Phases 13-17 (RAG, Days 21-25) added; earlier: 2026-10-02 — Phase 9 planned (4 plans, TITLE-01..06); backlog 999.4/999.5/999.6/999.11 promoted to Phases 9-12 (Day 21)*
