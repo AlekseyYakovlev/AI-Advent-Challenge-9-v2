@@ -48,8 +48,8 @@
 - [x] **PROV-03**: After a provider is saved, and on the per-provider "Проверить" button, the Agent runs `GET {base_url}/v1/models` with the resolved key and the row shows an ok badge with the model count or an error badge with a classified Russian message (missing env variable, bad key 401/403, unreachable, timeout, other HTTP status, malformed response)
 - [x] **PROV-04**: The models of every enabled, reachable provider are fetched live, cached in memory per process, and listed in the header model picker (and the scheduler model select) as `<optgroup>` per provider with entries "Provider · model"; disabled or failing providers add no entries and a failing provider only raises a non-blocking toast; LM Studio entries keep the `✓` loaded mark and the confirm-to-load flow
 - [x] **PROV-05**: Every LLM call routes through the selected provider via a `provider_id` next to the model id: chat streaming, invariant self-critique, fact extraction, auto-title and headless scheduled runs (`ScheduledTask.provider_id`); a missing `provider_id` (old clients, existing jobs) resolves to the user's seeded LM Studio provider; token counting stays provider-independent
-- [ ] **PROV-06**: A deleted or disabled provider makes the chat turn fail with a `PROVIDER_UNAVAILABLE` WebSocket error (no user message persisted) and a scheduled run end `failed` with "Провайдер недоступен (удалён или отключён)" (no fallback); the UI falls back to the first available picker entry
-- [ ] **PROV-07**: The DeepSeek title request is verified through the new routing (live check against `https://api.deepseek.com`), closing backlog 999.11 / Phase 09 UAT test 1
+- [x] **PROV-06**: A deleted or disabled provider makes the chat turn fail with a `PROVIDER_UNAVAILABLE` WebSocket error (no user message persisted) and a scheduled run end `failed` with "Провайдер недоступен (удалён или отключён)" (no fallback); the UI falls back to the first available picker entry
+- [x] **PROV-07**: The DeepSeek title request is verified through the new routing (live check against `https://api.deepseek.com`), closing backlog 999.11 / Phase 09 UAT test 1
 
 ## Future Requirements
 
@@ -102,8 +102,8 @@ Later Week 4 days (not yet announced) — likely candidates:
 | PROV-03 | Phase 12 | Complete |
 | PROV-04 | Phase 12 | Complete |
 | PROV-05 | Phase 12 | Complete |
-| PROV-06 | Phase 12 | Pending |
-| PROV-07 | Phase 12 | Pending |
+| PROV-06 | Phase 12 | Complete |
+| PROV-07 | Phase 12 | Complete |
 
 **Coverage:**
 - v2.0 requirements: 34 total
