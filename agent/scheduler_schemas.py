@@ -52,6 +52,7 @@ class ScheduledTaskOut(BaseModel):
     title: str
     prompt: str
     model: str
+    provider_id: int | None
     schedule_type: str
     run_at: datetime | None
     interval_seconds: int | None
@@ -73,6 +74,7 @@ class ScheduledTaskCreate(BaseModel):
     title: str = ""
     prompt: str = ""
     model: str = ""
+    provider_id: int | None = None
     schedule_type: str = "once"
     delay_seconds: int | None = None
     run_at: str | None = None
@@ -140,6 +142,7 @@ def task_to_out(
         title=task.title,
         prompt=task.prompt,
         model=task.model,
+        provider_id=task.provider_id,
         schedule_type=_enum_value(task.schedule_type),
         run_at=_utc_or_none(task.run_at),
         interval_seconds=task.interval_seconds,

@@ -6,6 +6,7 @@ from sqlalchemy import func, update
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from agent import providers
 from agent.events import hub
 from agent.schedule import (
     MSG_TITLE_PROMPT_REQUIRED,
@@ -36,6 +37,7 @@ MODEL_MAX_LENGTH = 200
 MSG_TOO_MANY_TASKS = "Слишком много активных заданий (максимум {n})"
 MSG_TITLE_TOO_LONG = f"Название не длиннее {TITLE_MAX_LENGTH} символов"
 MSG_PROMPT_TOO_LONG = f"Промпт не длиннее {PROMPT_MAX_LENGTH} символов"
+MSG_PROVIDER_NOT_FOUND = "Провайдер не найден"
 MSG_MODEL_REQUIRED = "Выберите модель"
 MSG_MODEL_TOO_LONG = f"Название модели не длиннее {MODEL_MAX_LENGTH} символов"
 MSG_NOT_ACTIVE = "Задание не активно"
@@ -96,6 +98,7 @@ async def create_scheduled_task(
     prompt: str,
     model: str,
     schedule_type: str,
+    provider_id: int | None = None,
     delay_seconds: int | None = None,
     run_at: str | None = None,
     interval_seconds: int | None = None,
@@ -107,6 +110,8 @@ async def create_scheduled_task(
     """Validate and persist a new job; raises ScheduleValidationError or SchedulerConflictError."""
     now = as_aware_utc(now or datetime.now(timezone.utc))
     title, prompt, model = _validate_text_fields(title, prompt, model)
+    if provider_id is not None and await providers.get_provider(session, user_id, provider_id) is None:
+        raise ScheduleValidationError(MSG_PROVIDER_NOT_FOUND)
     spec = build_schedule_spec(
         schedule_type,
         delay_seconds=delay_seconds,
@@ -126,6 +131,7 @@ async def create_scheduled_task(
         title=title,
         prompt=prompt,
         model=model,
+        provider_id=provider_id,
         schedule_type=spec.schedule_type,
         run_at=spec.run_at,
         interval_seconds=spec.interval_seconds,
