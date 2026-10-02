@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: "Week 4: MCP Integration"
 status: executing
-last_updated: "2026-10-02T13:57:24.974Z"
+last_updated: "2026-10-02T14:05:00.607Z"
 last_activity: 2026-10-02 -- Phase 12 execution started
 progress:
   total_phases: 14
   completed_phases: 3
   total_plans: 32
-  completed_plans: 21
+  completed_plans: 22
   percent: 21
 ---
 
@@ -24,7 +24,7 @@ progress:
 ## Current Position
 
 Phase: 12 (llm-providers-section-in-settings-day-21) — EXECUTING
-Plan: 1 of 6
+Plan: 2 of 6
 Status: Executing Phase 12
 Last activity: 2026-10-02 -- Phase 12 execution started
 
@@ -45,6 +45,7 @@ No phases executed yet — metrics will populate after Phase 1 completes.
 - INV-04 conflict-check scope resolved as full-response prose + tool-calls (D-08), shipped in 05-03's `run_self_critique`.
 - Global-vs-per-chat invariant precedence resolved as per-chat-overrides-global via an explicit `overrides_id` FK link (D-05), shipped in 05-02 and confirmed live in the Day 14 acceptance demo.
 - Day 14 demo observed the primary LLM call proactively avoiding invariant violations (refuses + offers alternatives) rather than complying then justifying/retracting in a separate call — accepted as correct, since invariants are injected into every request's system prompt, not just the critique call's. Phase 6 (hard TRANS enforcement) should account for this: a "flagged conflict" may be rarer in practice than assumed, since well-behaved models self-censor at the primary-answer stage.
+- [Phase ?]: Phase 12-01: provider keys resolve only from .env-declared names (or builtin DEEPSEEK_API_KEY); seed markers make deleted seeded providers permanent
 
 ### Roadmap Evolution
 
@@ -83,6 +84,7 @@ None.
 | 260925-qvd | Strip TOOL_USE_RULE from the system message after the first tool round (rule + follow-up caused empty replies: 12/12 with tools, 5/16 without) | 2026-09-25 | 0514344 | Tested (555 passed; real-model recheck pending) | [260925-qvd-strip-tool-use-rule-from-system-message-](./quick/260925-qvd-strip-tool-use-rule-from-system-message-/) |
 | 260926-38j | Multi-step tool scenarios: text-leaked tool calls recovered (hermes/qwen XML) + tool_calls flushed on stream stop, announce/MCP-error nudges, fallback summary for empty replies, clock + local-vs-remote hint, MAX_TOOL_ROUNDS 15 | 2026-09-26 | 166e5c8 | Tested (635 passed); real model + real GitLab Sandbox: A ok, B ok on 3rd run (commit 55903a8a on Test, MR !1; model also merged MR unprompted, see follow-ups) | [260926-38j-fix-complex-multi-step-tool-scenarios-le](./quick/260926-38j-fix-complex-multi-step-tool-scenarios-le/) |
 | fast-day20-defer | Defer Day 16 leftovers to Day 20: backlog 999.1-999.3, manual Ctrl+C check, real-model/browser rechecks of 260924-1ic/2n8, 260925-oya/q0s/qj5/qvd | 2026-09-26 | — | Docs only | — |
+| Phase 12 P01 | 25min | 3 tasks | 13 files |
 
 ## Deferred Items
 
@@ -94,7 +96,7 @@ Items acknowledged and deferred at milestone close on 2026-09-23:
 
 ## Session Continuity
 
-**Last session:** 2026-10-02T12:16:33.871Z
+**Last session:** 2026-10-02T14:04:56.336Z
 **Next action:** Run `/bm:discuss-phase 9` (or `/bm:plan-phase 9`) to start Day 21.
 
 ---
