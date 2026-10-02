@@ -12,6 +12,9 @@ from starlette.testclient import TestClient
 
 os.environ.setdefault("DB_PATH", "test_app.db")
 os.environ.setdefault("SCHEDULER_ENABLED", "false")
+# Never let a developer's real DeepSeek key (from .env) seed a provider or leave the machine.
+os.environ["DEEPSEEK_API_KEY"] = ""
+os.environ["LLM_PROVIDER_ENV_FILE"] = str(Path(__file__).parent / "no-such-provider.env")
 
 from agent import mcp_client
 from agent import state as agent_state
@@ -32,6 +35,8 @@ async def clean_test_db() -> None:
     loop would otherwise deadlock a later test that reuses the same chat id.
     The per-user event hub is cleared for the same reason: queues bound to a
     closed loop must not leak into later tests.
+    Provider seeding/model caches are reset so seeds never leak between tests, and
+    DEEPSEEK_API_KEY is forced empty at import so tests never use the real key.
     """
     db_path = Path(settings.DB_PATH)
     if db_path.exists():

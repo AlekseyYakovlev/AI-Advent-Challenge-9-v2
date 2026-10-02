@@ -455,6 +455,8 @@ class ScheduledTask(SQLModel, table=True):
     title: str = Field(max_length=200)
     prompt: str = Field(sa_column=Column(Text, nullable=False))
     model: str = Field(max_length=200)
+    # Plain integer, no FK: a deleted provider must stay 'unavailable', never NULL (= legacy LM Studio).
+    provider_id: Optional[int] = Field(default=None)
     schedule_type: ScheduleType = Field(
         sa_column=Column(
             SAEnum(
@@ -574,3 +576,43 @@ class McpServerConfig(SQLModel, table=True):
     updated_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
     )
+
+
+class LlmProvider(SQLModel, table=True):
+    """User-scoped OpenAI-compatible LLM provider; the API key is stored only as a .env variable name."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("user.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        ),
+    )
+    name: str = Field(max_length=100)
+    base_url: str = Field(max_length=500)
+    kind: str = Field(default="openai", max_length=20)
+    api_key_env: Optional[str] = Field(default=None, max_length=100)
+    enabled: bool = Field(default=True)
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+    )
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+    )
+
+    __table_args__ = (UniqueConstraint("user_id", "name", name="uq_llmprovider_user_name"),)
+
+
+class LlmProviderSeed(SQLModel, table=True):
+    """Marker that a provider was seeded once for a user, so deleting it sticks."""
+
+    user_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("user.id", ondelete="CASCADE"),
+            primary_key=True,
+        ),
+    )
+    seed_key: str = Field(primary_key=True, max_length=50)
