@@ -3,12 +3,14 @@
 import asyncio
 import json
 import re
+import sqlite3
 import time
 from typing import Any
 
 import httpx
 import pytest
 import respx
+from sqlalchemy.exc import OperationalError
 
 from agent import titles
 from agent.events import hub
@@ -597,6 +599,34 @@ async def test_title_logs_never_contain_text(monkeypatch: pytest.MonkeyPatch) ->
     values = [str(v) for _, _, kw in recorder.records for v in kw.values()]
     assert recorder.records
     assert not any(secret in v or model_text in v for v in values)
+
+
+async def test_db_failure_log_has_no_title_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    recorder = _install_recorder(monkeypatch)
+    secret = "мой пароль от банка 12345"
+    owner = await _create_user("title_db_fail", "pw")
+    chat_id = await _make_chat(owner)
+    monkeypatch.setattr(
+        titles.llm_client, "complete_chat_detailed", _fake_raising(RuntimeError("down"))
+    )
+
+    async def failing_apply(target_chat_id: int, title: str) -> bool:
+        raise OperationalError(
+            "UPDATE chat SET title=? WHERE chat.id = ? AND chat.title = ?",
+            (title, target_chat_id, "New Chat"),
+            sqlite3.OperationalError("database is locked"),
+        )
+
+    monkeypatch.setattr(titles, "apply_title", failing_apply)
+
+    await titles.generate_and_apply_title(chat_id, owner, secret, "ответ", "m")
+
+    assert recorder.events("chat_title_failed") == [
+        {"chat_id": chat_id, "error_type": "OperationalError", "error": "database is locked"}
+    ]
+    values = [str(v) for _, _, kw in recorder.records for v in kw.values()]
+    assert not any(secret in v for v in values)
+    assert await _get_title(chat_id) == "New Chat"
 
 
 # ------------------------------------------------------------------ bounded input

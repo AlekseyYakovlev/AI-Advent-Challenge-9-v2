@@ -224,7 +224,15 @@ async def generate_and_apply_title(
     except asyncio.CancelledError:
         return
     except Exception as exc:
-        logger.warning("chat_title_failed", chat_id=chat_id, error=str(exc))
+        # str() of a SQLAlchemy error carries the bound parameters, and on this path those
+        # include the title text; the driver error in .orig has the message only.
+        cause = getattr(exc, "orig", None) or exc
+        logger.warning(
+            "chat_title_failed",
+            chat_id=chat_id,
+            error_type=type(exc).__name__,
+            error=str(cause),
+        )
 
 
 def _forget_task(chat_id: int, task: "asyncio.Task[None]") -> None:
