@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: "Week 4: MCP Integration"
 status: executing
-last_updated: "2026-10-02T14:11:07.300Z"
+last_updated: "2026-10-02T14:11:12.648Z"
 last_activity: 2026-10-02 -- Phase 12 execution started
 progress:
   total_phases: 14
@@ -46,6 +46,7 @@ No phases executed yet — metrics will populate after Phase 1 completes.
 - Global-vs-per-chat invariant precedence resolved as per-chat-overrides-global via an explicit `overrides_id` FK link (D-05), shipped in 05-02 and confirmed live in the Day 14 acceptance demo.
 - Day 14 demo observed the primary LLM call proactively avoiding invariant violations (refuses + offers alternatives) rather than complying then justifying/retracting in a separate call — accepted as correct, since invariants are injected into every request's system prompt, not just the critique call's. Phase 6 (hard TRANS enforcement) should account for this: a "flagged conflict" may be rarer in practice than assumed, since well-behaved models self-censor at the primary-answer stage.
 - [Phase ?]: Phase 12-01: provider keys resolve only from .env-declared names (or builtin DEEPSEEK_API_KEY); seed markers make deleted seeded providers permanent
+- [Phase 12-02]: PUT distinguishes omitted vs explicit null/empty api_key_env; LM Studio routes without provider_id keep legacy host
 
 ### Roadmap Evolution
 
@@ -85,6 +86,7 @@ None.
 | 260926-38j | Multi-step tool scenarios: text-leaked tool calls recovered (hermes/qwen XML) + tool_calls flushed on stream stop, announce/MCP-error nudges, fallback summary for empty replies, clock + local-vs-remote hint, MAX_TOOL_ROUNDS 15 | 2026-09-26 | 166e5c8 | Tested (635 passed); real model + real GitLab Sandbox: A ok, B ok on 3rd run (commit 55903a8a on Test, MR !1; model also merged MR unprompted, see follow-ups) | [260926-38j-fix-complex-multi-step-tool-scenarios-le](./quick/260926-38j-fix-complex-multi-step-tool-scenarios-le/) |
 | fast-day20-defer | Defer Day 16 leftovers to Day 20: backlog 999.1-999.3, manual Ctrl+C check, real-model/browser rechecks of 260924-1ic/2n8, 260925-oya/q0s/qj5/qvd | 2026-09-26 | — | Docs only | — |
 | Phase 12 P01 | 25min | 3 tasks | 13 files |
+| Phase 12 P02 | 15min | 2 tasks | 4 files |
 
 ## Deferred Items
 
