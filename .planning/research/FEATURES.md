@@ -1,178 +1,207 @@
-# Feature Research
+# Feature Landscape: RAG Knowledge Base (Milestone v3.0, Week 5, Days 21-25)
 
-**Domain:** LLM agent memory systems, per-user personalization, and task state machines (course project — "AI Advent Challenge" Week 3, Days 11-15)
-**Researched:** 2026-09-19
-**Confidence:** MEDIUM-HIGH (memory-tool and state-machine patterns verified against multiple independent sources incl. Anthropic's own memory tool docs, Letta/MemGPT, LangGraph; personalization patterns verified against OpenAI's public ChatGPT Memory writeup; no Context7 library applies directly since this is an architectural/pattern question, not a specific SDK API question)
+**Domain:** Local RAG over user-uploaded documents inside an existing chat agent (course project, each day graded by demo)
+**Researched:** 2026-10-03
+**Confidence:** MEDIUM. This rests on well-established RAG practice (retrieve, rerank or filter, cite, abstain, condense follow-up queries, RAGAS-style evaluation). I did not run Context7 or web verification in this pass, so treat library-specific claims as unverified. The app-specific dependency claims come from PROJECT.md and CLAUDE.md and are HIGH confidence.
 
-## Feature Landscape
+## How good implementations work (short model)
 
-### Table Stakes (Users/Graders Expect These)
+Pipeline: **ingest** (load, split, embed, store) -> **retrieve** (embed query, top-K by cosine) -> **post-filter** (threshold, optional rerank, dedupe) -> **generate** (a prompt with numbered context blocks plus rules) -> **cite** (the model references block ids; the server validates and renders them) -> **abstain** (if nothing passes the threshold, skip generation or force "не знаю").
 
-These map directly to the Active requirements in PROJECT.md (MEM-01..05, PERS-01..04, TASK-01..05, TRANS-01..03). Every production/research agent-memory or task-orchestration system reviewed (Anthropic's memory tool, Letta/MemGPT, LangGraph, OpenAI Agents SDK, ChatGPT Memory) implements some version of each row below. Skipping any of these makes the "we have layered memory / a real state machine" claim hollow.
+Expected behaviours per area:
 
-| Feature | Why Expected | Complexity | Notes |
-|---------|--------------|------------|-------|
-| Explicit memory-write tool calls (not silent/implicit classification) | Every reference implementation (Anthropic `memory_20250818` tool, Letta/MemGPT `core_memory_append`, `archival_memory_insert`) makes the LLM call a tool to write memory — this is the industry-standard way to make "what got saved and why" legible and demoable. Anthropic's own memory tool is explicitly client-side: Claude requests file/record operations, your app executes and persists them. This directly satisfies MEM-03. | MEDIUM | Define 2-3 tool schemas (e.g. `save_to_working_memory`, `save_to_long_term_memory`) with a `layer`/`category` field and a `reason`/justification string — the justification is what makes the decision inspectable (MEM-04) for near-zero extra cost. |
-| Distinct, separately-queryable storage per memory tier | MemGPT/Letta's foundational contribution is precisely this: core memory (in-context), recall memory (session history), archival memory (long-term, queried). Anthropic's memory tool also treats "context window" and "persistent store" as structurally different. This satisfies MEM-01/MEM-02 (dedicated tables, not folded into the message tree). | LOW-MEDIUM | You already have a message tree for short-term/dialog; working memory and long-term memory each need their own SQLModel table scoped by `chat_id` and/or `user_id`. |
-| Session-scoped working memory tied to the active task | Distinguishing "current task scratchpad" from "durable profile/knowledge" is the norm — MemGPT calls this a working-set distinction; it maps onto your MEM-01 three-layer split (short-term/working/long-term). Working memory should be cheap to clear when a task completes. | LOW-MEDIUM | Working memory rows should carry the `task_id` they belong to so clearing/archiving a task can cascade cleanly. |
-| A way to inspect stored memory (admin/debug view) | Both Letta and ChatGPT Memory expose a management surface ("Manage Memory" in ChatGPT settings; Letta's memory viewer/API). Without this, "explicit and inspectable" (Core Value in PROJECT.md) can't be verified by a grader. Satisfies MEM-04. | LOW | A REST endpoint returning each layer's current rows per chat/user is sufficient; UI panel is MEM-05. |
-| UI surface showing live memory contents | ChatGPT ships a dedicated "Manage Memory" UI; this is now a users' baseline expectation for any product claiming to "remember." Satisfies MEM-05. | LOW-MEDIUM | Given the vanilla-JS/no-bundler constraint, a simple panel that polls a REST endpoint (same pattern as the existing context/token stats panel) is idiomatic for this codebase. |
-| Per-user preference/profile object with structured fields | ChatGPT Memory, and essentially every personalization system, stores discrete facts/preferences (style, role, constraints) rather than a single blob, so they can be surfaced/edited individually. Satisfies PERS-01. | LOW | A `Settings`-like table scoped to `user_id` (style, verbosity, tone, format, domain constraints) is enough — no need for a general knowledge graph. |
-| Profile injected into every request (system prompt or prepended context) | This is the entire premise of "personalization" in every system reviewed — ChatGPT "references that profile silently in every future conversation." Satisfies PERS-02. | LOW | Analogous to how `_resolve_settings` already injects global/per-chat settings — add user profile to the same assembly step in `agent/main.py`/context builder. |
-| UI to view/edit profile | ChatGPT's Settings > Personalization > Memory is the reference pattern — users expect direct control over what's inferred/stored about them. Satisfies PERS-03. | LOW | Simple form bound to the profile table; matches existing per-chat Settings UI pattern already in the codebase. |
-| Observable behavioral difference across profiles | This is the acceptance test for personalization, not an implementation detail — if two users with different profiles get identical responses, the feature isn't real. Satisfies PERS-04. | LOW (given the above) | Comes largely for free once the profile is actually injected into the system prompt — verify with a manual A/B test per acceptance criteria. |
-| Explicit task state enum with defined allowed-transition graph | Every state-machine reference (LangGraph's explicit graph + checkpointer, generic agent-FSM writeups) treats "the transitions are a named/finite set" as the baseline, not "the LLM decides free-form." Satisfies TASK-01, TRANS-01. | LOW-MEDIUM | `planning → execution → validation → done` plus explicit `paused` per TASK-04; encode the adjacency list directly in code as a lookup table (dict of allowed next-states) — no need for a workflow engine. |
-| Guard/validation function that rejects illegal transitions with a clear reason | LangGraph's guard/interrupt model and general FSM literature both treat validation as a chokepoint function, not inline conditionals scattered through business logic; "transitions between states can be determined dynamically... or triggered by rule-based logic" is the standard split. Satisfies TRANS-01/TRANS-02. | LOW | A single `validate_transition(current, requested) -> Ok | Rejected(reason)` function called from one place (wherever the LLM's transition tool call lands) keeps this auditable and testable — critical since TRANS-02 requires the rejection to be *explainable*, not just blocked. |
-| LLM-driven task creation via tool call, granular within a chat | OpenAI Agents SDK's "agent-as-tool"/handoff pattern and Letta's task/tool-call pattern both treat "the model decides a new unit of work exists" as a tool call, not an automatic heuristic — matches TASK-02/TASK-03 exactly. | MEDIUM | A `create_task(title, description)` tool that inserts a new task row under the current chat; keep the schema open (e.g. an unused `assignee`/`delegate_to` field) since TASK-03 explicitly wants room for future subagent delegation without redesign. |
-| Pause/resume that preserves full task state (not just "stop responding") | LangGraph's checkpointer is the industry-standard mechanism: "saves the exact state of the graph... before an interrupt... loads the snapshot and continues as if milliseconds had passed." This is the bar TASK-04/TRANS-03 need to clear — resuming must not silently drop working memory or force the user to re-explain. | MEDIUM | Persist task state as a durable DB row (state, current step notes, associated working-memory rows) rather than in-process/in-memory state, since the two-process model has no shared in-process state and a `paused` task must survive an Agent-process restart. |
-| Task history / transition log visible in UI | LangGraph and generic FSM guidance both emphasize "operator-visible history" and "measurable transitions" as what turns a state machine from an implementation detail into a demonstrable, auditable feature — this is TASK-05. | LOW-MEDIUM | An append-only `TaskTransition` table (task_id, from_state, to_state, reason/actor, timestamp) doubles as both the audit log and the UI history feed. |
+| Area | Expected behaviour in good implementations |
+|------|--------------------------------------------|
+| KB management | Create, list, delete KBs. Indexing runs as a background job with visible status (queued, indexing N/M chunks, ready, failed + readable error). Per-file errors do not kill the whole job. Deleting a KB removes its vectors and rows. Changing the embedding model or chunking means a re-index (create a new KB or rebuild), never a silent mix of vectors from different models. |
+| KB selection per chat | The chat holds a set of attached KBs (a multi-select or checkboxes). Retrieval searches only those. If no KB is attached, the chat is plain. This is the standard in NotebookLM, Open WebUI, and AnythingLLM workspaces. |
+| RAG toggle | Exposed per chat (a persistent setting next to the strategy and model controls). A per-message override is a nice extra but not required. The Day 22 comparison needs a cheap way to run the same question in both modes, so a per-chat toggle plus a "regenerate in the other mode" action covers it. |
+| Sources display | Each answer shows a collapsible "Источники" block. Each item has a number `[1]`, the source file, the section, the chunk_id, a similarity score, and an expandable quote or chunk text. Inline `[n]` markers in the answer text map to these items. |
+| Quotes | Verbatim fragments copied from the retrieved chunk. Good systems verify programmatically that each quote is a substring of the cited chunk, after whitespace and case normalisation. Fabricated quotes get dropped or flagged. |
+| "Не знаю" | Gated first by retrieval, not by the model's goodwill. If the best score is below the threshold (or zero chunks survive the filter), skip generation or inject a strict instruction. The answer is "не знаю" plus a clarifying question, and optionally the nearest topics found. A prompt rule backs this up as a second layer. |
+| Query rewrite | Before retrieval, an LLM call condenses the last N turns plus the new question into one standalone query (this is the classic "condense question" step). It also resolves pronouns such as "а за повторное?". Optionally it expands synonyms or legal terms. Show the rewritten query in the debug view. |
+| Evaluation | A small hand-written golden set (question, expected answer gist, expected sources). Retrieval is scored by hit@k (is an expected source or chunk in the top-K). Answers are scored by a manual rubric, optionally assisted by an LLM judge. Faithfulness means each claim is supported by the retrieved context. |
+| Dialog task memory | Per turn, keep a small structured state: goal, clarified facts, fixed constraints and terms. Inject it into the prompt and into the rewrite step. Update it with an LLM extraction call or tool calls. |
 
-### Differentiators (Nice-to-Have, Not Required for This Milestone)
+## Table Stakes
 
-These show up in more mature/production systems (Letta, MemGPT, ChatGPT Memory, LangGraph) but are explicitly beyond what a 5-day course phase needs. Consider only if a phase's acceptance criteria are already met with time to spare.
+Missing any of these means the day's acceptance criteria fail or the demo is hollow.
+
+### Day 21: Indexing and KB management
+
+| Feature | Why Expected | Complexity | Dependencies on existing app / notes |
+|---------|--------------|------------|--------------------------------------|
+| KB entity (name, user_id, embedding model, chunking params, status) | The modal collects exactly these fields. Storing the params and model per KB prevents mixed-model indexes. | Low | New SQLModel tables scoped by `user_id` (hard constraint). Follow the `Settings`/memory table conventions and FK `ondelete=CASCADE` via `sa_column`. |
+| Document + chunk tables with metadata (source file, title, section, chunk_id, page, char range, text) | Day 21 requires metadata per chunk. Needed later for citations. | Low-Med | SQLite is the source of truth for text and metadata. FAISS holds only vectors, mapped by integer row id. |
+| PDF loading and text extraction (pypdf or pymupdf; Cyrillic text-layer PDFs) | The test corpus is two Russian legal PDFs. | Med | Check that the PDFs have a text layer. Scanned PDFs mean OCR, which is out of scope. Large PDFs (КоАП is about 1000+ pages) mean indexing takes minutes. |
+| Fixed-size chunking with size and overlap | Required UI controls. | Low | Chunk by characters or tokens. `tiktoken` is already a dependency, so token-based sizing is cheap. |
+| Structural chunking (headings, sections, files) | Required UI switch. For laws, split by "Статья N" / "Глава N" / "Раздел" regex headings. This is the better strategy on this corpus. | Med | Regex heading detection for the legal corpus, with a fallback to one chunk per file or paragraph when no headings are found. Put an oversize-section guard in (sub-split sections over the limit). Section title goes into the metadata. |
+| Embeddings via LM Studio `/v1/embeddings`, batched, default `giga-embeddings-instruct-480m-0826` | Required. | Med | Reuses the `LMStudioClient` / `model_switch_lock` pattern. Embedding models must be loaded in LM Studio, and `ConnectError` surfaces as "LM Studio is not running". Batch the requests (for example 16-64 chunks). Check the model's max input length. |
+| Embedding model dropdown in the modal, same as the main screen | Required. | Low-Med | Reuse the provider-grouped model picker, filtered to embedding models. The LM Studio `/api/v0/models` response has a `type` field (llm / vlm / embeddings), which should allow filtering. This is unverified. |
+| FAISS index per KB, persisted to disk, with L2-normalised vectors and inner product (cosine) | Required: "index saved (FAISS + SQLite)". | Med | `faiss-cpu` is a new dependency, so pin it in requirements.txt and check it installs on the target Windows Python. Store files under a data dir (for example `data/kb/{kb_id}.faiss`). Vector dim comes from the first embedding response. |
+| Sidebar "База знаний" collapsible block, "Добавить" button, list with delete | Required. | Med | Vanilla JS, following the pattern of the existing "Расписание" sidebar panel. |
+| "Добавить" modal (name, multi-file picker, chunking switch, conditional size/overlap fields, model dropdown, "Индексировать") | Required. | Med | Multipart upload to the Agent, so `python-multipart` is needed, which is a dependency check. Modals follow the carried-over Phase 10 rule: close only via ×. |
+| Indexing as a background job with status and progress (queued, indexing x/y, ready, failed) | Indexing a 1000-page PDF blocks for minutes. A request that hangs with no feedback looks broken. | Med | `asyncio.create_task` in the Agent process (no Celery). Progress is a row field polled via REST, or pushed through the existing `/ws/events` channel used by the scheduler panel. Prefer the existing `/ws/events` push plus polling as a fallback. |
+| Error handling (unsupported file, empty extraction, embedding model not loaded, LM Studio down), with a readable message in the KB row | Failure modes are guaranteed in a demo. | Low-Med | Store `status=failed` and `error` on the KB. Allow a per-file status. Don't crash the Agent (same rule as MCP-04). |
+| Delete KB (rows, FAISS file, in-memory cache) | Required. | Low | Mirror `cleanup_chat_caches`: drop the loaded FAISS index from the in-process cache. Cover it with a cascade test. |
+| Indexing stats (files, chunks, dim, model) shown on the KB list item | Cheap proof that indexing worked. Good for the demo video. | Low | |
+
+### Day 22: First RAG query and report
+
+| Feature | Why Expected | Complexity | Dependencies / notes |
+|---------|--------------|------------|----------------------|
+| Retrieval function: embed query with the KB's own model, top-K cosine search, hydrate chunks from SQLite | Core of the day. | Med | Must use the same embedding model as the KB. If that model is not loaded, return a readable error. |
+| Context builder: numbered chunk blocks plus the question, injected into the LLM request | Core of the day. | Med | Plug into `agent/context_engine.py` / the WS flow. It must not be persisted into the message tree as the user message (store the original question; keep retrieved chunks as message metadata or a side table). Count the extra tokens against `context_length` and the existing 75% compression trigger. |
+| Attach KBs to a chat (multi-select) | Chat must pick which KB(s) to use. | Low-Med | New `chat_kb` link table, or fields in per-chat settings. Recommend a link table. Settings has the global vs per-chat fallback pattern, which may be reusable for a default RAG on/off. |
+| RAG on/off toggle per chat | "Agent with two modes." | Low | A chat-level setting. Show a clear UI indicator (a badge on the answer showing RAG vs no RAG). |
+| Same-question comparison workflow (ask both modes, side by side or in sequence) | The report needs with/without comparisons. | Low-Med | Minimum: toggle plus re-ask. Better: a script that runs the 10 questions in both modes and dumps the outputs to markdown. |
+| 10 control questions with expectation and expected sources | Required deliverable. | Low (writing) | Store as a JSON or YAML fixture (for example `eval/questions.json`) so Days 23 and 24 reuse the same set. Include 2-3 questions that are not in the corpus (for the "не знаю" check on Day 24) and 1-2 that need the right article number. |
+| `Day22_report.md` | Required deliverable. | Low | Table of question, expectation, no-RAG answer, RAG answer, sources hit, verdict, plus a conclusion. |
+
+### Day 23: Filtering, reranking, query rewrite
+
+| Feature | Why Expected | Complexity | Dependencies / notes |
+|---------|--------------|------------|----------------------|
+| Retrieve a wide top-K (for example 20), then a similarity threshold cut-off, then final top-N (for example 5) | Required. The classic two-stage shape. | Low | Config: `top_k_before`, `threshold`, `top_k_after`. Store in the Settings model (global with per-chat override via the existing fallback) or in per-KB/per-chat RAG config. Expose in the UI as number inputs. |
+| A cut-off by similarity score; calibrate on the corpus | Required. Raw cosine ranges differ per embedding model (for example 0.2-0.5 are typical for relevant matches with some models), so a default of 0.75 is wrong in general. | Low-Med | Calibrate by looking at the score distributions of the 10 questions (in-corpus vs out-of-corpus). Document the chosen value in the report. |
+| Query rewrite step (LLM call that makes a retrieval-friendly or standalone query) | Required by the day. | Med | One extra non-streaming LLM call, reusing `llm_client`. The call is skippable (toggle) so the comparison "without vs with" works. Use a low temperature. Log the original and rewritten query. |
+| Mode comparison: baseline vs filter vs filter + rewrite | Required by the report. | Low-Med | Same eval fixture and runner as Day 22, with a config switch. Metrics: hit@k plus manual answer quality. |
+| `Day23_report.md` | Required deliverable. | Low | |
+| Visible debug info: retrieved candidates with scores, which were cut, the rewritten query | Needed to prove the filter works. | Low-Med | A collapsible "Детали поиска" block under the answer, or a log. |
+
+### Day 24: Citations and "не знаю"
+
+| Feature | Why Expected | Complexity | Dependencies / notes |
+|---------|--------------|------------|----------------------|
+| Structured answer: answer text plus sources (source, section, chunk_id) plus quotes | Required. | Med | Two workable patterns. (a) **Prompt-based with inline markers**: ask the model to cite `[1]`, `[2]` and to output a JSON block or a fixed "Источники:" section. (b) **Server-built sources**: the server knows what was retrieved and renders the sources panel itself, while the model supplies only the quotes. Recommend a hybrid: the model writes the answer with `[n]` markers plus quotes keyed by `[n]` (a JSON footer); the server validates the markers and quotes against the retrieved chunks and renders the UI. Local 9B models are unreliable at strict JSON, so parse defensively and fall back to server-built sources (source plus chunk_id from the top chunks). |
+| Programmatic quote verification (substring match, whitespace-normalised) | "Quotes present and meaning matches" is the check. A cheap server-side check catches fabricated quotes. | Low-Med | Mark each quote verified or not. Unverified quotes are dropped or shown with a warning. |
+| "Не знаю" gate: below-threshold relevance means "не знаю" plus a clarification question | Required rule. | Low-Med | Retrieval-level gate: no chunk at or above the threshold means skip generation (or send a restrictive prompt) and return a templated "не знаю" with a clarification question. A prompt-level rule is a second layer. Reuses the Day 23 threshold. Keep the gate deterministic so it is testable. |
+| Sources rendered in the chat UI (collapsible block, file, section, chunk_id, quote) | Required. | Med | Vanilla JS, DOMPurify on any rendered text. Persist as message metadata so reloading a chat still shows sources. Needs a column on `Message` or a side table `message_sources`. A message-tree-compatible design: the sources belong to the assistant message id, so branches and regeneration stay correct. |
+| Check on 10 questions (sources present, quotes present, meaning matches) | Required. | Low-Med | Reuse the fixture. Add a results table with columns: sources present Y/N, quotes present Y/N, quote supports answer Y/N, expected source hit Y/N. Include out-of-corpus questions that must yield "не знаю". |
+| Report or section in a doc (Day 24 has no named report, so add `Day24_report.md` or a results section) | Evidence for the grader. | Low | |
+
+### Day 25: Mini-chat with RAG and task memory
+
+| Feature | Why Expected | Complexity | Dependencies / notes |
+|---------|--------------|------------|----------------------|
+| Existing chat doubles as the mini-chat: history kept, retrieval on every turn, sources always shown | The app already is a chat with history. Do NOT build a second mini-chat. | Low | RAG on per chat means retrieval on every user turn. |
+| Query rewrite uses history (condense follow-ups) | "а какой штраф за это?" retrieves nothing without it. This is the main failure mode in multi-turn RAG. | Med | Feed the last 2-4 turns plus the task state into the rewrite call. Already built on Day 23, so Day 25 adds the history input. |
+| Task state for the dialog (goal, clarified facts, fixed constraints and terms) | Required. | Med | See the reuse analysis below. |
+| Task state injected into the prompt every turn, and updated after each turn | Required for "doesn't lose the goal". | Med | Use the existing memory-injection path. Update through LLM tool calls (the existing pattern) or a small post-turn extraction call. |
+| UI to view the task state | Inspectability is the project's core value. | Low-Med | Reuse the existing working-memory / task panel. |
+| Two long scenarios (10-15 messages each), scripted and replayable | Required verification. | Med | A scenario file (list of user messages) plus a runner that records answers, sources, and the task state after each turn. Include goal drift traps (a topic switch and a return) and a term the user fixes early ("под штрафом имею в виду административный"). |
+| Scenario result log or report | Evidence for the grader. | Low | `Day25_report.md`: per-turn sources present, goal kept, constraints respected. |
+
+## Reuse of the existing working memory and task FSM for RAG dialogs
+
+| Need | Reuse | Recommendation |
+|------|-------|----------------|
+| Dialog goal | Task record with state (`planning -> execution -> validation -> done`) | Treat "the user's research goal in this RAG dialog" as the active task's title/description. When the LLM already auto-creates tasks via tool call, a RAG dialog gets a task naturally. Do not add RAG-specific FSM states. The FSM is for task lifecycle, not for a dialog. |
+| Clarified facts | Working memory rows tied to the `task_id` | Store as working-memory entries with a category (`clarified`). |
+| Fixed constraints and terms | Per-chat invariants (INV-02) or working memory with category `constraint`/`term` | Invariants already inject into every request and have conflict checks. Use working memory for facts and terms, and per-chat invariants for hard constraints ("отвечай только по КоАП"). |
+| Injection every turn | Existing memory/invariant injection into context | Add a compact "RAG dialog state" block (goal, facts, constraints, terms) that the rewrite step also consumes. |
+| Write path | LLM tool calls (MEM-03) | Keep the explicit tool-call approach for consistency. Add a fallback: a deterministic post-turn extraction call if the local model forgets to call the tool (the ledger above notes qwen3.5-9b is weak at tool use). |
+
+Net: Day 25 is mostly wiring (rewrite input, injection, a display panel) and an evaluation scenario runner, not new storage. The risk is the weaker local LLM not calling the memory tools reliably.
+
+## Differentiators
+
+Not required, but they raise quality or the demo value. Pick one or two at most.
 
 | Feature | Value Proposition | Complexity | Notes |
 |---------|-------------------|------------|-------|
-| Automatic memory summarization/consolidation when a tier grows large | MemGPT's "recall→archival" flush avoids memory bloat over long sessions; research (RaMem, "memory rot" pieces) confirms unbounded long-term memory degrades retrieval quality over time. | HIGH | You already have a "sticky" context-compression strategy that summarizes at a token threshold — the same pattern *could* extend to long-term memory, but PROJECT.md's CONCERNS.md flags summarization as already stubbed/incomplete elsewhere in the codebase; don't let this milestone inherit that debt. |
-| Memory decay / relevance scoring (forget low-value entries over time) | Reduces "context rot" — stale facts competing with current ones — per multiple 2026 papers reviewed (RaMem, "Your Agent Isn't Losing Memory, It's Rotting"). | HIGH | Requires a scoring/eviction policy; explicitly out of scope for a course milestone whose acceptance bar is "3 layers exist and are inspectable," not "memory self-curates." |
-| Cross-session profile *learning* (LLM infers preferences from behavior, not just explicit save) | ChatGPT Memory does this ("chat history... insights ChatGPT gathers from past chats") in addition to explicit "remember this." | HIGH | PROJECT.md's PERS-01..04 only requires a profile the user can view/edit and that gets injected — implicit inference adds a whole classification/consent surface (what if the inference is wrong or feels invasive?) with no requirement asking for it. |
-| Vector/semantic search over long-term memory or archival tier | Letta's archival memory is vector-indexed for retrieval at scale; several papers (episodic-semantic memory, dual-trace encoding) build on this. | HIGH | For a single-user-turned-small-multi-user course app with modest data volume, a simple `WHERE user_id = ?` SQL query against a long-term-memory table is sufficient — don't add an embeddings pipeline the requirements never asked for. |
-| Full subagent dispatch / actual delegated execution of created tasks | OpenAI Agents SDK handoffs and "agent-as-tools" patterns show this is standard in production multi-agent frameworks. | HIGH | PROJECT.md Out of Scope explicitly excludes this for Week 3 — TASK-03 only asks that the task *schema* leave room for it later (e.g. an optional `delegate_to` field), not that delegation actually run. |
-| Interactive checkpoint editing during pause (human edits state before resume) | LangGraph explicitly supports "pause, let the human edit the checkpoint, then resume from the new state" — useful for real HITL workflows. | MEDIUM-HIGH | TASK-04 only requires resuming without re-explaining context, not mid-pause state editing by the user; a differentiator if there's spare time in the phase, not a requirement. |
-| Invariant-conflict detection that inspects tool calls/responses for rule violations (INV-04) | Not a memory/task-state feature per se, but sits at a similar "explicit guardrail as a checked function, not just a prompt" level of rigor as the transition guard. | MEDIUM-HIGH | Already scoped as its own requirement family (INV-01..05) in PROJECT.md — noted here only because it shares the "validation layer inspects agent output" pattern with TRANS-01/02; likely warrants its own phase-specific research later given it's a genuinely harder, more judgment-based check (an LLM-based conflict evaluator, not a lookup-table guard). |
+| Hybrid retrieval (BM25 plus vectors) via SQLite FTS5, merged with reciprocal rank fusion | Legal texts have exact terms and article numbers ("ст. 12.9") that embeddings handle poorly. This is probably the largest real quality gain on this corpus. | Med | FTS5 is built into SQLite, so no new dependency. It also gives a baseline to compare against. Best candidate differentiator. |
+| Heuristic reranker (keyword overlap, article-number match boost) | Cheap second stage that satisfies "reranker or heuristic" on Day 23. | Low | A good fit, since Day 23 explicitly allows a heuristic. |
+| LLM-as-reranker (score each candidate 0-10 with the local LLM) | Real reranker behaviour without a new model. | Med | N extra LLM calls, which is slow on a local 9B. Limit it to top-10 and batch the scores in one prompt. |
+| Cross-encoder reranker model (bge-reranker via LM Studio or sentence-transformers) | Highest-quality reranking. | High | Needs a model plus runtime. LM Studio support for rerank endpoints is uncertain (LOW confidence). Sentence-transformers pulls in torch, which is heavy. Avoid. |
+| LLM-judge for the evaluation reports (faithfulness and relevance, 1-5 or yes/no), shown next to the manual verdict | Faster than eyeballing, and an interesting column in the report. | Med | Use DeepSeek as the judge, not the local model. Always add a manual verdict column, because judges are noisy. Keep it a script, not a UI feature. |
+| Per-message RAG override (a small toggle by the input box) | Convenient for live A/B in the demo. | Low-Med | Only if the per-chat toggle feels clumsy. |
+| Eval runner script (`scripts/rag_eval.py`) that runs the question fixture in all modes and writes the markdown report tables | Makes the Day 22/23/24 reports reproducible and cheap to regenerate. | Med | Strongly recommended, since three days need the same loop. This is closer to table stakes for efficiency than a true differentiator. |
+| Retrieval debug panel (scores, cut candidates, rewritten query) | Great for the demo and for tuning. | Low-Med | Overlaps with the Day 23 table-stakes item. Make it an expandable block. |
+| Click-through from a source to the full chunk with neighbouring chunks | Helps verify citations. | Low-Med | |
+| Clarifying-question suggestions in "не знаю" (nearest topics found) | Better UX than a bare refusal. | Low | Cheap when the retrieval results exist (show the top section titles under the threshold). |
+| Re-index action for a KB (same files, new params) | Natural lifecycle, since params are fixed per KB. | Med | Needs the original files kept on disk. If files are stored, re-index is easy. Otherwise "delete and add again" is acceptable. |
+| Duplicate-chunk / neighbour merge in the final context | Cleaner context. | Low-Med | |
+| Streaming sources event (sources sent over WS before the tokens) | Snappy UX. | Low-Med | One extra WS message type, such as `rag_sources`, ahead of the `done` message. |
 
-### Anti-Features (Commonly Tempting, Explicitly Out of Scope)
+## Anti-Features (over-engineering for a course)
 
-| Feature | Why Requested | Why Problematic | Alternative |
-|---------|---------------|------------------|-------------|
-| Implicit/automatic memory classification (LLM silently decides to remember something without a visible tool call) | Feels "smarter" and more magical, like ChatGPT's background "chat history" insights layer | Directly contradicts MEM-03 ("explicitly choose ... via tool calls, not implicit/automatic classification") and undermines the inspectability requirement (MEM-04) — a save that never shows up as a discrete, attributable action can't be audited or demoed | Keep every write to working/long-term memory behind an explicit, named tool call with a visible justification string |
-| Cross-user memory sharing / a shared knowledge base across users | Reduces duplicate work, feels efficient for a "team" of course graders using the same app | PROJECT.md Out of Scope explicitly excludes this ("Long-term memory sharing across users — per-user by design"); it also breaks the personalization premise (profiles are supposed to differ per user) and raises unnecessary privacy/isolation complexity for a single-user-per-account course app | Scope every memory row and profile by `user_id`; only global project invariants (INV-01) remain intentionally shared |
-| General-purpose workflow engine / external state-machine library (e.g., wiring in a Temporal-style orchestrator) | LangGraph and similar frameworks make full graph orchestration look like the "proper" way to do task states | Massive overkill for 4-5 states and a handful of transitions; violates the project's hard constraints (no Docker, no extra infra/message broker) and adds a dependency with its own learning curve for a scope this small | A single in-code transition table + one guard function, backed by your existing SQLite tables, delivers the same guarantees (deterministic, auditable, illegal-transition rejection) at a fraction of the complexity |
-| Full RBAC / fine-grained permissions on tasks, memory, or invariants | Feels like the "enterprise-grade" thing to add alongside auth | PROJECT.md Out of Scope explicitly excludes this ("every user is admin; no need for a permissions model beyond authenticated vs not") | Simple `user_id` ownership checks are sufficient; skip roles/policies entirely |
-| Real subagent execution wired to created tasks | Natural next step once TASK-03 exists ("the LLM can create a task") | PROJECT.md Out of Scope explicitly defers this ("Actual subagent execution of tasks... out of scope for Week 3"); building it now risks scope creep that jeopardizes the 5-day/phase cadence | Leave an open, unused extension point on the task schema (e.g. nullable `delegate_to`/`subagent_type` column) so future work can wire it in without a schema migration |
-| Memory/task UI as a separate SPA or with a JS framework/bundler | Richer state management (React/Vue) is the default reach for "live-updating panels" | Violates the hard frontend constraint: vanilla JS + CDN libraries only, no bundler, no npm packages | Reuse the existing pattern already in this codebase (WebSocket `done` message + REST polling driving a plain-JS panel, as done for context/token stats) for the memory and task panels |
+| Anti-Feature | Why Avoid | What to Do Instead |
+|--------------|-----------|--------------------|
+| External vector DB (Chroma, Qdrant, Milvus, pgvector), or any service | Violates local-first and "no extra services". The week plan names FAISS plus SQLite. | `faiss-cpu` plus SQLite metadata. |
+| LangChain / LlamaIndex as a framework | Heavy dependency footprint, hides the pipeline the course wants to see, and conflicts with the existing hand-written client style. | Hand-write loader, chunker, retriever (about 300 lines total). |
+| Celery / Redis / job queue for indexing | Hard-constraint violation. | `asyncio.create_task` plus a status field. |
+| OCR for scanned PDFs, DOCX/HTML/web crawling, image/table understanding | Scope blow-up. The test corpus is text PDFs. | Support PDF, TXT, MD only. Fail with a clear message for empty extraction. |
+| Incremental or delta re-indexing, file watching, document versioning | Not needed. KB params are fixed per KB. | Delete and add again (or a simple full re-index). |
+| A KB shared across users, ACLs on KBs | Out of scope (per-user by design). | Scope everything by `user_id`. |
+| A second, separate mini-chat UI or CLI for Day 25 | The existing chat already has history and RAG on per chat. The task offers "CLI/web" as an option. | Use the existing chat. |
+| New FSM states for RAG dialogs | The FSM governs task lifecycle. | Reuse tasks plus working memory. |
+| Fine-tuning embeddings, custom embedding training, multi-vector or ColBERT, HyDE plus multi-query fan-out plus agentic retrieval loops | Disproportionate complexity. | Single-query rewrite. |
+| Cross-encoder reranker requiring torch | Large install on Windows, slow, fragile. | Threshold plus a heuristic or LLM-based rerank. |
+| Full RAGAS / TruLens / DeepEval integration | Heavy, expects OpenAI-style judges, and pulls many dependencies. | A 10-row table with a manual rubric, plus an optional small LLM-judge script. |
+| Streaming-token citation parsing (parsing `[n]` live in the token stream) | Fragile. | Render sources after `done`, or send a sources event before the tokens. |
+| Auto-chunk-size tuning, adaptive chunking via LLM | Over-engineering. | Offer two strategies, as the UI specifies. Compare them once in a report. |
+| Using the LLM as the sole guard for "не знаю" | Local models ignore refusals. | A deterministic retrieval-score gate first, with a prompt rule as the backup. |
+| Storing retrieved context as persisted user-message text | Pollutes the message tree, the compression strategies, and token stats, and breaks regenerate/branch. | Keep the original question as the message content, and the sources and chunks as metadata. Inject chunks only into the outbound request. |
+
+## Evaluation approach (recommended)
+
+- **Golden set**: 10 questions in one fixture file, reused on Days 22, 23, and 24. Each has `expected_answer_gist`, `expected_sources` (file plus article/section), and a `type` flag (factual, article-number lookup, multi-chunk, out-of-corpus). Include at least 2 out-of-corpus questions (the "не знаю" test). Suggested split: 6 answerable direct, 2 needing synthesis across chunks, 2 unanswerable.
+- **Retrieval metric**: hit@k (is any expected chunk or section in the top-K), computed automatically by matching expected source/section strings against retrieved metadata. Optionally add MRR. With 10 questions this is a sanity check, not a statistic. Say so in the report.
+- **Answer metric**: a manual rubric with 3 levels (correct / partially correct / wrong or hallucinated), plus "sources cited correctly Y/N" and "quote supports answer Y/N". This is what graders expect and is enough. An optional LLM-judge column for faithfulness is a differentiator. Do not replace the manual verdict.
+- **Comparison matrix** per report: no-RAG vs RAG (Day 22), RAG vs filtered vs filtered+rewrite (Day 23), citation checks (Day 24).
+- **Abstention metrics (Day 24)**: for unanswerable questions, "не знаю" rate (should be 100%), and for answerable ones, false-refusal rate (should be near 0). The threshold is a trade-off between these two, and the report should show that.
 
 ## Feature Dependencies
 
 ```
-Auth (user_id scoping)
-    └──requires (prerequisite for all of the below)──> PERS-01 (per-user profile)
-    └──requires──────────────────────────────────────> MEM-01/02 (user-scoped memory tables)
-    └──requires──────────────────────────────────────> TASK-01/02 (user-scoped tasks)
-
-MEM-01 (3 memory layers defined)
-    └──requires──> MEM-02 (dedicated SQLite tables per layer)
-                       └──requires──> MEM-03 (LLM tool calls choose layer + write)
-                                          └──requires──> MEM-04 (inspect what landed where)
-                                                             └──requires──> MEM-05 (UI shows layer contents)
-
-PERS-01 (profile schema exists)
-    └──requires──> PERS-02 (profile injected into every request)
-                       └──enables───> PERS-04 (observable behavioral difference)
-    └──requires──> PERS-03 (UI to view/edit profile)
-
-TASK-01 (state enum + transition graph defined)
-    └──requires (prerequisite)──> TRANS-01 (explicit allowed-transition set; the graph must exist before it can be validated against)
-                                       └──requires──> TRANS-02 (illegal transition → clear rejection, not silent success/crash)
-    └──requires──> TASK-02 (tasks granular within a chat, not 1:1 with chat)
-                       └──requires──> TASK-03 (LLM creates new task via tool call)
-    └──requires──> TASK-04 (pause/resume without re-explaining context)
-                       └──requires──> TRANS-03 (resume must not violate the transition graph — depends on TRANS-01 existing first)
-    └──requires──> TASK-05 (UI shows current task, state, and transition history)
-
-MEM-01/02 (working memory layer) ──enhances──> TASK-04 (pause/resume relies on working memory surviving the pause, not living only in-process)
-
-INV-01..03 (global/per-chat invariants + injection) ──parallels (same "guardrail" pattern as)──> TRANS-01/02 (explicit rule set + rejection), but is a separate requirement family — not a hard dependency in either direction
-
-Memory summarization/decay (differentiator) ──conflicts with──> "explicit, inspectable, LLM-chosen" premise of MEM-03/04 if done automatically/implicitly — if ever added, must itself go through an explicit tool call to stay consistent with this milestone's design principle
+KB tables + PDF loader + chunkers + embedder + FAISS store   (Day 21 core)
+  -> Background job + status + error handling  -> KB sidebar/modal UI
+  -> Retrieval function (Day 22)
+       -> Chat<->KB attachment + RAG toggle + context builder
+       -> Eval fixture (10 questions) + eval runner (reused Days 22/23/24)
+       -> Threshold + top-K before/after + query rewrite (Day 23)
+            -> "Не знаю" gate (Day 24, reuses the threshold)
+            -> Citations: message_sources metadata + sources UI + quote verification (Day 24)
+                 -> History-aware rewrite + task-state injection (Day 25)
+                      -> Long scenarios + report (Day 25)
+Existing: user_id auth, LM Studio client, model picker, Settings fallback,
+          working memory + task FSM + invariants, /ws/events, sidebar panels
 ```
 
-### Dependency Notes
+Critical ordering notes:
+- The message-to-sources metadata design must be decided in Day 22 or Day 21, even though it is used on Day 24, because Day 22 already has to show what was retrieved. Retrofitting storage later forces a migration. (The project uses ad-hoc migrations in `shared/database.py`.)
+- The eval fixture and runner should be created on Day 22 and reused after.
+- The threshold in Day 23 is a prerequisite for the Day 24 "не знаю".
 
-- **Auth is the true root dependency.** Every memory row, profile, and task must carry `user_id` from day one — PROJECT.md already recognizes this by scoping Auth as its own foundation phase/branch before Day 11. Retrofitting `user_id` onto memory/task tables after they exist is far more expensive than building them scoped from the start.
-- **TRANS-01 cannot precede TASK-01.** You cannot define "the set of allowed transitions" without first defining the state enum those transitions connect — this is a strict prerequisite, not just a nice ordering. If a milestone phase ever tried to build illegal-transition rejection before the state machine itself, it would have nothing to validate against.
-- **TRANS-03 (resume correctness) depends on TRANS-01 (transition graph) already existing**, and on TASK-04 (pause preserves state) being correctly implemented — pause/resume is not really "done" as its own feature until the guard also verifies a resume can't skip states (e.g. resuming a paused `planning` task straight into `done`).
-- **MEM-03 (LLM chooses save target via tool call) depends on MEM-01/02 existing** — the tool call needs a destination table/layer to write into; building the tool call before the storage schema would leave it with nowhere durable to persist.
-- **PERS-02 (injection into every request) enables PERS-04 (observable difference), not the reverse** — PERS-04 is effectively a test/acceptance criterion for PERS-02, not a separate implementation task; don't schedule it as independent roadmap work.
-- **MEM-01 (working memory) and TASK-04 (pause/resume) reinforce each other**: pausing a task and resuming "without re-explaining context" implicitly requires that whatever the task's working memory held survives the pause — if working memory lives only in-process (violating the two-process model's "no shared in-process state" constraint) or is cleared on pause, TASK-04 silently fails even if the state machine itself is correct. Treat working-memory persistence as a shared prerequisite for both MEM-01 and TASK-04, not two independent features.
-- **INV-01..05 is a structurally parallel but independent requirement family.** It shares the "guardrail that inspects agent output and can reject/flag" shape with TRANS-01/02, but nothing in TASK/TRANS strictly depends on invariants existing first (or vice versa) — they can be built in either order, though building the transition guard first gives you a smaller, already-tested pattern (lookup-table validation) to generalize when building the harder, judgment-based invariant-conflict check (INV-04, which likely needs its own LLM call, not just a lookup).
+## MVP Recommendation
 
-## MVP Definition
+Prioritise (in order):
+1. Day 21 core pipeline plus the sidebar and modal, with background indexing, status, and errors. Structural chunking tuned for "Статья N".
+2. Day 22 retrieval, chat-level KB attachment, per-chat RAG toggle, the eval fixture and runner, and the report.
+3. Day 23 threshold and top-K before/after, query rewrite, and the heuristic rerank (or just the threshold plus a heuristic). Report.
+4. Day 24 citations with hybrid model-plus-server validation, quote verification, the deterministic "не знаю" gate, and the sources UI persisted on the message.
+5. Day 25 history-aware rewrite, task-state injection through existing working memory, scripted long scenarios, and the report.
 
-### Launch With (v1) — required for Week 3 acceptance criteria
+One differentiator worth the cost: **FTS5 hybrid retrieval with RRF** (legal article numbers), or only the cheaper article-number boost heuristic if time is short.
 
-- [ ] Auth foundation with `user_id` scoping (prerequisite for everything else)
-- [ ] MEM-01/02: three memory tables (short-term = existing message tree; working; long-term), all user/chat-scoped
-- [ ] MEM-03: explicit tool-call-driven save (at minimum `save_working_memory` / `save_long_term_memory`)
-- [ ] MEM-04/05: inspection endpoint + minimal UI panel per memory layer
-- [ ] PERS-01..04: profile schema, request-time injection, edit UI, and a verifiable behavioral difference
-- [ ] TASK-01/02: state enum (`planning → execution → validation → done` + `paused`) and per-chat, multi-task granularity
-- [ ] TASK-03: LLM-driven task creation via tool call, with an open/unused delegation field
-- [ ] TRANS-01/02: explicit transition table + guard function producing clear rejection messages
-- [ ] TASK-04/TRANS-03: durable (DB-persisted, not in-process) pause/resume that respects the transition graph
-- [ ] TASK-05: UI showing current task, state, and transition history
+Defer: cross-encoder reranker, LLM-judge UI, per-message override, re-index action (use delete and re-add), source click-through with neighbouring chunks.
 
-### Add After Validation (v1.x) — only if a phase finishes early
+Also carried over: Phase 10 (modals close only via ×) applies directly to the new KB modal. Phase 11 (edit and delete long-term memory in UI) is independent of RAG, so keep it as a separate phase to avoid blocking the RAG days.
 
-- [ ] Lightweight memory-entry pruning/archival when a tier grows large — trigger: a memory table actually becomes hard to read in the inspection UI during testing, not preemptively
-- [ ] Interactive pause-time editing of task/working-memory state before resume — trigger: user explicitly wants to correct course mid-task, not just resume it
+## Complexity and risk summary
 
-### Future Consideration (v2+) — explicitly deferred, do not build now
-
-- [ ] Automatic/implicit memory summarization or decay scoring — defer until "explicit, LLM-chosen, inspectable" memory is proven and stable; revisit only alongside the existing (already-flagged-as-stubbed) summarization work elsewhere in the codebase
-- [ ] Cross-session implicit profile inference (learning preferences from behavior rather than explicit save) — defer indefinitely; conflicts with the explicit-choice design principle unless it too goes through a visible tool call
-- [ ] Real subagent dispatch executing created tasks — defer per PROJECT.md Out of Scope; only the schema hook (from TASK-03) should exist now
-- [ ] Vector/semantic search over long-term memory — defer until data volume or retrieval-quality problems actually appear; plain SQL lookups are sufficient at this scale
-
-## Feature Prioritization Matrix
-
-| Feature | User/Grader Value | Implementation Cost | Priority |
-|---------|--------------------|----------------------|----------|
-| Auth + user_id scoping | HIGH (blocks everything else) | MEDIUM | P1 |
-| 3-layer memory tables + tool-call writes (MEM-01..03) | HIGH | MEDIUM | P1 |
-| Memory inspection + UI (MEM-04/05) | HIGH (demoability) | LOW-MEDIUM | P1 |
-| Per-user profile + injection (PERS-01/02) | HIGH | LOW | P1 |
-| Profile edit UI + observable diff (PERS-03/04) | HIGH (demoability) | LOW | P1 |
-| Task state enum + transition table (TASK-01, TRANS-01) | HIGH | LOW-MEDIUM | P1 |
-| Task granularity + LLM-driven creation (TASK-02/03) | HIGH | MEDIUM | P1 |
-| Illegal-transition rejection with explanation (TRANS-02) | HIGH (this is the acceptance-tested behavior) | LOW | P1 |
-| Durable pause/resume (TASK-04, TRANS-03) | HIGH | MEDIUM | P1 |
-| Task history UI (TASK-05) | MEDIUM-HIGH (demoability) | LOW-MEDIUM | P1 |
-| Memory summarization/decay | LOW at this scope | HIGH | P3 |
-| Cross-session implicit profile learning | LOW at this scope, conflicts with design principle | HIGH | P3 |
-| Vector search over archival memory | LOW at this scale | HIGH | P3 |
-| Real subagent dispatch | Explicitly out of scope | HIGH | P3 (do not build) |
-
-**Priority key:**
-- P1: Must have — directly maps to an Active requirement in PROJECT.md
-- P2: Should have, add when possible (none identified beyond the "Add After Validation" list — this milestone's scope is already tightly bounded by explicit requirements)
-- P3: Nice to have / explicitly deferred per PROJECT.md Out of Scope or this research's anti-features analysis
-
-## Reference System Comparison
-
-| Feature | Anthropic Memory Tool | Letta / MemGPT | LangGraph | ChatGPT Memory | This Project's Approach |
-|---------|------------------------|------------------|-----------|------------------|---------------------------|
-| Memory write trigger | Explicit client-side tool call (`memory_20250818`) | Explicit tool calls (`core_memory_append`, `archival_memory_insert`) | N/A (not a memory-specialized framework) | Mostly implicit + some explicit "remember this" | Explicit tool call only (matches Anthropic + Letta, not ChatGPT) — required by MEM-03 |
-| Memory tiers | Flat file-based store (app defines structure) | 3 tiers: core (in-context), recall (session), archival (long-term vector) | N/A | 2 tiers: saved memories, chat-history insights | 3 tiers: short-term (message tree, existing), working (per-task), long-term (per-user), matching MEM-01 |
-| Storage backend | Developer-owned (your infra) | Its own DB + vector store | Checkpointer (Postgres/SQLite/Mongo) | OpenAI-managed | SQLite via existing SQLModel/`shared/database.py`, per MEM-02 |
-| State machine / pause-resume | N/A | N/A | Explicit graph + checkpointer, `interrupt()`/`Command(resume=...)` | N/A | In-code transition table + guard function + DB-persisted task rows (no external orchestrator, per hard constraints) |
-| Task delegation | N/A | Agent-defined tool calls | Multi-agent graphs, subgraphs | N/A | Schema hook only (open `delegate_to` field); no execution, per Out of Scope |
+| Item | Complexity | Main risk |
+|------|------------|-----------|
+| PDF extraction of Russian legal PDFs | Med | Layout noise (headers, footers, page numbers) breaks chunk and heading detection. Strip repeated headers. |
+| Indexing time for КоАП | Med | Minutes of embedding on a local 480M model. Needs a progress display, batching, and cancellation or at least a non-blocking job. |
+| Embedding model availability in LM Studio | Med | The model must be loaded, and the `model_switch_lock` interacts with a loaded chat LLM (memory). Surface errors clearly. |
+| Threshold calibration | Low-Med | Scores differ per model, and a wrong default makes everything "не знаю" or nothing. Calibrate with the fixture. |
+| Citation format from a small local LLM | Med | Unreliable JSON. Use server-side validation and fallback sources. |
+| Task-state tool calls from a local LLM | Med | The known weakness of qwen3.5-9b with tools. Add a deterministic fallback extraction. |
+| Context size growth | Low-Med | Retrieved chunks eat the window and can trigger the 75% compression. Cap the chunk count and size. |
 
 ## Sources
 
-- [Managing context on the Claude Developer Platform (Anthropic)](https://www.anthropic.com/news/context-management) — HIGH confidence, official source
-- [Memory tool - Claude Platform Docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/memory-tool) — HIGH confidence, official docs; corroborated by the bundled `claude-api` skill's own memory-tool notes (`memory_20250818` type, client-side/developer-owned storage)
-- [claude-cookbooks memory_cookbook.ipynb (anthropics/claude-cookbooks)](https://github.com/anthropics/claude-cookbooks/blob/main/tool_use/memory_cookbook.ipynb) — HIGH confidence, official reference implementation
-- [Agent Memory: How to Build Agents That Learn and Remember (Letta)](https://www.letta.com/blog/agent-memory/) — MEDIUM-HIGH confidence, vendor blog but consistent with the well-established MemGPT paper's core/recall/archival model
-- [Mem0 vs Letta (MemGPT) comparison (Vectorize)](https://vectorize.io/articles/mem0-vs-letta) — MEDIUM confidence, third-party comparison, used to corroborate the tiered-memory description
-- [Human-in-the-loop - Docs by LangChain](https://docs.langchain.com/oss/python/langchain/human-in-the-loop) — HIGH confidence, official docs
-- [Architecting Human-in-the-Loop Agents: Interrupts, Persistence, and State Management in LangGraph (Medium)](https://medium.com/data-science-collective/architecting-human-in-the-loop-agents-interrupts-persistence-and-state-management-in-langgraph-fa36c9663d6f) — MEDIUM confidence, third-party but consistent with official LangGraph docs on checkpointer-based pause/resume
-- [Memory and new controls for ChatGPT (OpenAI)](https://openai.com/index/memory-and-new-controls-for-chatgpt/) — HIGH confidence, official source for the "saved memories vs. chat history" personalization pattern
-- [Your AI Agents Need Finite State Machines (FSMs) (DEV Community)](https://dev.to/remojansen/your-ai-agents-need-finite-state-machines-fsms-2i9j) — MEDIUM confidence, community source; used only for the general "explicit FSM with guarded transitions, operator-visible history" framing, which is well-established software-engineering practice independent of this specific article
-- [Agent orchestration - OpenAI Agents SDK](https://openai.github.io/openai-agents-python/multi_agent/) and [Handoffs - OpenAI Agents SDK](https://openai.github.io/openai-agents-python/handoffs/) — HIGH confidence, official docs; used for the task-delegation/subagent pattern referenced by TASK-03's "structure left open for future delegation"
-- [Your Agent Isn't Losing Memory. It's Rotting. (DEV Community)](https://dev.to/danilgaleev/your-agent-isnt-losing-memory-its-rotting-2edd) and related 2026 arXiv papers surfaced in search (RaMem, dual-trace encoding, episodic-semantic memory) — LOW-MEDIUM confidence (recent, some non-peer-reviewed preprints), used only to justify why summarization/decay is flagged as a differentiator/deferred item, not a table-stakes requirement
-- `C:\Projects\AiAdventAgentV2\.planning\PROJECT.md` — primary source of truth for exact requirement IDs (MEM-01..05, PERS-01..04, TASK-01..05, TRANS-01..03) and Out of Scope boundaries
-
----
-*Feature research for: LLM agent memory, personalization, and task state machines*
-*Researched: 2026-09-19*
+- PROJECT.md and CLAUDE.md in this repo (HIGH for app constraints and existing capabilities).
+- Established RAG practice: condense-question query rewriting, two-stage retrieve-then-rerank, retrieval-gated abstention, hit@k/MRR and faithfulness-style evaluation (MEDIUM, general domain knowledge, not re-verified this session).
+- Unverified items to check in phase research: LM Studio `/api/v0/models` `type` field for embedding models; `faiss-cpu` wheel availability for the target Python on Windows; whether LM Studio exposes any rerank endpoint; the `/v1/embeddings` input-length limit of `giga-embeddings-instruct-480m-0826` (and whether it expects an instruction prefix for queries, as "instruct" embedding models often do).
