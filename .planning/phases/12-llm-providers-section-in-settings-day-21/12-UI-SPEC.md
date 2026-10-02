@@ -36,15 +36,15 @@ Declared values (multiples of 4):
 |-------|-------|-------|
 | xs | 4px | Gap between model-name and badge inside a row, `mt-1` helper text |
 | sm | 8px | `gap-2` between buttons/title items, `space-y-2` between provider cards, `px-2` small buttons |
-| md | 16px | Form field vertical rhythm is `space-y-3` (12px, inherited, see exceptions); modal `p-5` is 20px (inherited) |
+| md | 16px | `p-4` section/card/form padding, `space-y-4` form field vertical rhythm and section rhythm |
 | lg | 24px | Not used inside the section |
 | xl | 32px | Not used |
 | 2xl | 48px | Not used |
 | 3xl | 64px | Not used |
 
-Layout (copy `#mcp-section` exactly): `<section id="llm-providers-section" class="border-t border-slate-700 p-5 space-y-3">`, placed directly after `#mcp-section` inside `#settings-modal` content. Header row `flex items-center justify-between`. Provider list container `#llm-provider-list` with `space-y-2`. Provider card `rounded-lg bg-slate-800 border border-slate-700 p-3 space-y-2`. Add/edit form `rounded-lg bg-slate-800/50 border border-slate-700 p-3 space-y-3`, hidden by default.
+Layout (modeled on `#mcp-section` but deliberately using in-scale spacing, so it differs slightly from existing MCP markup): `<section id="llm-providers-section" class="border-t border-slate-700 p-4 space-y-4">`, placed directly after `#mcp-section` inside `#settings-modal` content. Header row `flex items-center justify-between`. Provider list container `#llm-provider-list` with `space-y-2`. Provider card `rounded-lg bg-slate-800 border border-slate-700 p-4 space-y-2`. Add/edit form `rounded-lg bg-slate-800/50 border border-slate-700 p-4 space-y-4`, hidden by default. Buttons and inputs use vertical padding `py-1` (4px, small buttons) or `py-2` (8px, inputs and primary buttons); never `py-1.5` or `py-0.5`.
 
-Exceptions: inherited Tailwind values from MCP section that are not multiples of 4 are accepted for visual parity: 12px (`p-3`, `space-y-3`), 6px (`py-1.5`), 2px (`py-0.5`/`py-1` = 4px is fine). Touch-target minimum is not raised (desktop-only, local tool). No new custom spacing values may be introduced.
+Exceptions: none. Every spacing value in the new section must be on the scale (4, 8, 16, 24, 32, 48, 64); do not copy off-scale classes (`p-3`, `space-y-3`, `p-5`, `py-1.5`, `py-0.5`) from the existing `#mcp-section` markup, which is left untouched. Touch-target minimum is not raised (desktop-only, local tool).
 
 ---
 
@@ -54,13 +54,15 @@ Only sizes/weights already used by the MCP section:
 
 | Role | Size | Weight | Line Height |
 |------|------|--------|-------------|
-| Body (form inputs, field labels, empty-state body, buttons) | 14px (`text-sm`) | 400 (buttons: see exception) | 1.5 (Tailwind default for text-sm is 1.43; accept) |
+| Body (form inputs, field labels, empty-state body, buttons) | 14px (`text-sm`) | 400 (primary buttons 600, see below) | 1.5 (Tailwind default for text-sm is 1.43; accept) |
 | Label / meta (status badge, helper text, error text, small buttons, base URL line, picker group meta) | 12px (`text-xs`) | 400 | 1.33 (Tailwind default) |
 | Heading (section title "Провайдеры LLM") | 18px (`text-lg`) | 600 (`font-semibold`) | 1.56 (Tailwind default) |
 | Provider name in card / empty-state title | 14px (`text-sm`) | 600 (`font-semibold`) | 1.43 |
 
 Display role: not used.
-Weights declared: 400 and 600. Exception: the primary buttons "+ Добавить провайдера" and "Сохранить" reuse the MCP classes which carry `font-medium` (500); keep as-is for parity with `#btn-mcp-add` / `#btn-mcp-save`, do not introduce a third weight anywhere else.
+Weights: exactly two, 400 and 600, with no exceptions. The primary buttons "+ Добавить провайдера" and "Сохранить провайдера" use `font-semibold` (600); when copying classes from `#btn-mcp-add` / `#btn-mcp-save`, replace `font-medium` with `font-semibold`. `font-medium` (500) must not appear anywhere in the new section.
+
+Visual anchor: the "+ Добавить провайдера" button (the only accent element in the section header) is the primary focal point, followed by provider names (600 weight). In the model picker, optgroup labels form the hierarchy level above model options.
 
 ---
 
@@ -75,7 +77,7 @@ Dark theme only (existing).
 | Accent (10%) | indigo-600 `#4f46e5` (hover indigo-500 `#6366f1`) | see reserved list |
 | Destructive | red-400 `#f87171` (hover red-300) | "Удалить" text button, form error text, error status badge |
 
-Accent reserved for: (1) "+ Добавить провайдера" button, (2) "Сохранить" button in the provider form, (3) focus ring (`focus:ring-2 focus:ring-indigo-500`) on provider form inputs. Nothing else (the "Проверить" button is neutral, not accent).
+Accent reserved for: (1) "+ Добавить провайдера" button, (2) "Сохранить провайдера" button in the provider form, (3) focus ring (`focus:ring-2 focus:ring-indigo-500`) on provider form inputs. Nothing else (the "Проверить" button is neutral, not accent).
 
 Status indicator colors (reuse the MCP vocabulary verbatim, D-08): plain colored text, no pill background.
 
@@ -93,7 +95,7 @@ Define as `LLM_PROVIDER_STATUS_BADGE_CLASSES` / `LLM_PROVIDER_STATUS_LABELS` mir
 ## Component Inventory and Interactions
 
 ### 1. Section "Провайдеры LLM" (Settings modal)
-- Header: `h3.text-lg.font-semibold` "Провайдеры LLM" left; button `#btn-llm-provider-add` "+ Добавить провайдера" right (classes copied from `#btn-mcp-add`).
+- Header: `h3.text-lg.font-semibold` "Провайдеры LLM" left; button `#btn-llm-provider-add` "+ Добавить провайдера" right (classes copied from `#btn-mcp-add`, with `font-medium` replaced by `font-semibold` and off-scale padding replaced by `px-4 py-2`).
 - Order: header, hidden form `#llm-provider-form`, empty state `#llm-provider-empty`, list `#llm-provider-list`.
 
 ### 2. Provider card (one per provider; seeded DeepSeek and LM Studio appear as normal cards, D-03/D-05)
@@ -112,10 +114,10 @@ Fields, each `label.block.text-sm.text-slate-400.mb-1` + input classes identical
 3. `Переменная окружения с API-ключом` (text, placeholder `DEEPSEEK_API_KEY`, `font-mono`, optional; helper `text-xs text-slate-500 mt-1`: "Имя переменной в .env, а не сам ключ. Оставьте пустым, если ключ не нужен.")
 4. `Включён` checkbox (default checked)
 Inline error `p#llm-provider-form-error.text-xs.text-red-400` (validation: empty name, invalid URL, invalid env-var name `^[A-Za-z_][A-Za-z0-9_]*$`, server 4xx detail).
-Buttons right-aligned: "Отмена" (text button), "Сохранить" (accent). While saving: Save disabled, label "Сохранение…".
+Buttons right-aligned: "Отменить" (text button), "Сохранить провайдера" (accent, `font-semibold`). While saving: Save disabled, label "Сохранение…".
 
 ### 4. Save and check flow (D-08)
-1. Click "Сохранить": POST/PUT; on success close form, re-render list, toast `Провайдер сохранён` (success).
+1. Click "Сохранить провайдера": POST/PUT; on success close form, re-render list, toast `Провайдер сохранён` (success).
 2. Immediately and automatically run the check: badge switches to "проверка…" (sky), then to ok/error. No extra click required.
 3. After the check settles, refresh the model picker (D-09).
 4. "Проверить" button repeats step 2-3 manually.
@@ -141,7 +143,7 @@ All UI labels Russian (D-12).
 |---------|------|
 | Section heading | Провайдеры LLM |
 | Primary CTA | + Добавить провайдера |
-| Form save / cancel | Сохранить / Отмена |
+| Form save / cancel | Сохранить провайдера / Отменить |
 | Manual check button | Проверить |
 | Empty state heading | Провайдеры не настроены |
 | Empty state body | Добавьте провайдера с OpenAI-совместимым API (DeepSeek, OpenAI, OpenRouter), чтобы его модели появились в списке выбора модели. |
