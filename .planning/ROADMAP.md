@@ -26,7 +26,7 @@ Full details: [milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
 - [x] **Phase 7: MCP Connection (Day 16)** — The agent connects to an MCP server configured in Settings and shows the server's tool list (completed 2026-09-23)
 - [x] **Phase 8: Scheduler (Day 18)** — Delayed and periodic jobs with persisted status/results, run by the agent and shown in the UI
  (completed 2026-09-26)
-- [ ] **Phase 9: Auto-rename chats with LLM (Day 21)** — The LLM generates a short chat title after the first Q&A turn instead of 'New Chat'
+- [x] **Phase 9: Auto-rename chats with LLM (Day 21)** — The LLM generates a short chat title after the first Q&A turn instead of 'New Chat' (completed 2026-10-02)
 - [ ] **Phase 10: Modals close only via x button (Day 21)** — A modal closes only on its 'x'; a backdrop click no longer closes it
 - [ ] **Phase 11: Edit and delete long-term memory entries via UI (Day 21)** — "Редактировать" / "Удалить" buttons per long-term memory entry
 - [ ] **Phase 12: LLM providers section in Settings (Day 21)** — 'Провайдеры LLM' section with connection check; provider models appear in the LLM picker
@@ -141,7 +141,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 09-04-PLAN.md — Docs sync (API_SPEC, ARCHITECTURE, TESTING_GUIDE, USER_GUIDE), full suite, Playwright UAT on the isolated copy at 18000/18001 (wave 3)
+- [x] 09-04-PLAN.md — Docs sync (API_SPEC, ARCHITECTURE, TESTING_GUIDE, USER_GUIDE), full suite, Playwright UAT on the isolated copy at 18000/18001 (wave 3)
 
 ### Phase 10: Modals close only via x button (Day 21)
 
@@ -195,7 +195,7 @@ Plans:
 | 6. Controlled Transitions (Day 15) | v1.0 | 4/4 | Complete | 2026-09-21 |
 | 7. MCP Connection (Day 16) | v2.0 | 6/6 | Complete   | 2026-09-23 |
 | 8. Scheduler (Day 18) | v2.0 | 9/9 | Complete   | 2026-09-26 |
-| 9. Auto-rename chats with LLM (Day 21) | v2.0 | 3/4 | In Progress|  |
+| 9. Auto-rename chats with LLM (Day 21) | v2.0 | 4/4 | Complete   | 2026-10-02 |
 | 10. Modals close only via x button (Day 21) | v2.0 | 0/0 | Not started | - |
 | 11. Edit and delete long-term memory entries via UI (Day 21) | v2.0 | 0/0 | Not started | - |
 | 12. LLM providers section in Settings (Day 21) | v2.0 | 0/0 | Not started | - |
