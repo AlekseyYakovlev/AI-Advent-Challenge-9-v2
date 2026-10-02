@@ -206,7 +206,7 @@ Plans:
 | 6. Controlled Transitions (Day 15) | v1.0 | 4/4 | Complete | 2026-09-21 |
 | 7. MCP Connection (Day 16) | v2.0 | 6/6 | Complete   | 2026-09-23 |
 | 8. Scheduler (Day 18) | v2.0 | 9/9 | Complete   | 2026-09-26 |
-| 9. Auto-rename chats with LLM (Day 21) | v2.0 | 5/6 | In Progress|  |
+| 9. Auto-rename chats with LLM (Day 21) | v2.0 | 6/6 | Complete   | 2026-10-02 |
 | 10. Modals close only via x button (Day 21) | v2.0 | 0/0 | Not started | - |
 | 11. Edit and delete long-term memory entries via UI (Day 21) | v2.0 | 0/0 | Not started | - |
 | 12. LLM providers section in Settings (Day 21) | v2.0 | 0/0 | Not started | - |
