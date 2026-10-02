@@ -18,6 +18,10 @@ title_tasks: dict[int, asyncio.Task[None]] = {}
 # Set per chat turn in ws._handle_chat_message so tool handlers know the chat's model;
 # it is overwritten on every turn, so nothing needs to clear it.
 current_chat_model: ContextVar[str | None] = ContextVar("current_chat_model", default=None)
+# Set per chat turn next to current_chat_model so schedule_task stores the chat's provider.
+current_chat_provider_id: ContextVar[int | None] = ContextVar(
+    "current_chat_provider_id", default=None
+)
 
 
 def cleanup_chat_caches(chat_id: int) -> None:
