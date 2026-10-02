@@ -26,6 +26,7 @@ Full details: [milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
 - [x] **Phase 7: MCP Connection (Day 16)** — The agent connects to an MCP server configured in Settings and shows the server's tool list (completed 2026-09-23)
 - [x] **Phase 8: Scheduler (Day 18)** — Delayed and periodic jobs with persisted status/results, run by the agent and shown in the UI
  (completed 2026-09-26)
+
 - [x] **Phase 9: Auto-rename chats with LLM (Day 21)** — The LLM generates a short chat title after the first Q&A turn instead of 'New Chat' (completed 2026-10-02)
 - [ ] **Phase 10: Modals close only via x button (Day 21)** — A modal closes only on its 'x'; a backdrop click no longer closes it
 - [ ] **Phase 11: Edit and delete long-term memory entries via UI (Day 21)** — "Редактировать" / "Удалить" buttons per long-term memory entry
@@ -70,17 +71,20 @@ Plans:
 - [x] 07-06-PLAN.md — End-to-end acceptance vs filesystem.exe + human UI walkthrough (wave 4, checkpoint)
 
 ### Phase 8: Scheduler (Day 18)
+
 **Goal**: A user (or the LLM via chat tools) can schedule delayed (one-shot) and periodic (interval/cron) jobs; the agent runs them in the background, stores each job's status and every run's result, and the UI shows scheduled and completed jobs
 **Depends on**: Phase 7
 **Requirements**: SCHED-01, SCHED-02, SCHED-03, SCHED-04, SCHED-05, SCHED-06, SCHED-07, SCHED-08, SCHED-09, SCHED-10, SCHED-11, SCHED-12, SCHED-13, SCHED-14
 **Branch**: `Day18`
 **Decision**: Written from scratch in Python inside the Agent process (not a fork of `C:\Projects\mcp-cron`: Go, cron-only, in-memory status, no REST, no user scoping, duplicate agent loop, AGPL)
 **Scope sketch** (to be refined in discuss/plan):
+
 - `ScheduledTask` + `TaskRun` SQLModel tables, scoped by `user_id`
 - asyncio poll loop started in the agent lifespan; optimistic claim (`UPDATE ... WHERE next_run_at = old`); tasks survive Agent restarts
 - Executor reuses `mcp_client` / `llm_client` under `tool_guard`
 - REST `/api/v1/scheduler/*`; LLM tools `schedule_task` / `list_scheduled_tasks` / `cancel_scheduled_task`
 - UI panel (vanilla JS): scheduled and completed tasks with status and run result
+
 **Success Criteria** (what must be TRUE):
 
 1. From chat ("через минуту прочитай файл X через MCP и перескажи") the LLM creates a job; it appears in the sidebar panel and goes `выполняется` -> `успешно` live, with the result opening in a Markdown modal
@@ -154,6 +158,7 @@ Plans:
 **UI hint**: yes
 
 Plans:
+
 - [ ] 10-01-PLAN.md — Remove backdrop-click and Escape modal closers in app.js, add a source guard test, browser UAT on an isolated copy
 
 ### Phase 11: Edit and delete long-term memory entries via UI (Day 21)
@@ -192,11 +197,22 @@ Plans:
 **UI hint**: yes
 
 Plans:
+**Wave 1**
+
 - [ ] 12-01-PLAN.md — Provider foundation: env-secret resolver, LlmProvider/LlmProviderSeed tables, ScheduledTask.provider_id migration, agent/providers.py (CRUD, seeding, resolver, check, cache) (wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 12-02-PLAN.md — REST /api/v1/llm-providers (CRUD, check, models) + provider-aware LM Studio routes (wave 2)
 - [ ] 12-03-PLAN.md — Route chat WS, self-critique, facts and auto-title through the selected provider; PROVIDER_UNAVAILABLE (wave 2)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 12-04-PLAN.md — Scheduler: provider_id on jobs (REST + schedule_task tool) and provider-routed headless runs (wave 3)
 - [ ] 12-05-PLAN.md — Frontend: "Провайдеры LLM" Settings section + provider-grouped model picker and scheduler select (wave 3)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
 - [ ] 12-06-PLAN.md — Live DeepSeek title check (closes 999.11), docs, Playwright UAT on the isolated copy (wave 4)
 
 ## Progress
@@ -228,6 +244,7 @@ Plans:
 **Plans:** 0 plans
 
 Plans:
+
 - [ ] TBD (promote with /bm:review-backlog when ready)
 
 ### Phase 999.2: Descriptive LLM timeout error instead of empty 'LLM error:' (BACKLOG)
@@ -238,6 +255,7 @@ Plans:
 **Plans:** 0 plans
 
 Plans:
+
 - [ ] TBD (promote with /bm:review-backlog when ready)
 
 ### Phase 999.3: Trim wasted tool rounds and stray second answer after MCP error nudge (BACKLOG)
@@ -248,6 +266,7 @@ Plans:
 **Plans:** 0 plans
 
 Plans:
+
 - [ ] TBD (promote with /bm:review-backlog when ready)
 
 ### Phase 999.7: Harden scheduler LLM tools: gate schedule_task and bind cancel to the task (BACKLOG)
@@ -258,6 +277,7 @@ Plans:
 **Plans:** 0 plans
 
 Plans:
+
 - [ ] TBD (promote with /bm:review-backlog when ready)
 
 ### Phase 999.8: Fix DST fall-back fold in cron next-run math (BACKLOG)
@@ -268,6 +288,7 @@ Plans:
 **Plans:** 0 plans
 
 Plans:
+
 - [ ] TBD (promote with /bm:review-backlog when ready)
 
 ### Phase 999.9: Re-validate the session on the /ws/events socket (BACKLOG)
@@ -278,6 +299,7 @@ Plans:
 **Plans:** 0 plans
 
 Plans:
+
 - [ ] TBD (promote with /bm:review-backlog when ready)
 
 ### Phase 999.10: Scheduler code review INFO cleanup (BACKLOG)
@@ -288,6 +310,7 @@ Plans:
 **Plans:** 0 plans
 
 Plans:
+
 - [ ] TBD (promote with /bm:review-backlog when ready)
 
 ### Phase 999.11: DeepSeek backend check for auto-title requests (Phase 09 UAT #1) (BACKLOG)
@@ -297,6 +320,7 @@ Plans:
 **Plans:** 0 plans
 
 Plans:
+
 - [ ] TBD (promote with /bm:review-backlog when ready)
 
 ---
