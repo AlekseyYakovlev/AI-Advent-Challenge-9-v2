@@ -11,6 +11,7 @@
 - test_scheduler_*.py: see "Scheduler (Day 18)" below
 - test_titles.py / test_titles_ws.py: see "Chat auto-titling (Day 21)" below
 - test_llm_complete_chat.py: see "Chat auto-titling (Day 21)" below
+- test_modal_close_policy.py: modals have no backdrop-click or Escape closer; every "*-modal" overlay has a bound "btn-close-*" button
 
 ## Fixtures
 - Use conftest.py for shared fixtures

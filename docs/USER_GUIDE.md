@@ -135,6 +135,7 @@ When using "No Compression" and context exceeds window:
 6. **Adjust context_length** based on your model's capacity
 7. **Lower temperature** for factual responses
 8. **Raise temperature** for creative tasks
+9. **Dialog windows** (Settings, Add user, Scheduler) close only with the × button or Cancel; clicking outside the window or pressing Esc does not close them, so unsaved input is not lost by accident
 
 ## Troubleshooting
 

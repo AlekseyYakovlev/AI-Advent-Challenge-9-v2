@@ -2794,12 +2794,6 @@ function bindSchedulerModals() {
     $('btn-close-scheduler-create').addEventListener('click', closeSchedulerCreateModal);
     $('btn-cancel-scheduler-create').addEventListener('click', closeSchedulerCreateModal);
     $('btn-close-scheduler-run').addEventListener('click', closeSchedulerRunModal);
-    $('scheduler-create-modal').addEventListener('click', (e) => {
-        if (e.target === $('scheduler-create-modal')) closeSchedulerCreateModal();
-    });
-    $('scheduler-run-modal').addEventListener('click', (e) => {
-        if (e.target === $('scheduler-run-modal')) closeSchedulerRunModal();
-    });
 }
 
 const SCHEDULER_POLL_INTERVAL_MS = 10000;
@@ -3098,9 +3092,6 @@ function bindEvents() {
     $('add-user-form').addEventListener('submit', (e) => {
         createUser(e).catch((err) => showToast(err.message, 'error'));
     });
-    $('add-user-modal').addEventListener('click', (e) => {
-        if (e.target === $('add-user-modal')) closeAddUserModal();
-    });
     $('settings-temperature').addEventListener('input', (e) => {
         $('temperature-value').textContent = e.target.value;
     });
@@ -3132,17 +3123,8 @@ function bindEvents() {
             switchBranch(next.dataset.branchNext, 'next').catch((err) => showToast(err.message, 'error'));
         }
     });
-    $('settings-modal').addEventListener('click', (e) => {
-        if (e.target === $('settings-modal')) closeSettingsModal();
-    });
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') {
-            closeSettingsModal();
-            closeAddUserModal();
-            closeSchedulerCreateModal();
-            closeSchedulerRunModal();
-        }
-    });
+    // Modals close only via their x / Cancel buttons or after a successful submit;
+    // no backdrop-click or Escape closers (guarded by tests/test_modal_close_policy.py).
     $('chat-list').addEventListener('contextmenu', (e) => {
         const btn = e.target.closest('[data-chat-id]');
         if (!btn) return;
