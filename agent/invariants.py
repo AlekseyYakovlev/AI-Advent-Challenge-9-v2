@@ -7,7 +7,7 @@ from typing import Any
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from agent.llm_client import llm_client
+from agent.llm_client import LLMClient
 from shared.logger import get_logger
 from shared.models import ChatInvariant, GlobalInvariant, InvariantConflict
 
@@ -287,6 +287,7 @@ async def run_self_critique(
     assistant_text: str,
     tool_calls: list[dict[str, Any]],
     model: str,
+    client: LLMClient,
 ) -> dict[str, Any]:
     """Ask the LLM whether its own completed turn conflicts with an active invariant.
 
@@ -296,7 +297,7 @@ async def run_self_critique(
     """
     prompt = build_critique_prompt(active, assistant_text, tool_calls)
     try:
-        raw = await llm_client.complete_chat(
+        raw = await client.complete_chat(
             messages=[{"role": "user", "content": prompt}],
             model=model,
             temperature=0.0,
