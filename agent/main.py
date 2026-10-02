@@ -50,13 +50,14 @@ from agent.schemas import (
     TaskTransitionResponse,
     UserResponse,
 )
-from agent.llm_client import LMStudioClient
+from agent.llm_client import LMStudioClient, get_lm_studio_client
 from agent.state import CORS_ORIGINS, chat_locks, cleanup_chat_caches
 from agent.context_engine import compute_chat_stats
-from agent import invariants, mcp_client, mcp_config, memory, profile, tasks
+from agent import invariants, mcp_client, mcp_config, memory, profile, providers, tasks
 from agent import scheduler_tools  # noqa: F401  (registers the scheduler LLM tools)
 from agent.events import ws_events
 from agent.scheduler import scheduler
+from agent.providers_api import router as providers_router
 from agent.scheduler_api import router as scheduler_router
 from agent.ws import ws_chat
 from shared.auth import (
@@ -92,7 +93,6 @@ check_python_version()
 
 logger = get_logger(__name__)
 
-lm_studio_client = LMStudioClient()
 
 
 async def _ensure_global_settings(session: AsyncSession, user_id: int | None) -> Settings:
@@ -414,6 +414,7 @@ app.add_middleware(
 )
 
 app.include_router(scheduler_router)
+app.include_router(providers_router)
 
 
 @app.get("/debug/routes")
@@ -1192,13 +1193,35 @@ async def get_mcp_server_status(
     return _mcp_server_to_response(row, result)
 
 
+async def _lm_studio_for(
+    session: AsyncSession,
+    user_id: int,
+    provider_id: int | None,
+) -> LMStudioClient:
+    """Return the LM Studio client for a provider id (None keeps the configured legacy host)."""
+    if provider_id is None:
+        return get_lm_studio_client(app_config.LM_STUDIO_BASE_URL)
+    row = await providers.get_provider(session, user_id, provider_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Провайдер не найден")
+    if row.kind != providers.KIND_LM_STUDIO:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Провайдер не является LM Studio",
+        )
+    return get_lm_studio_client(row.base_url)
+
+
 @app.get("/api/v1/lm-studio/models")
 async def list_lm_studio_models(
+    provider_id: int | None = Query(default=None),
+    session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> list[dict[str, Any]]:
     """List models available in LM Studio."""
+    client = await _lm_studio_for(session, current_user.id, provider_id)
     try:
-        return await lm_studio_client.list_models()
+        return await client.list_models()
     except httpx.ConnectError:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1214,10 +1237,12 @@ async def list_lm_studio_models(
 @app.post("/api/v1/lm-studio/load-model", response_model=ModelLoadResult)
 async def load_lm_studio_model(
     body: ModelLoadRequest,
+    session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> ModelLoadResult:
     """Load a model in LM Studio."""
-    return await lm_studio_client.load_model(
+    client = await _lm_studio_for(session, current_user.id, body.provider_id)
+    return await client.load_model(
         body.model_id,
         body.gpu_offload,
         body.context_length,
@@ -1230,10 +1255,13 @@ async def load_lm_studio_model(
 )
 async def unload_lm_studio_model(
     model_id: str,
+    provider_id: int | None = Query(default=None),
+    session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> ModelLoadResult:
     """Unload a model from LM Studio."""
-    return await lm_studio_client.unload_model(model_id)
+    client = await _lm_studio_for(session, current_user.id, provider_id)
+    return await client.unload_model(model_id)
 
 
 @app.websocket("/ws/chat/{chat_id}")
