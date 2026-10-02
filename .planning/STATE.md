@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: "Week 4: MCP Integration"
 status: executing
-last_updated: "2026-10-02T14:48:21.857Z"
+last_updated: "2026-10-02T14:59:02.620Z"
 last_activity: 2026-10-02 -- Phase 12 execution started
 progress:
   total_phases: 14
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 32
-  completed_plans: 26
-  percent: 21
+  completed_plans: 27
+  percent: 29
 ---
 
 # Project State
@@ -49,6 +49,7 @@ No phases executed yet — metrics will populate after Phase 1 completes.
 - [Phase 12-02]: PUT distinguishes omitted vs explicit null/empty api_key_env; LM Studio routes without provider_id keep legacy host
 - [Phase ?]: [Phase 12-03]: _ToolTurn.client falls back to keyless LM Studio until headless passes client (12-04); title/facts jobs resolve provider_id inside the background task
 - [Phase ?]: Phase 12-04: disabled provider accepted at job creation, run fails later with UI-SPEC message (no fallback)
+- [Phase 12-06]: Live DeepSeek check recorded as blocked (placeholder key), not passed; browser UAT S1-S10 passed on isolated copy
 
 ### Roadmap Evolution
 
@@ -91,6 +92,7 @@ None.
 | Phase 12 P02 | 15min | 2 tasks | 4 files |
 | Phase 12 P03 | 45min | 2 tasks | 7 files |
 | Phase 12 P04 | 20min | 2 tasks | 7 files |
+| Phase 12 P06 | 35min | 2 tasks | 8 files |
 
 ## Deferred Items
 
@@ -102,7 +104,7 @@ Items acknowledged and deferred at milestone close on 2026-09-23:
 
 ## Session Continuity
 
-**Last session:** 2026-10-02T14:48:21.850Z
+**Last session:** 2026-10-02T14:58:58.105Z
 **Next action:** Run `/bm:discuss-phase 9` (or `/bm:plan-phase 9`) to start Day 21.
 
 ---

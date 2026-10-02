@@ -30,7 +30,7 @@ Full details: [milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
 - [x] **Phase 9: Auto-rename chats with LLM (Day 21)** — The LLM generates a short chat title after the first Q&A turn instead of 'New Chat' (completed 2026-10-02)
 - [ ] **Phase 10: Modals close only via x button (Day 21)** — A modal closes only on its 'x'; a backdrop click no longer closes it
 - [ ] **Phase 11: Edit and delete long-term memory entries via UI (Day 21)** — "Редактировать" / "Удалить" buttons per long-term memory entry
-- [ ] **Phase 12: LLM providers section in Settings (Day 21)** — 'Провайдеры LLM' section with connection check; provider models appear in the LLM picker
+- [x] **Phase 12: LLM providers section in Settings (Day 21)** — 'Провайдеры LLM' section with connection check; provider models appear in the LLM picker (completed 2026-10-02)
 
 ## Phase Details
 
@@ -213,7 +213,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 12-06-PLAN.md — Live DeepSeek title check (closes 999.11), docs, Playwright UAT on the isolated copy (wave 4)
+- [x] 12-06-PLAN.md — Live DeepSeek title check (closes 999.11), docs, Playwright UAT on the isolated copy (wave 4)
 
 ## Progress
 
@@ -230,7 +230,7 @@ Plans:
 | 9. Auto-rename chats with LLM (Day 21) | v2.0 | 6/6 | Complete   | 2026-10-02 |
 | 10. Modals close only via x button (Day 21) | v2.0 | 0/0 | Not started | - |
 | 11. Edit and delete long-term memory entries via UI (Day 21) | v2.0 | 0/0 | Not started | - |
-| 12. LLM providers section in Settings (Day 21) | v2.0 | 5/6 | In Progress|  |
+| 12. LLM providers section in Settings (Day 21) | v2.0 | 6/6 | Complete   | 2026-10-02 |
 
 ## Backlog
 
