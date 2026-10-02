@@ -1,18 +1,22 @@
-# AiAdventAgentV2 — Week 4: MCP Integration
+# AiAdventAgentV2 — Week 5: RAG
 
 ## What This Is
 
 A local-first, two-process AI chat application (FastAPI UI + Agent servers, vanilla JS frontend) that is being extended with an explicit agent memory model, personalization, and a formal task state machine with invariant enforcement. This is coursework for the "AI Advent Challenge" (9th cohort) — Week 3, Days 11-15 — where each day is a self-contained assignment building on the previous one's output, implemented in its own git branch and merged to `main` once its acceptance criteria pass.
 
-## Current Milestone: v2.0 Week 4: MCP Integration
+## Current Milestone: v3.0 Week 5: RAG
 
-**Goal:** Connect the agent to external tools via the Model Context Protocol — starting with establishing an MCP connection and listing the server's tools (Day 16), then (later days) letting the LLM use them.
+**Goal:** Give the agent a local, inspectable knowledge base and make it answer from documents — with retrieval, relevance filtering, mandatory sources and quotes, an explicit "не знаю" mode, and task memory across a long dialog (Days 21-25).
 
 **Target features:**
-- MCP server configuration in the Settings UI (per user)
-- Agent-side MCP client (official `mcp` Python SDK, stdio transport) that connects and lists tools
-- Visible connection status, server info, tool list, and clear errors
-- Standalone CLI proof script that prints the tool list
+- Knowledge-base indexing pipeline (Day 21): PDF/text loading, chunking (fixed size + overlap, or by structure: headings/sections/files), embeddings via an LM Studio embedding model (default `giga-embeddings-instruct-480m-0826`), FAISS vector index + SQLite chunk metadata (source, title/file, section, chunk_id); sidebar "База знаний" block with "Добавить" modal and per-entry delete
+- First RAG query (Day 22): question → retrieve relevant chunks → merge with question → LLM; agent mode with RAG / without RAG; `Day22_report.md` with 10 control questions (expectation + expected sources) and with/without comparison
+- Reranking and filtering (Day 23): second stage after retrieval (similarity threshold / reranker / heuristic), configurable cut-off and top-K before/after, query rewrite; `Day23_report.md` comparing modes
+- Citations and anti-hallucination (Day 24): every answer carries sources (source + section/chunk_id) and quotes from retrieved chunks; below-threshold relevance forces "не знаю" + a clarification request; checked on 10 questions
+- Mini-chat with RAG + task memory (Day 25): history kept, retrieval on every turn, sources always shown, task state (clarified facts, fixed constraints/terms, dialog goal); verified on 2 long scenarios of 10-15 messages
+- Carried over from v2.0: Phase 10 (modals close only via ×), Phase 11 (edit/delete long-term memory in UI)
+
+**Test corpus:** `C:\Projects\RAG` — ФЗ №196 «О безопасности дорожного движения» and КоАП РФ (№195-ФЗ), both PDF.
 
 ## Core Value
 
@@ -66,7 +70,13 @@ The agent must demonstrably separate and manage distinct kinds of state — shor
 
 ### Active
 
-(No active requirements — start the next milestone to define more.)
+- [ ] Knowledge-base indexing with FAISS + SQLite metadata (Day 21)
+- [ ] RAG query with/without RAG modes + Day22 report (Day 22)
+- [ ] Reranking/filtering + query rewrite + Day23 report (Day 23)
+- [ ] Mandatory sources/quotes + "не знаю" mode (Day 24)
+- [ ] Mini-chat with RAG + task memory (Day 25)
+
+See `.planning/REQUIREMENTS.md` for REQ-IDs.
 
 ### Out of Scope
 
@@ -77,6 +87,8 @@ The agent must demonstrably separate and manage distinct kinds of state — shor
 - Long-term memory sharing across users — per-user by design; only global project invariants are shared
 
 ## Current State
+
+Shipped **v2.0 Week 4: MCP Integration** (2026-10-02): MCP connection + chat tool calling (Day 16), scheduler (Day 18), chat auto-titles and LLM providers section (Day 21) — Phases 7-9, 12. Phases 10-11 carried over to v3.0.
 
 Shipped **v1.0 Week 3: Agent Memory & Task State** (2026-09-23): auth, 3-layer memory, personalization, task FSM, invariants with conflict check, and hard-enforced task transitions — 6 phases / 25 plans, all merged to `main`. Known deferred item: Phase 01 VERIFICATION still flagged `human_needed` (auth exercised in every later live demo).
 
@@ -131,4 +143,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-09-26 — Phase 8 (Scheduler, Day 18) complete*
+*Last updated: 2026-10-03 — Milestone v3.0 Week 5: RAG started*

@@ -1,32 +1,32 @@
 ---
 gsd_state_version: 1.0
-milestone: v2.0
-milestone_name: "Week 4: MCP Integration"
-status: Awaiting next milestone
-last_updated: "2026-10-02T23:09:02.763Z"
-last_activity: 2026-10-02 — Milestone v2.0 completed and archived
+milestone: v3.0
+milestone_name: "Week 5: RAG"
+status: planning
+last_updated: "2026-10-02T23:10:38.210Z"
+last_activity: 2026-10-02
 progress:
-  total_phases: 12
-  completed_phases: 4
-  total_plans: 27
-  completed_plans: 27
-  percent: 33
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
 
 ## Project Reference
 
-**Project:** AiAdventAgentV2 — Week 4: MCP Integration
+**Project:** AiAdventAgentV2 — Week 5: RAG
 **Core value:** The agent must demonstrably separate and manage distinct kinds of state — short-term dialog, working task data, long-term profile/knowledge, and task lifecycle — making explicit, inspectable decisions about what goes where.
-**Current focus:** Phase 12 — llm-providers-section-in-settings-day-21
+**Current focus:** Milestone v3.0 — defining requirements (Phases 10-11 carried over, RAG phases 13+)
 
 ## Current Position
 
-Phase: Milestone v2.0 complete
+Phase: Not started (defining requirements)
 Plan: —
-Status: Awaiting next milestone
-Last activity: 2026-10-02 — Milestone v2.0 completed and archived
+Status: Defining requirements
+Last activity: 2026-10-02 — Milestone v3.0 started
 
 ## Performance Metrics
 
