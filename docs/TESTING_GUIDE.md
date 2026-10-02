@@ -172,8 +172,8 @@ runner against a `respx`-mocked LM Studio. Never wait for wall-clock ticks.
 - HTTP 400 / 422 on the first call: one repeat without the field, title stored with source llm; two
   rejections or an HTTP 500: fallback, no further retry.
 - Title log events never contain message or model text.
-- Input bound: `fallback_title` and `build_title_messages` finish under 0.5 s on 100 000-character
-  hostile input.
+- Input bound: `fallback_title`, `build_title_messages` and `clean_title` finish under 0.5 s on
+  100 000-character hostile input.
 
 ### test_titles_ws.py
 - The first turn triggers the job once with the turn's model; a chat created with an empty body gets

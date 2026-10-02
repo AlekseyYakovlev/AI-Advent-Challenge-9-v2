@@ -309,8 +309,10 @@ pass through unchanged), and caps the result at 50 characters on a word boundary
 cuts the first user message to 50 characters with `…`. An answer with no usable title is logged as
 `chat_title_llm_unusable` (fields `model`, `finish_reason`, `content_empty`, `has_reasoning`,
 `completion_tokens`; no text content) before the fallback is applied. `fallback_title` reads only
-the first 500 characters of the message and `_snippet` only the first 4x its limit, so the regex
-work is bounded.
+the first 500 characters of the message, `_snippet` only the first 4x its limit and `clean_title`
+only the first 1000 characters of the model output (`max_tokens` is a request the backend may
+ignore), so the regex work is bounded. Output whose closing `</think>` lies past that cut is treated
+as unusable.
 
 **Log events.** `chat_title_set` (`source` = `llm` or `fallback`), `chat_title_llm_failed`,
 `chat_title_llm_unusable`, `chat_title_reasoning_control_rejected`, `chat_title_skipped`,

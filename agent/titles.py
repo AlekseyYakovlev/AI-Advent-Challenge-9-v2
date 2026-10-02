@@ -25,6 +25,7 @@ ANSWER_SNIPPET_CHARS = 300
 TITLE_REASONING_EFFORT = "none"
 TITLE_REJECTED_STATUS_CODES = frozenset({400, 422})
 FALLBACK_INPUT_CHARS = 500
+CLEAN_INPUT_CHARS = 1000
 SNIPPET_PRECUT_FACTOR = 4
 
 TITLE_SYSTEM_PROMPT = (
@@ -119,6 +120,15 @@ def clean_title(raw: object) -> str | None:
     """Reduce raw model output to a one-line title of at most TITLE_MAX_CHARS, or None."""
     if not isinstance(raw, str) or TOOL_TRACE_HEADER in raw:
         return None
+    if len(raw) > CLEAN_INPUT_CHARS:
+        # max_tokens is only a request; cut here so the regex work below stays bounded.
+        # A closing think tag past the cut means the kept part is reasoning, not a title.
+        last_close = None
+        for last_close in _THINK_CLOSE_RE.finditer(raw):
+            pass
+        if last_close is not None and last_close.end() > CLEAN_INPUT_CHARS:
+            return None
+        raw = raw[:CLEAN_INPUT_CHARS]
     text = _THINK_BLOCK_RE.sub("", raw)
     # A chat template that prefills <think> leaves only the closing tag in the content;
     # everything up to the last one is reasoning.

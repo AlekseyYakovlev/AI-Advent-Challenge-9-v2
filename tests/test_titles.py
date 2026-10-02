@@ -18,6 +18,7 @@ from agent.llm_client import ChatCompletionResult
 from agent.state import cleanup_chat_caches, title_tasks
 from agent.titles import (
     ANSWER_SNIPPET_CHARS,
+    CLEAN_INPUT_CHARS,
     TITLE_MAX_CHARS,
     TITLE_SYSTEM_PROMPT,
     USER_SNIPPET_CHARS,
@@ -663,6 +664,42 @@ def test_fallback_title_bounds_input_before_regex(monkeypatch: pytest.MonkeyPatc
     assert time.perf_counter() - started < 0.5
     assert result is None
     assert lengths and all(n <= 500 for n in lengths)
+
+
+@pytest.mark.parametrize(
+    "hostile",
+    ["<" * 100_000, "<think>" * 15_000, "</think " * 12_000, "*a " * 33_000, "x\n" * 50_000],
+    # Explicit ids: pytest puts the id into an environment variable, which Windows caps at 32k.
+    ids=["angle_brackets", "think_openers", "think_closers", "emphasis_markers", "lines"],
+)
+def test_clean_title_bounds_input_before_regex(
+    monkeypatch: pytest.MonkeyPatch, hostile: str
+) -> None:
+    lengths: list[int] = []
+    original = titles._strip_markup
+
+    def spy(text: str) -> str:
+        lengths.append(len(text))
+        return original(text)
+
+    monkeypatch.setattr(titles, "_strip_markup", spy)
+    started = time.perf_counter()
+    clean_title(hostile)
+
+    assert time.perf_counter() - started < 0.5
+    assert all(n <= CLEAN_INPUT_CHARS for n in lengths)
+
+
+def test_clean_title_overlong_output_keeps_first_line() -> None:
+    assert clean_title("План поездки\n" + "пояснение " * 500) == "План поездки"
+
+
+def test_clean_title_rejects_reasoning_closed_past_the_cut() -> None:
+    reasoning = "думаю над заголовком " * 100
+    assert len(reasoning) > CLEAN_INPUT_CHARS
+    assert clean_title(reasoning + "</think>План поездки") is None
+    straddling = "a" * (CLEAN_INPUT_CHARS - 4) + "</think>План поездки"
+    assert clean_title(straddling) is None
 
 
 def test_build_title_messages_bounds_nested_tags() -> None:
