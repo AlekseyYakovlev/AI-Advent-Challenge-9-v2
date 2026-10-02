@@ -163,11 +163,22 @@ Plans:
 **Depends on**: Phase 8
 **Promoted from**: backlog 999.6 (2026-10-02)
 **Requirements**: TBD
-**Plans**: 0 plans
+**Plans**: 4 plans
 **UI hint**: yes
 
 Plans:
-- [ ] TBD (run /bm:plan-phase 11 to break down)
+**Wave 1**
+
+- [ ] 11-01-PLAN.md — MEMUI requirement IDs, user-scoped update/delete helpers in `agent/memory.py`, `LongTermMemoryUpdate` schema, `PUT`/`DELETE /api/v1/memory/long-term/{entry_id}` (404/409/422, Origin + JSON checks) + pytest (wave 1)
+- [ ] 11-02-PLAN.md — Frontend: "Редактировать" / "Удалить" buttons per long-term entry, inline edit form with draft state, confirmed delete, source guard test (wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 11-03-PLAN.md — Docs sync (API_SPEC, ARCHITECTURE, TESTING_GUIDE, USER_GUIDE) + full-suite regression gate (wave 2)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 11-04-PLAN.md — Playwright browser UAT (S1-S11) on the isolated copy at 18000/18001 with an exit-code / result-file gate and a capped fix-and-rerun loop (wave 3)
 
 ### Phase 12: LLM providers section in Settings (Day 21)
 
