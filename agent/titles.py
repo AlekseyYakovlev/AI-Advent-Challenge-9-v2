@@ -3,9 +3,10 @@
 import asyncio
 import re
 
+import httpx
 from sqlalchemy import update
 
-from agent.llm_client import llm_client
+from agent.llm_client import ChatCompletionResult, llm_client
 from agent.state import title_tasks
 from agent.tool_guard import TOOL_TRACE_HEADER
 from shared.database import async_session_factory
@@ -21,6 +22,10 @@ TITLE_TEMPERATURE = 0.0
 TITLE_TIMEOUT_SECONDS = 20.0
 USER_SNIPPET_CHARS = 500
 ANSWER_SNIPPET_CHARS = 300
+TITLE_REASONING_EFFORT = "none"
+TITLE_REJECTED_STATUS_CODES = frozenset({400, 422})
+FALLBACK_INPUT_CHARS = 500
+SNIPPET_PRECUT_FACTOR = 4
 
 TITLE_SYSTEM_PROMPT = (
     "You write chat titles. Reply with ONLY a title of 3 to 8 words (at most 50 characters) "
@@ -51,6 +56,8 @@ def _neutralize_tags(text: str) -> str:
 
 def _snippet(text: str, limit: int) -> str:
     """Neutralize tags, collapse whitespace and cut to the limit."""
+    # Cut first so the regex work stays bounded on hostile input.
+    text = text[: limit * SNIPPET_PRECUT_FACTOR]
     cleaned = _WHITESPACE_RE.sub(" ", _neutralize_tags(text)).strip()
     return cleaned[:limit]
 
@@ -115,28 +122,60 @@ def clean_title(raw: object) -> str | None:
 
 def fallback_title(user_text: str) -> str | None:
     """Derive a title from the first user message when the LLM gives nothing usable."""
-    text = _strip_markup(user_text) if isinstance(user_text, str) else ""
+    text = _strip_markup(user_text[:FALLBACK_INPUT_CHARS]) if isinstance(user_text, str) else ""
     if len(text) > TITLE_MAX_CHARS:
         text = _cut_at_word(text, TITLE_MAX_CHARS - 1) + "…"
     return text if text and _is_usable(text) else None
 
 
-async def request_title(user_text: str, assistant_text: str, model: str) -> str | None:
-    """Ask the model for a title once; any failure or unusable output yields None."""
+async def _complete_title(messages: list[dict[str, str]], model: str) -> ChatCompletionResult:
+    """Call the model with reasoning disabled; repeat once without it when the backend rejects it."""
     try:
-        raw = await asyncio.wait_for(
-            llm_client.complete_chat(
-                messages=build_title_messages(user_text, assistant_text),
-                model=model,
-                temperature=TITLE_TEMPERATURE,
-                max_tokens=TITLE_MAX_TOKENS,
-            ),
-            timeout=TITLE_TIMEOUT_SECONDS,
+        return await llm_client.complete_chat_detailed(
+            messages=messages,
+            model=model,
+            temperature=TITLE_TEMPERATURE,
+            max_tokens=TITLE_MAX_TOKENS,
+            extra_body={"reasoning_effort": TITLE_REASONING_EFFORT},
+        )
+    except httpx.HTTPStatusError as exc:
+        status_code = exc.response.status_code
+        if status_code not in TITLE_REJECTED_STATUS_CODES:
+            raise
+        logger.info(
+            "chat_title_reasoning_control_rejected", model=model, status_code=status_code
+        )
+    return await llm_client.complete_chat_detailed(
+        messages=messages,
+        model=model,
+        temperature=TITLE_TEMPERATURE,
+        max_tokens=TITLE_MAX_TOKENS,
+        extra_body=None,
+    )
+
+
+async def request_title(user_text: str, assistant_text: str, model: str) -> str | None:
+    """Ask the model for a title with reasoning disabled (one retry without the field on
+    HTTP 400/422); any failure or unusable output yields None."""
+    messages = build_title_messages(user_text, assistant_text)
+    try:
+        result = await asyncio.wait_for(
+            _complete_title(messages, model), timeout=TITLE_TIMEOUT_SECONDS
         )
     except Exception as exc:
         logger.warning("chat_title_llm_failed", error_type=type(exc).__name__, error=str(exc))
         return None
-    return clean_title(raw)
+    title = clean_title(result.content)
+    if title is None:
+        logger.warning(
+            "chat_title_llm_unusable",
+            model=model,
+            finish_reason=result.finish_reason,
+            content_empty=not (result.content or "").strip(),
+            has_reasoning=result.has_reasoning,
+            completion_tokens=result.completion_tokens,
+        )
+    return title
 
 
 async def apply_title(chat_id: int, title: str) -> bool:

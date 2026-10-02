@@ -8,14 +8,14 @@ provides: [docs for chat auto-titling, full-suite regression result]
 affects: [docs/API_SPEC.md, docs/ARCHITECTURE.md, docs/TESTING_GUIDE.md, docs/USER_GUIDE.md]
 key-files:
   modified: [docs/API_SPEC.md, docs/ARCHITECTURE.md, docs/TESTING_GUIDE.md, docs/USER_GUIDE.md]
-requirements-completed: [TITLE-01, TITLE-02, TITLE-03, TITLE-04, TITLE-05, TITLE-06]
+requirements-completed: [TITLE-03, TITLE-04, TITLE-05, TITLE-06]
 metrics:
   tasks: 2 of 2 completed (task 2 = browser UAT, no code commit)
 ---
 
 # Phase 9 Plan 04: Docs sync and regression gate Summary
 
-API_SPEC, ARCHITECTURE, TESTING_GUIDE and USER_GUIDE now describe the shipped auto-title behavior (constants taken from `agent/titles.py`), and the full suite is green; the browser UAT scenarios A-F were run in headless Chromium on an isolated copy and all pass.
+API_SPEC, ARCHITECTURE, TESTING_GUIDE and USER_GUIDE now describe the shipped auto-title behavior (constants taken from `agent/titles.py`), and the full suite is green; the browser UAT scenarios A-F were run in headless Chromium on an isolated copy and all pass. The titles observed in this UAT were fallback titles (the user's own first message), not LLM-generated ones.
 
 ## Tasks
 
@@ -33,18 +33,20 @@ Environment: copy of `agent/ shared/ ui/ run.py` in `%TEMP%/aiadvent-uat-09` (ou
 
 | Scenario | Result | Observed |
 | -------- | ------ | -------- |
-| A live rename | PASS | After the first answer (no reload) sidebar and header both showed `Как настроить WebSocket в FastAPI?` (34 chars, no newline, not "New Chat"); a `chat_title_updated` WS frame was seen. |
-| B second turn | PASS | After a second message the title stayed `Как настроить WebSocket в FastAPI?`. |
-| C reload | PASS | After `reload()` sidebar and header still show `Как настроить WebSocket в FastAPI?`. |
-| D cross-chat delivery | PASS (rerun) | Second chat sent "Посоветуй рецепт плова"; the first chat was clicked the moment the answer ended. Header stayed `Как настроить WebSocket в FastAPI?` while the second chat's sidebar button became `Посоветуй рецепт плова` (no "New Chat" left). The first attempt (prompt "борща") delivered `Посоветуй рецепт борща` via `chat_title_updated`, but my script's click selector was malformed (non-ASCII JSON-escaped), so that attempt was a script error, not an app failure; D was rerun separately with the "плова" prompt. |
-| E XSS probe | PASS | `<img src=x onerror=alert(1)> что такое HTML?` produced title `что такое HTML?`; 0 dialogs, 0 `img` in `#chat-list` / `#chat-title`, no `<` or `>` in the title. (The user message body renders an `<img src=x>` through the sanitized markdown path, causing harmless 404s on `/static/x`; no `onerror` fired, no dialog.) |
-| F isolation | PASS | `uat2` (separate browser context) sidebar showed only its own `New Chat`; none of uat1's titles (`что такое HTML?`, `Посоветуй рецепт борща`, `Как настроить WebSocket в FastAPI?`) appeared. |
+| A live rename | PASS | After the first answer (no reload) sidebar and header both showed `Как настроить WebSocket в FastAPI?` (34 chars, no newline, not "New Chat"); a `chat_title_updated` WS frame was seen. The title is the user's own first message produced by `fallback_title`; `agent.log` shows `chat_title_set` with `source=fallback` for it. |
+| B second turn | PASS | After a second message the title stayed `Как настроить WebSocket в FastAPI?` (the user's own first message produced by `fallback_title`; `chat_title_set` with `source=fallback` in `agent.log`). |
+| C reload | PASS | After `reload()` sidebar and header still show `Как настроить WebSocket в FastAPI?` (the user's own first message produced by `fallback_title`; `chat_title_set` with `source=fallback` in `agent.log`). |
+| D cross-chat delivery | PASS (rerun) | Second chat sent "Посоветуй рецепт плова"; the first chat was clicked the moment the answer ended. Header stayed `Как настроить WebSocket в FastAPI?` while the second chat's sidebar button became `Посоветуй рецепт плова` (no "New Chat" left). The first attempt (prompt "борща") delivered `Посоветуй рецепт борща` via `chat_title_updated`, but my script's click selector was malformed (non-ASCII JSON-escaped), so that attempt was a script error, not an app failure; D was rerun separately with the "плова" prompt. These titles are the user's own messages produced by `fallback_title`; `agent.log` shows `chat_title_set` with `source=fallback` for them. |
+| E XSS probe | PASS | `<img src=x onerror=alert(1)> что такое HTML?` produced title `что такое HTML?`; 0 dialogs, 0 `img` in `#chat-list` / `#chat-title`, no `<` or `>` in the title. The title is the user's own message after `fallback_title` markup stripping; `agent.log` shows `chat_title_set` with `source=fallback`. (The user message body renders an `<img src=x>` through the sanitized markdown path, causing harmless 404s on `/static/x`; no `onerror` fired, no dialog.) |
+| F isolation | PASS | `uat2` (separate browser context) sidebar showed only its own `New Chat`; none of uat1's titles (`что такое HTML?`, `Посоветуй рецепт борща`, `Как настроить WebSocket в FastAPI?`; all user messages produced by `fallback_title`, `source=fallback`) appeared. |
+
+Correction (2026-10-02): all 8 `chat_title_set` events of this run had `source=fallback` and none had `source=llm`; the loaded model `qwen/qwen3.5-9b` spent the whole 30-token budget on reasoning (`finish_reason=length`, empty content), so LLM title generation (TITLE-01) was NOT observed in this run; the run validates the live sidebar/header update (TITLE-05), persistence, markup-free rendering and user isolation only; see 09-VERIFICATION.md and the post-fix re-run in 09-06-SUMMARY.md.
 
 Script artifacts hit and fixed on the way (not app failures): (1) the login page is at `/static/login.html`; (2) the app's `init()` creates the first chat itself and my script clicked "new chat" while it was still loading, creating two chats and leaving the WS on a different chat than the header (only reachable by clicking "new chat" within ~25 ms of page init); (3) the first sends did not wait for streaming to start before waiting for the input to re-enable. Earlier runs on a dirty scratch DB were discarded; the results above come from runs on a cleaned DB.
 
 Cleanup: the copy's process tree (run.py + agent, only the PIDs I started) was stopped; nothing listens on 18000/18001 any more (only TIME_WAIT sockets) and `/health` on 18001 no longer answers; the scratch DB was deleted. Screenshots (A-F, D2) and the scripts are in `%TEMP%/aiadvent-uat-09/shots` and `uat*.py`, outside the repo. Ports 8000/8001 were never started, stopped, killed or reconfigured.
 
-Verified: A-F as described. Not verified: other models (e.g. DeepSeek); title generation under LM Studio failure or timeout in a real browser (covered by pytest only).
+Verified: A-F as described, with fallback-sourced titles; LLM generation not verified. Not verified: other models (e.g. DeepSeek); title generation under LM Studio failure or timeout in a real browser (covered by pytest only).
 
 ## Open items for the user
 

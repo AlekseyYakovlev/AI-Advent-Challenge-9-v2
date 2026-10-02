@@ -10,6 +10,7 @@ import respx
 from starlette.testclient import TestClient
 
 from agent.events import hub
+from agent.llm_client import ChatCompletionResult
 from agent.main import app
 from agent.titles import TITLE_SYSTEM_PROMPT, fallback_title
 from tests.conftest import _create_user, login_test_client
@@ -262,12 +263,46 @@ def test_title_request_shape() -> None:
     assert body["stream"] is False
     assert body["temperature"] == 0
     assert body["max_tokens"] == 30
+    assert body["reasoning_effort"] == "none"
     assert body["model"] == MODEL
     assert "tools" not in body
     assert len(body["messages"]) == 2
     assert body["messages"][0] == {"role": "system", "content": TITLE_SYSTEM_PROMPT}
     assert f"<user_message>{USER_TEXT}</user_message>" in body["messages"][1]["content"]
     assert f"<assistant_answer>{ANSWER_TEXT}" in body["messages"][1]["content"]
+
+
+@respx.mock
+def test_reasoning_only_title_answer_falls_back_and_turn_completes() -> None:
+    """A reasoning-only title answer still ends the turn with done and the fallback title."""
+    reasoning = httpx.Response(
+        200,
+        json={
+            "choices": [
+                {
+                    "finish_reason": "length",
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "reasoning_content": "Thinking Process: ...",
+                    },
+                }
+            ],
+            "usage": {"completion_tokens": 30},
+        },
+    )
+    respx.post(f"{BASE_URL}/v1/chat/completions").mock(
+        side_effect=_title_side_effect([_plain_content_response(ANSWER_TEXT)], reasoning),
+    )
+    with TestClient(app) as client:
+        user_id = login_test_client(client)
+        queue = client.portal.call(_subscribe, user_id)
+        turn_frames = _run_first_turn(client, _new_chat(client))
+        frame = client.portal.call(_next_frame, queue)
+
+    assert turn_frames[-1]["type"] == "done"
+    assert frame["type"] == "chat_title_updated"
+    assert frame["title"] == fallback_title(USER_TEXT)
 
 
 @respx.mock
@@ -388,13 +423,18 @@ def test_done_is_not_delayed_by_blocked_title_call(monkeypatch: pytest.MonkeyPat
         user_id = login_test_client(client)
         gate = client.portal.call(_make_event)
 
-        async def _fake_complete_chat(**kwargs: Any) -> str:
-            if TITLE_TAG not in kwargs["messages"][-1]["content"]:
-                return "{}"
+        async def _fake_complete_chat(**kwargs: Any) -> ChatCompletionResult:
             await gate.wait()
-            return "Отложенный заголовок"
+            return ChatCompletionResult(
+                content="Отложенный заголовок",
+                finish_reason="stop",
+                has_reasoning=False,
+                completion_tokens=None,
+            )
 
-        monkeypatch.setattr("agent.titles.llm_client.complete_chat", _fake_complete_chat)
+        monkeypatch.setattr(
+            "agent.titles.llm_client.complete_chat_detailed", _fake_complete_chat
+        )
         queue = client.portal.call(_subscribe, user_id)
         chat_id = _new_chat(client)
         frames = _run_first_turn(client, chat_id)
