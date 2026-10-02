@@ -391,14 +391,18 @@ Required test coverage: success (200 + N models, bearer header sent, key absent 
 | A7 | Env-name exfiltration accepted under equal-admin model; resolve `.env`-file names only is an optional hardening | Pitfall 10 | Cross-user key theft on shared deployments |
 | A8 | `UniqueConstraint(user_id, name)` with 409 on conflict | Pattern 1 | Duplicate names make picker prefixes ambiguous otherwise |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Should `/models` fall back to `{base}/models` when `/v1/models` is 404?**
    - Known: D-08 fixes `{base_url}/v1/models`; DeepSeek docs document `/models`.
    - Recommendation: implement the single `/v1/models` path per D-08; add the 404 fallback only if the 999.11 live check shows DeepSeek needs it.
+   - RESOLVED: single `{base_url}/v1/models` path per D-08, no 404 fallback (12-01).
 2. **Restrict env-var names to `.env`-file keys?** (Pitfall 10) Recommendation: yes, cheap and consistent with "reference to a .env variable name"; the real-env lookup is then only for the declared `DEEPSEEK_API_KEY`. Needs a one-line user confirmation or planner decision.
+   - RESOLVED: only variable names declared in `.env`, plus the declared `DEEPSEEK_API_KEY`, resolve to a key (12-01 Task 1).
 3. **Per-chat model persistence:** not required (no `Settings.model`); selection stays client-side. Confirm no one expects it to persist across reloads (today it does not).
+   - RESOLVED: provider/model selection stays client-side, no new Settings column (12-05).
 4. **999.11 closure:** recommend (a) keep the manual API-level UAT in `09-HUMAN-UAT.md` test 1 but updated to pick the model id from `/models`, and (b) an end-to-end browser check on the isolated copy (:18000/:18001) that selects `DeepSeek · <model>`, sends one message and observes `chat_title_set source=llm`. Do NOT add a live paid test to CI; an opt-in `pytest -m live_deepseek` skipped without `DEEPSEEK_API_KEY` is acceptable discretion.
+   - RESOLVED: opt-in live DeepSeek test skipped without `DEEPSEEK_API_KEY` plus the isolated-copy Playwright check (12-06); 12-06 Task 2 is mandatory, and exit codes 2/4 mean UAT BLOCKED, not passed.
 
 ## Environment Availability
 
