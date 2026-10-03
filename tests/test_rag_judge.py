@@ -1,13 +1,17 @@
 """Offline tests for the LLM-judge script: prompt, parser, row loop and CSV round-trip."""
 
+import argparse
 import csv
 import importlib.util
+import json
 from pathlib import Path
 from typing import Any
 
 import httpx
+import respx
 
 from agent.llm_client import ChatCompletionResult
+from shared.config import settings
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 _spec = importlib.util.spec_from_file_location("rag_judge", REPO_ROOT / "scripts" / "rag_judge.py")
@@ -158,3 +162,117 @@ def test_agreement() -> None:
         _row("Q01", verdict="верно", judge_verdict="ошибка"),
     ]
     assert rag_judge.agreement(rows) == (1, 2)
+
+
+# --- command flow -------------------------------------------------------------------------
+
+SENTINEL = "sk-test-SENTINEL-000"
+BASE = "https://api.deepseek.com"
+
+
+def _args(tmp_path: Path, **over: Any) -> argparse.Namespace:
+    values: dict[str, Any] = {
+        "answers": tmp_path / "answers.csv",
+        "fixture": tmp_path / "control.json",
+        "meta": tmp_path / "judge_meta.json",
+        "model": "deepseek-chat",
+        "base_url": BASE,
+        "force": False,
+        "check": False,
+    }
+    values.update(over)
+    return argparse.Namespace(**values)
+
+
+def _ok_completion() -> httpx.Response:
+    return httpx.Response(
+        200, json={"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]}
+    )
+
+
+async def test_empty_key_exits_2_without_http(monkeypatch: Any, tmp_path: Path, capsys: Any) -> None:
+    monkeypatch.setattr(settings, "DEEPSEEK_API_KEY", "  ")
+    with respx.mock(assert_all_called=False) as mock:
+        for check in (False, True):
+            assert await rag_judge.judge_command(_args(tmp_path, check=check)) == 2
+        assert mock.calls.call_count == 0
+    assert "preflight: DEEPSEEK_API_KEY is not set" in capsys.readouterr().out
+
+
+async def test_missing_answers_names_ablate(monkeypatch: Any, tmp_path: Path, capsys: Any) -> None:
+    monkeypatch.setattr(settings, "DEEPSEEK_API_KEY", SENTINEL)
+    assert await rag_judge.judge_command(_args(tmp_path)) == 2
+    assert "rag_eval.py ablate" in capsys.readouterr().out
+
+
+async def test_check_ok(monkeypatch: Any, tmp_path: Path, capsys: Any) -> None:
+    monkeypatch.setattr(settings, "DEEPSEEK_API_KEY", SENTINEL)
+    with respx.mock() as mock:
+        models = mock.get(f"{BASE}/v1/models").respond(json={"data": [{"id": "deepseek-chat"}]})
+        mock.post(f"{BASE}/v1/chat/completions").mock(return_value=_ok_completion())
+        code = await rag_judge.judge_command(_args(tmp_path, check=True))
+        assert models.calls.last.request.headers["Authorization"] == f"Bearer {SENTINEL}"
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "check: ok model=deepseek-chat" in out
+    assert SENTINEL not in out
+    assert not (tmp_path / "judge_meta.json").exists()
+
+
+async def test_check_key_rejected(monkeypatch: Any, tmp_path: Path, capsys: Any) -> None:
+    monkeypatch.setattr(settings, "DEEPSEEK_API_KEY", SENTINEL)
+    with respx.mock() as mock:
+        mock.get(f"{BASE}/v1/models").respond(401)
+        code = await rag_judge.judge_command(_args(tmp_path, check=True))
+    out = capsys.readouterr().out
+    assert code == 2
+    assert "check: key rejected (HTTP 401)" in out
+    assert SENTINEL not in out
+
+
+async def test_check_unknown_model(monkeypatch: Any, tmp_path: Path, capsys: Any) -> None:
+    monkeypatch.setattr(settings, "DEEPSEEK_API_KEY", SENTINEL)
+    with respx.mock() as mock:
+        mock.get(f"{BASE}/v1/models").respond(json={"data": [{"id": "b"}, {"id": "a"}]})
+        code = await rag_judge.judge_command(_args(tmp_path, check=True))
+    assert code == 2
+    expected = "check: model deepseek-chat is not available; available: ['a', 'b']"
+    assert expected in capsys.readouterr().out
+
+
+async def test_check_completion_404_is_model_unavailable(
+    monkeypatch: Any, tmp_path: Path, capsys: Any
+) -> None:
+    monkeypatch.setattr(settings, "DEEPSEEK_API_KEY", SENTINEL)
+    with respx.mock() as mock:
+        mock.get(f"{BASE}/v1/models").respond(json={"data": [{"id": "deepseek-chat"}]})
+        mock.post(f"{BASE}/v1/chat/completions").respond(404)
+        code = await rag_judge.judge_command(_args(tmp_path, check=True))
+    assert code == 2
+    assert "is not available" in capsys.readouterr().out
+
+
+async def test_full_run_writes_files_without_key(
+    monkeypatch: Any, tmp_path: Path, capsys: Any
+) -> None:
+    monkeypatch.setattr(settings, "DEEPSEEK_API_KEY", SENTINEL)
+    fixture = {"status": "frozen", "questions": list(QUESTIONS.values())}
+    (tmp_path / "control.json").write_text(json.dumps(fixture, ensure_ascii=False), encoding="utf-8")
+    rag_judge.write_answers(
+        tmp_path / "answers.csv", [_row("Q01", verdict="верно"), _row("Q02", verdict="неверно")]
+    )
+    reply = {"choices": [{"message": {"content": "Вердикт: верно\nПричина: ок"}}]}
+    with respx.mock() as mock:
+        mock.post(f"{BASE}/v1/chat/completions").respond(json=reply)
+        code = await rag_judge.judge_command(_args(tmp_path))
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "1/2" in out
+    rows = rag_judge.read_answers(tmp_path / "answers.csv")
+    assert [r["judge_verdict"] for r in rows] == ["верно", "верно"]
+    assert [r["verdict"] for r in rows] == ["верно", "неверно"]
+    meta = json.loads((tmp_path / "judge_meta.json").read_text(encoding="utf-8"))
+    assert meta["model"] == "deepseek-chat"
+    assert meta["agreement"] == {"matching": 1, "compared": 2}
+    for text in (out, (tmp_path / "answers.csv").read_text(encoding="utf-8"), json.dumps(meta)):
+        assert SENTINEL not in text

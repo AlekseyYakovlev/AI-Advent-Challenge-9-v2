@@ -190,3 +190,129 @@ def agreement(rows: list[dict[str, str]]) -> tuple[int, int]:
             compared += 1
             matching += manual == judge
     return matching, compared
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """CLI argument parser."""
+    from agent.providers import DEEPSEEK_BASE_URL
+
+    parser = argparse.ArgumentParser(description="DeepSeek LLM-judge column for answers.csv")
+    parser.add_argument("--answers", type=Path, default=DEFAULT_ANSWERS)
+    parser.add_argument("--fixture", type=Path, default=DEFAULT_FIXTURE)
+    parser.add_argument("--meta", type=Path, default=DEFAULT_META)
+    parser.add_argument("--model", default=JUDGE_DEFAULT_MODEL)
+    parser.add_argument("--base-url", default=DEEPSEEK_BASE_URL)
+    parser.add_argument("--force", action="store_true", help="re-judge rows that already have a verdict")
+    parser.add_argument("--check", action="store_true", help="verify key and model id, then exit")
+    return parser
+
+
+def _rejected(code: int) -> tuple[int, str]:
+    """Result of a 401/403 reply; only the status code is ever reported."""
+    return EXIT_PREFLIGHT, f"check: key rejected (HTTP {code})"
+
+
+def _unavailable(model: str, available: list[str]) -> tuple[int, str]:
+    """Result when the model id is not served by the API."""
+    return EXIT_PREFLIGHT, f"check: model {model} is not available; available: {sorted(available)}"
+
+
+async def check_access(base_url: str, api_key: str, model: str) -> tuple[int, str]:
+    """Prove that the key and the model id are accepted; returns (exit code, message)."""
+    from agent.llm_client import LLMClient
+    from shared.config import settings
+
+    root = base_url.rstrip("/")
+    headers = {"Authorization": f"Bearer {api_key}"}
+    available: list[str] = []
+    try:
+        async with httpx.AsyncClient(timeout=settings.LLM_TIMEOUT) as http:
+            response = await http.get(f"{root}/v1/models", headers=headers)
+        if response.status_code in (401, 403):
+            return _rejected(response.status_code)
+        response.raise_for_status()
+        entries = response.json().get("data") or []
+        available = [str(e["id"]) for e in entries if isinstance(e, dict) and "id" in e]
+        if model not in available:
+            return _unavailable(model, available)
+        client = LLMClient(root, api_key)
+        await client.complete_chat_detailed(
+            [{"role": "user", "content": "ok"}], model, temperature=0.0, max_tokens=8
+        )
+    except httpx.HTTPStatusError as exc:
+        code = exc.response.status_code
+        if code in (401, 403):
+            return _rejected(code)
+        if code in (400, 404):
+            return _unavailable(model, available)
+        return EXIT_PREFLIGHT, f"check: unexpected HTTP {code}"
+    except (httpx.ConnectError, httpx.TimeoutException):
+        return EXIT_PREFLIGHT, "check: DeepSeek is unreachable"
+    return EXIT_OK, f"check: ok model={model}"
+
+
+def _write_meta(path: Path, args: argparse.Namespace, rows: list[dict[str, str]]) -> dict[str, Any]:
+    """Write judge_meta.json (no secrets) and return its content."""
+    matching, compared = agreement(rows)
+    meta: dict[str, Any] = {
+        "model": args.model,
+        "base_url": args.base_url,
+        "temperature": JUDGE_TEMPERATURE,
+        "max_tokens": JUDGE_MAX_TOKENS,
+        "rows": len(rows),
+        "judge_verdicts": dict(Counter(r["judge_verdict"] or "" for r in rows)),
+        "agreement": {"matching": matching, "compared": compared},
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    return meta
+
+
+async def judge_command(args: argparse.Namespace) -> int:
+    """Run the preflight, then --check or the full judging pass."""
+    from agent.llm_client import LLMClient
+    from shared.config import settings
+
+    api_key = (settings.DEEPSEEK_API_KEY or "").strip()
+    if not api_key:
+        print("preflight: DEEPSEEK_API_KEY is not set")
+        return EXIT_PREFLIGHT
+    if args.check:
+        code, message = await check_access(args.base_url, api_key, args.model)
+        print(message)
+        return code
+    if not args.answers.exists():
+        print(f"preflight: {args.answers} not found; run `python scripts/rag_eval.py ablate` first")
+        return EXIT_PREFLIGHT
+    fixture = json.loads(args.fixture.read_text(encoding="utf-8"))
+    if fixture.get("status") != "frozen":
+        print(f"preflight: control set {args.fixture.name} is not frozen")
+        return EXIT_PREFLIGHT
+    questions = {q["id"]: q for q in fixture["questions"]}
+    rows = read_answers(args.answers)
+    client = LLMClient(args.base_url, api_key)
+    await judge_rows(
+        rows,
+        questions,
+        client,
+        args.model,
+        args.force,
+        on_progress=lambda current: write_answers(args.answers, current),
+    )
+    write_answers(args.answers, rows)
+    meta = _write_meta(args.meta, args, rows)
+    print(f"judge verdicts: {meta['judge_verdicts']}")
+    matching, compared = meta["agreement"]["matching"], meta["agreement"]["compared"]
+    rate = f"{matching / compared:.0%}" if compared else "n/a"
+    print(f"agreement with manual verdicts: {matching}/{compared} ({rate})")
+    return EXIT_OK
+
+
+def main() -> int:
+    """CLI entry point."""
+    return asyncio.run(judge_command(build_parser().parse_args()))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
