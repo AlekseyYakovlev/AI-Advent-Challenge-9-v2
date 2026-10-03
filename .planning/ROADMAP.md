@@ -153,8 +153,8 @@ Plans:
 
 **Wave 1**
 
-- [ ] 14-01-PLAN.md — ChatRagConfig + Message.rag_sources migration, dim-mismatch error, agent/rag.py (retrieve, failure mapping, budget, block, merge, payload)
-- [ ] 14-02-PLAN.md — Draft, user-approve and freeze the 10-question control set fixture (checkpoint)
+- [x] 14-01-PLAN.md — ChatRagConfig + Message.rag_sources migration, dim-mismatch error, agent/rag.py (retrieve, failure mapping, budget, block, merge, payload)
+- [x] 14-02-PLAN.md — Draft, user-approve and freeze the 10-question control set fixture (checkpoint)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -239,7 +239,7 @@ Plans:
 | 10. Modals close only via x button (Day 21) | v3.0 | 1/1 | Complete   | 2026-10-02 |
 | 11. Edit and delete long-term memory entries via UI (Day 21) | v3.0 | 4/4 | Complete    | 2026-10-03 |
 | 13. Knowledge base indexing (Day 21) | v3.0 | 8/8 | Complete   | 2026-10-03 |
-| 14. First RAG query (Day 22) | v3.0 | 0/TBD | Not started | - |
+| 14. First RAG query (Day 22) | v3.0 | 2/8 | In Progress|  |
 | 15. Reranking and filtering (Day 23) | v3.0 | 0/TBD | Not started | - |
 | 16. Citations and anti-hallucination (Day 24) | v3.0 | 0/TBD | Not started | - |
 | 17. Mini-chat with RAG and task memory (Day 25) | v3.0 | 0/TBD | Not started | - |
