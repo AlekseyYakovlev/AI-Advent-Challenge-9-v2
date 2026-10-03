@@ -32,6 +32,7 @@ from agent.schemas import (
     HealthResponse,
     InvariantConflictResponse,
     LoginRequest,
+    LongTermMemoryUpdate,
     McpConnectionStatus,
     McpConnectResult,
     McpErrorCode,
@@ -678,6 +679,58 @@ async def get_chat_memory(
             for row in long_term
         ],
     )
+
+
+@app.put(
+    "/api/v1/memory/long-term/{entry_id}",
+    response_model=MemoryEntryResponse,
+    dependencies=[Depends(require_allowed_origin), Depends(require_json_content_type)],
+)
+async def update_long_term_memory_entry(
+    entry_id: int,
+    body: LongTermMemoryUpdate,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> MemoryEntryResponse:
+    """Edit key and/or value of the caller's own long-term memory entry (user-scoped)."""
+    try:
+        row = await memory.update_long_term_memory(
+            session, current_user.id, entry_id, key=body.key, value=body.value,
+        )
+    except memory.MemoryKeyConflictError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Запись с таким ключом уже существует",
+        ) from None
+    if row is None:
+        logger.warning(
+            "long_term_memory_access_denied", user_id=current_user.id, entry_id=entry_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Запись памяти не найдена",
+        )
+    return MemoryEntryResponse(id=row.id, key=row.key, value=row.value, updated_at=row.updated_at)
+
+
+@app.delete(
+    "/api/v1/memory/long-term/{entry_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_allowed_origin)],
+)
+async def delete_long_term_memory_entry(
+    entry_id: int,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    """Delete the caller's own long-term memory entry (user-scoped)."""
+    deleted = await memory.delete_long_term_memory(session, current_user.id, entry_id)
+    if not deleted:
+        logger.warning(
+            "long_term_memory_access_denied", user_id=current_user.id, entry_id=entry_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Запись памяти не найдена",
+        )
 
 
 @app.get("/api/v1/chats/{chat_id}/tasks", response_model=list[TaskResponse])

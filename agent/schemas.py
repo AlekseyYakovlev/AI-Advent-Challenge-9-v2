@@ -425,6 +425,36 @@ class ChatMemoryResponse(BaseModel):
     long_term: list[MemoryEntryResponse]
 
 
+class LongTermMemoryUpdate(BaseModel):
+    """Partial update of a long-term memory entry (at least one field)."""
+
+    key: Optional[str] = Field(default=None, max_length=MEMORY_KEY_MAX_LENGTH)
+    value: Optional[str] = Field(default=None, max_length=MEMORY_VALUE_MAX_LENGTH)
+
+    @field_validator("key")
+    @classmethod
+    def _strip_key(cls, value: str | None) -> str | None:
+        """Strip the key and reject a blank one."""
+        return _validate_mcp_text(value)
+
+    @field_validator("value")
+    @classmethod
+    def _check_value(cls, value: str | None) -> str | None:
+        """Reject a whitespace-only value but keep the text verbatim."""
+        if value is None:
+            return None
+        if not value.strip():
+            raise ValueError("must not be empty")
+        return value
+
+    @model_validator(mode="after")
+    def _require_a_field(self) -> "LongTermMemoryUpdate":
+        """Require at least one of key or value."""
+        if self.key is None and self.value is None:
+            raise ValueError("at least one of key or value is required")
+        return self
+
+
 class SaveWorkingMemoryArgs(BaseModel):
     """Tool-call arguments for save_working_memory."""
 
