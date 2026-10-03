@@ -203,6 +203,8 @@ function renderMessages() {
             && Array.isArray(rag.sources) && rag.sources.length > 0) {
             container.appendChild(wrapToolCard(buildRagSourcesBlock(rag)));
         }
+        const detailsBlock = isUser ? null : buildRagDetailsBlock(rag);
+        if (detailsBlock) container.appendChild(wrapToolCard(detailsBlock));
         state.lastConflicts
             .filter((conflict) => conflict.message_id === msg.id)
             .forEach((conflict) => {
@@ -1267,6 +1269,7 @@ async function selectChat(chatId) {
         return;
     }
     disconnectWs(false);
+    closeRagSearchPopover(false);
     state.currentChatId = chatId;
     state.lastStats = null;
     state.lastStatsChatId = null;
@@ -3351,6 +3354,7 @@ function bindEvents() {
     $('rag-kb-select').addEventListener('change', (e) => {
         saveChatRag({ kb_id: e.target.value ? Number(e.target.value) : null });
     });
+    bindRagSearchUi();
     $('rag-k-input').addEventListener('change', (e) => {
         const clamped = Math.min(20, Math.max(1, parseInt(e.target.value, 10) || 5));
         e.target.value = String(clamped);
@@ -3878,6 +3882,7 @@ function renderRagControls() {
         badge.textContent = 'без RAG';
         badge.title = 'без RAG';
         badge.classList.remove('text-yellow-400');
+        closeRagSearchPopover(false);
         return;
     }
 
@@ -3912,9 +3917,107 @@ function renderRagControls() {
     badge.title = text;
     badge.classList.toggle('text-yellow-400', unavailable);
     badge.classList.toggle('text-slate-300', !unavailable);
+    if (!isOn) closeRagSearchPopover(false);
+    renderRagSearchPopover();
 }
 
-async function saveChatRag(patch) {
+function closeRagSearchPopover(returnFocus) {
+    const pop = $('rag-search-popover');
+    const btn = $('rag-search-btn');
+    if (!pop || !btn || pop.classList.contains('hidden')) return;
+    pop.classList.add('hidden');
+    btn.setAttribute('aria-expanded', 'false');
+    if (returnFocus) btn.focus();
+}
+
+function renderRagSearchPopover() {
+    const cfg = state.rag;
+    const btn = $('rag-search-btn');
+    if (!cfg || !btn) return;
+    const candidate = $('rag-candidate-k');
+    candidate.min = String(cfg.top_k || 1);
+    candidate.value = String(cfg.candidate_k || 20);
+
+    const threshold = $('rag-threshold');
+    const note = $('rag-threshold-note');
+    const reset = $('rag-threshold-reset');
+    const hasOverride = typeof cfg.threshold === 'number';
+    if (hasOverride) {
+        threshold.value = cfg.threshold.toFixed(2);
+        note.textContent = '';
+    } else if (typeof cfg.calibrated_threshold === 'number') {
+        threshold.value = cfg.calibrated_threshold.toFixed(2);
+        note.textContent = '(калибр.)';
+    } else {
+        threshold.value = '0.00';
+        note.textContent = '(нет калибровки)';
+    }
+    reset.classList.toggle('hidden', !hasOverride);
+
+    const flags = {
+        'rag-stage-lexical': cfg.lexical,
+        'rag-stage-llm': cfg.llm_rerank,
+        'rag-stage-hybrid': cfg.hybrid,
+        'rag-stage-rewrite': cfg.rewrite,
+    };
+    Object.entries(flags).forEach(([id, value]) => { $(id).checked = Boolean(value); });
+    const anyOn = Object.values(flags).some(Boolean);
+    ['border-indigo-500', 'text-white'].forEach((c) => btn.classList.toggle(c, anyOn));
+    ['border-slate-700', 'text-slate-300'].forEach((c) => btn.classList.toggle(c, !anyOn));
+}
+
+async function saveRagSearchSetting(patch) {
+    await saveChatRag(
+        patch,
+        'Не удалось сохранить настройки поиска. Проверьте соединение и попробуйте снова.',
+    );
+}
+
+function bindRagSearchUi() {
+    const btn = $('rag-search-btn');
+    const pop = $('rag-search-popover');
+    btn.addEventListener('click', () => {
+        const opening = pop.classList.contains('hidden');
+        pop.classList.toggle('hidden', !opening);
+        btn.setAttribute('aria-expanded', String(opening));
+        if (opening) $('rag-candidate-k').focus();
+    });
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !pop.classList.contains('hidden')) closeRagSearchPopover(true);
+    });
+    document.addEventListener('click', (e) => {
+        if (!pop.classList.contains('hidden') && !pop.parentElement.contains(e.target)) {
+            closeRagSearchPopover(false);
+        }
+    });
+    $('rag-candidate-k').addEventListener('change', (e) => {
+        if (!state.rag) return;
+        const low = state.rag.top_k || 1;
+        const clamped = Math.min(50, Math.max(low, parseInt(e.target.value, 10) || low));
+        e.target.value = String(clamped);
+        saveRagSearchSetting({ candidate_k: clamped });
+    });
+    $('rag-threshold').addEventListener('change', (e) => {
+        if (e.target.value.trim() === '') {
+            saveRagSearchSetting({ threshold: null });
+            return;
+        }
+        const parsed = parseFloat(e.target.value);
+        const value = Number.isFinite(parsed) ? Math.round(Math.min(1, Math.max(0, parsed)) * 100) / 100 : 0;
+        saveRagSearchSetting({ threshold: value });
+    });
+    $('rag-threshold-reset').addEventListener('click', () => saveRagSearchSetting({ threshold: null }));
+    [
+        ['rag-stage-lexical', 'lexical'],
+        ['rag-stage-llm', 'llm_rerank'],
+        ['rag-stage-hybrid', 'hybrid'],
+        ['rag-stage-rewrite', 'rewrite'],
+    ].forEach(([id, field]) => {
+        $(id).addEventListener('change', (e) => saveRagSearchSetting({ [field]: e.target.checked }));
+    });
+}
+
+async function saveChatRag(patch, errorText) {
     if (!state.currentChatId || !state.rag) return;
     const chatId = state.currentChatId;
     const prev = state.rag;
@@ -3922,8 +4025,11 @@ async function saveChatRag(patch) {
         mode: prev.mode,
         kb_id: prev.kb_id,
         top_k: prev.top_k,
-        ...patch,
     };
+    ['mode', 'kb_id', 'top_k', 'candidate_k', 'threshold', 'lexical', 'llm_rerank', 'hybrid', 'rewrite']
+        .forEach((key) => {
+            if (key in patch) body[key] = patch[key];
+        });
     try {
         const cfg = await apiFetch(`/api/v1/chats/${chatId}/rag`, {
             method: 'PUT',
@@ -3934,7 +4040,7 @@ async function saveChatRag(patch) {
     } catch (err) {
         if (state.currentChatId !== chatId) return;
         state.rag = prev;
-        showToast('Не удалось сохранить настройки RAG. Проверьте соединение и попробуйте снова.', 'error');
+        showToast(errorText || 'Не удалось сохранить настройки RAG. Проверьте соединение и попробуйте снова.', 'error');
     }
     renderRagControls();
 }
@@ -3942,6 +4048,8 @@ async function saveChatRag(patch) {
 function buildRagMeta(rag) {
     const frag = document.createDocumentFragment();
     const sources = Array.isArray(rag.sources) ? rag.sources : [];
+    const thresholdLine = buildRagThresholdLine(rag);
+    if (thresholdLine) frag.appendChild(thresholdLine);
     if (rag.warning) {
         const warn = mcpEl(
             'div',
@@ -3955,12 +4063,194 @@ function buildRagMeta(rag) {
     if (rag.warning) label = rag.warning.code === 'context_full' ? 'без RAG (нет места в контексте)' : 'без RAG (сбой поиска)';
     else if (rag.mode === 'rag') label = `с RAG · K=${rag.top_k}`;
     frag.appendChild(mcpEl('div', 'mt-1 text-xs text-slate-500', label));
-    if (rag.mode === 'rag' && !rag.warning && sources.length === 0) {
+    if (rag.mode === 'rag' && !rag.warning && sources.length === 0 && rag.verdict !== 'below_threshold') {
         const empty = mcpEl('div', 'text-xs text-slate-500', 'Подходящих фрагментов не найдено');
         empty.title = 'Ответ дан без фрагментов базы знаний. Переформулируйте вопрос или проверьте, что в базе есть нужный документ.';
         frag.appendChild(empty);
     }
     return frag;
+}
+
+function buildRagThresholdLine(rag) {
+    if (!rag || rag.verdict !== 'below_threshold' || !rag.search) return null;
+    const best = Number(rag.search.best_cosine).toFixed(2);
+    const threshold = Number((rag.search.config || {}).threshold).toFixed(2);
+    const line = mcpEl('div', 'mt-2 text-xs text-slate-500', `Фрагменты не прошли порог (лучший ${best} < ${threshold})`);
+    line.setAttribute('role', 'status');
+    line.title = 'Снизьте порог или переформулируйте вопрос. Подробности в «Детали поиска»';
+    return line;
+}
+
+const RAG_SKIP_STAGE_NAMES = {
+    llm: 'LLM-реранк',
+    rewrite: 'Переписывание',
+    hybrid: 'Гибрид (FTS5)',
+    lexical: 'Лексич. реранк',
+};
+
+function ragSkipReasonText(stage, reason) {
+    if (reason === 'timeout') return 'таймаут';
+    if (reason === 'fts_error') return 'ошибка запроса FTS5';
+    if (reason === 'bad_output') {
+        return stage === 'rewrite' ? 'пустой или слишком длинный результат' : 'некорректный ответ модели';
+    }
+    if (reason === 'no_llm' || reason === 'http_error') return 'ошибка запроса к модели';
+    if (reason === 'search_failed') return 'ошибка поиска по переписанному запросу';
+    return String(reason);
+}
+
+function buildRagDetailRow(label, valueNode, extraClass) {
+    const row = mcpEl('div', `flex gap-x-2${extraClass ? ` ${extraClass}` : ''}`);
+    row.appendChild(mcpEl('span', 'text-slate-500 w-24 shrink-0', label));
+    valueNode.classList.add('break-words');
+    row.appendChild(valueNode);
+    return row;
+}
+
+function buildRagStatusCell(cand) {
+    const cell = mcpEl('td', 'px-2 py-1 align-top');
+    const chipBase = 'inline-block rounded-full border border-slate-700 px-2 py-0.5';
+    let chip;
+    if (cand.status === 'in_answer') {
+        chip = mcpEl('span', `${chipBase} bg-slate-700 text-slate-100 font-semibold`, '✓ в ответе');
+    } else if (cand.status === 'below_threshold') {
+        chip = mcpEl('span', `${chipBase} bg-slate-900 text-slate-500`, 'ниже порога');
+    } else if (cand.status === 'outside_top_k') {
+        chip = mcpEl('span', `${chipBase} bg-slate-900 text-slate-500`, 'вне top-K');
+    } else if (cand.status === 'over_budget') {
+        chip = mcpEl('span', `${chipBase} bg-slate-900 text-slate-500`, 'не вошло в бюджет');
+        chip.title = 'Не поместилось в долю контекста, отведённую под RAG';
+    } else {
+        chip = mcpEl('span', `${chipBase} bg-slate-900 text-slate-500`, String(cand.status));
+    }
+    cell.appendChild(chip);
+    if (cand.fts_exempt) {
+        const fts = mcpEl('span', `${chipBase} bg-slate-800 text-slate-300 ml-1`, '≈ прошло по FTS');
+        fts.title = 'Косинус ниже порога, но фрагмент найден по ключевым словам';
+        cell.appendChild(fts);
+    }
+    return cell;
+}
+
+function buildRagCandidatesTable(search) {
+    const stages = Array.isArray(search.stages) ? search.stages : [];
+    const columns = [{ key: 'rank', label: 'было→стало', title: 'Место до реранка → место в финальной выдаче' }, { key: 'cos', label: 'cos' }];
+    if (stages.includes('lexical')) columns.push({ key: 'lex', label: 'lex' });
+    if (stages.includes('hybrid')) columns.push({ key: 'fts', label: 'FTS' });
+    if (stages.includes('llm')) columns.push({ key: 'llm', label: 'LLM' });
+    if (stages.includes('rewrite')) columns.push({ key: 'found', label: 'Запрос' });
+    columns.push({ key: 'source', label: 'Источник' }, { key: 'status', label: 'Статус' });
+
+    const wrap = mcpEl('div', 'overflow-auto max-h-80 rounded-lg border border-slate-700');
+    const table = mcpEl('table', 'w-full text-left border-collapse');
+    const headRow = document.createElement('tr');
+    columns.forEach((col) => {
+        const th = mcpEl('th', 'px-2 py-1', col.label);
+        th.setAttribute('scope', 'col');
+        if (col.title) th.title = col.title;
+        headRow.appendChild(th);
+    });
+    const thead = mcpEl('thead', 'sticky top-0 bg-slate-800 text-slate-300 font-semibold');
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+
+    const num = (value) => (value === null || value === undefined ? '—' : Number(value).toFixed(2));
+    const foundText = { original: 'исходный', rewritten: 'переписан', both: 'оба' };
+    const tbody = document.createElement('tbody');
+    search.candidates.forEach((cand) => {
+        const inAnswer = cand.status === 'in_answer';
+        const tr = mcpEl('tr', `border-t border-slate-800 ${inAnswer ? 'text-slate-200' : 'text-slate-500'}`);
+        columns.forEach((col) => {
+            if (col.key === 'status') {
+                tr.appendChild(buildRagStatusCell(cand));
+                return;
+            }
+            if (col.key === 'source') {
+                const td = mcpEl('td', 'px-2 py-1 align-top');
+                const full = cand.section ? `${cand.file || ''} · ${cand.section}` : (cand.file || '');
+                const name = mcpEl('span', 'truncate max-w-[10rem] inline-block align-bottom', full);
+                name.title = full;
+                td.appendChild(name);
+                td.appendChild(mcpEl('span', 'font-mono text-slate-500 ml-1', String(cand.chunk_id)));
+                tr.appendChild(td);
+                return;
+            }
+            let text = '';
+            let cls = 'px-2 py-1 align-top text-right tabular-nums';
+            if (col.key === 'rank') {
+                const after = cand.rank_after === null || cand.rank_after === undefined ? '—' : cand.rank_after;
+                text = `${cand.rank_before}→${after}`;
+            } else if (col.key === 'cos') {
+                text = num(cand.cos);
+                if (inAnswer) cls += ' text-slate-200';
+            } else if (col.key === 'lex') {
+                text = num(cand.lex);
+            } else if (col.key === 'fts') {
+                text = cand.fts_rank === null || cand.fts_rank === undefined ? '—' : String(cand.fts_rank);
+            } else if (col.key === 'llm') {
+                text = num(cand.llm);
+            } else if (col.key === 'found') {
+                text = foundText[cand.found_by] || String(cand.found_by || '');
+                cls = 'px-2 py-1 align-top';
+            }
+            tr.appendChild(mcpEl('td', cls, text));
+        });
+        tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    return wrap;
+}
+
+function buildRagDetailsBlock(rag) {
+    if (!rag || !rag.search) return null;
+    const search = rag.search;
+    const stages = Array.isArray(search.stages) ? search.stages : [];
+    const candidates = Array.isArray(search.candidates) ? search.candidates : [];
+    const details = mcpEl(
+        'details',
+        'rag-details rounded-lg border border-slate-700 bg-slate-900 text-xs text-slate-300 px-3 py-2 mt-2 max-w-[75%]',
+    );
+    details.appendChild(mcpEl(
+        'summary',
+        'cursor-pointer select-none font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500',
+        'Детали поиска',
+    ));
+    const body = mcpEl('div', 'mt-2 space-y-2');
+
+    body.appendChild(buildRagDetailRow('Запрос:', mcpEl('span', 'text-slate-300', search.query || '')));
+    if (typeof search.rewritten === 'string' && search.rewritten) {
+        body.appendChild(buildRagDetailRow('Переписан:', mcpEl('span', 'text-slate-300', search.rewritten)));
+    }
+
+    const stageValue = mcpEl('span', 'text-slate-300');
+    const parts = [mcpEl('span', '', `порог ${Number((search.config || {}).threshold).toFixed(2)}`)];
+    [['lexical', 'лексич.'], ['llm', 'LLM'], ['hybrid', 'FTS5'], ['rewrite', 'rewrite']].forEach(([key, text]) => {
+        if (stages.includes(key)) parts.push(mcpEl('span', 'font-semibold text-slate-200', text));
+    });
+    const finalCount = candidates.filter((c) => c.status === 'in_answer').length;
+    parts.push(mcpEl('span', '', `${candidates.length}→${finalCount}`));
+    parts.push(mcpEl('span', '', `${search.latency_ms} мс`));
+    parts.forEach((part, idx) => {
+        if (idx > 0) stageValue.appendChild(document.createTextNode(' · '));
+        stageValue.appendChild(part);
+    });
+    body.appendChild(buildRagDetailRow('Этапы:', stageValue));
+
+    (Array.isArray(search.skipped) ? search.skipped : []).forEach((skip) => {
+        const name = RAG_SKIP_STAGE_NAMES[skip.stage] || String(skip.stage);
+        const verb = skip.stage === 'rewrite' ? 'пропущено' : 'пропущен';
+        const text = `↷ ${name}: ${verb} (${ragSkipReasonText(skip.stage, skip.reason)})`;
+        body.appendChild(buildRagDetailRow('Пропущено:', mcpEl('span', 'text-slate-400', text), 'text-slate-400'));
+    });
+
+    if (candidates.length === 0) {
+        body.appendChild(mcpEl('div', 'text-slate-500', 'Кандидатов нет: в базе нечего сравнивать'));
+    } else {
+        body.appendChild(buildRagCandidatesTable({ ...search, candidates }));
+    }
+    details.appendChild(body);
+    return details;
 }
 
 function buildRagSourcesBlock(rag) {
