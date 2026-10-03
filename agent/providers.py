@@ -360,8 +360,28 @@ def _parse_models(data: Any, *, lm_studio: bool) -> list[dict[str, Any]]:
         if not isinstance(item, dict) or "id" not in item:
             raise ValueError("model entry without id")
         loaded = bool(item.get("loaded", False)) if lm_studio else None
-        models.append({"id": str(item["id"]), "loaded": loaded})
+        entry: dict[str, Any] = {"id": str(item["id"]), "loaded": loaded}
+        if item.get("type"):
+            entry["type"] = str(item["type"])
+        models.append(entry)
     return models
+
+
+async def _lm_studio_types(base_url: str, timeout: float) -> dict[str, str]:
+    """Best-effort map of LM Studio model id to type from /api/v0/models."""
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(f"{normalize_base_url(base_url)}/api/v0/models")
+            response.raise_for_status()
+            data = response.json().get("data", [])
+        return {
+            str(item["id"]): str(item["type"])
+            for item in data
+            if isinstance(item, dict) and item.get("id") and item.get("type")
+        }
+    except Exception as exc:  # noqa: BLE001 - enrichment must never break model listing
+        logger.info("lm_studio_model_types_unavailable", error=type(exc).__name__)
+        return {}
 
 
 async def _fetch_models(row: LlmProvider, key: str | None) -> list[dict[str, Any]]:
@@ -369,6 +389,11 @@ async def _fetch_models(row: LlmProvider, key: str | None) -> list[dict[str, Any
     timeout = settings.LLM_PROVIDER_CHECK_TIMEOUT
     if row.kind == KIND_LM_STUDIO:
         data = await asyncio.wait_for(get_lm_studio_client(row.base_url).list_models(), timeout)
+        types = await _lm_studio_types(row.base_url, timeout)
+        if types and isinstance(data, list):
+            for item in data:
+                if isinstance(item, dict) and item.get("id") in types:
+                    item["type"] = types[item["id"]]
         return _parse_models(data, lm_studio=True)
 
     headers = {"Authorization": f"Bearer {key}"} if key else {}

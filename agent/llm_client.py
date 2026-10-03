@@ -244,6 +244,11 @@ class LMStudioClient:
         self._current_loaded_model: str | None = None
         self._instance_ids: dict[str, str] = {}
 
+    @property
+    def model_switch_lock(self) -> asyncio.Lock:
+        """Lock serializing model load/unload requests against this LM Studio host."""
+        return self._model_switch_lock
+
     async def list_models(self) -> list[dict[str, Any]]:
         """Return available models from the OpenAI-compatible endpoint."""
         url = f"{self._openai_base}/models"
