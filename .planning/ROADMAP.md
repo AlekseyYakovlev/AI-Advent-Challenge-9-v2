@@ -223,7 +223,7 @@ Plans:
 
 **Wave 8** *(blocked on Wave 7 completion)*
 
-- [ ] 15-10-PLAN.md — live 7-run ablation on the Day 22 winner and manual verdicts (requires Phase 14 plan 14-07)
+- [x] 15-10-PLAN.md — live 7-run ablation on the Day 22 winner and manual verdicts (requires Phase 14 plan 14-07)
 
 **Wave 9** *(blocked on Wave 8 completion)*
 
@@ -285,7 +285,7 @@ Plans:
 | 11. Edit and delete long-term memory entries via UI (Day 21) | v3.0 | 4/4 | Complete    | 2026-10-03 |
 | 13. Knowledge base indexing (Day 21) | v3.0 | 8/8 | Complete   | 2026-10-03 |
 | 14. First RAG query (Day 22) | v3.0 | 8/8 | Complete    | 2026-10-03 |
-| 15. Reranking and filtering (Day 23) | v3.0 | 10/13 | In Progress|  |
+| 15. Reranking and filtering (Day 23) | v3.0 | 11/13 | In Progress|  |
 | 16. Citations and anti-hallucination (Day 24) | v3.0 | 0/TBD | Not started | - |
 | 17. Mini-chat with RAG and task memory (Day 25) | v3.0 | 0/TBD | Not started | - |
 
