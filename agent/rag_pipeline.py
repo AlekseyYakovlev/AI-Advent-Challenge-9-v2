@@ -15,6 +15,7 @@ from agent.rag_llm import llm_rerank, rewrite_query
 from agent.rag_rank import (
     RERANK_TOP_N,
     article_numbers,
+    contains_number,
     lexical_rerank,
     lexical_score,
     parse_article,
@@ -227,7 +228,7 @@ def _earns_fts_exemption(question: str, chunk: dict[str, Any]) -> bool:
     chunk_articles = {parse_article(chunk.get("section")), parse_article(chunk.get("title"))}
     text: str = chunk.get("text") or ""
     for number in article_numbers(question):
-        if number in chunk_articles or number in text:
+        if number in chunk_articles or contains_number(text, number):
             return True
     return lexical_score(question, chunk) >= FTS_EXEMPT_MIN_LEXICAL
 

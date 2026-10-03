@@ -68,7 +68,7 @@ def parse_article(text: str | None) -> str | None:
     return matches[-1] if matches else None
 
 
-def _contains_number(text: str, number: str) -> bool:
+def contains_number(text: str, number: str) -> bool:
     """True when the number occurs as a whole token, not inside a longer number."""
     pattern = r"(?<!\d)(?<!\d\.)" + re.escape(number) + r"(?!\d|\.\d)"
     return re.search(pattern, text) is not None
@@ -89,7 +89,7 @@ def lexical_score(query: str, chunk: dict[str, Any]) -> float:
         chunk_articles = {parse_article(section), parse_article(title)}
         if any(number in chunk_articles for number in numbers):
             article_match = 1.0
-        elif any(_contains_number(text, number) for number in numbers):
+        elif any(contains_number(text, number) for number in numbers):
             article_match = ARTICLE_TEXT_ONLY_SCORE
     return min(1.0, LEX_OVERLAP_WEIGHT * overlap + LEX_ARTICLE_WEIGHT * article_match)
 
