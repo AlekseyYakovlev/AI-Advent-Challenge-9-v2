@@ -114,7 +114,7 @@ async def test_rerank_single_call_for_fifteen_chunks() -> None:
 
 
 async def test_rerank_retry_makes_two_calls() -> None:
-    client = FakeClient(_status_error(422), _result("[1] 7\n[2] 3"))
+    client = FakeClient(_status_error(422), _result("1: 7\n2: 3"))
     outcome = await llm_rerank(client, "m", QUESTION, _chunks(2))
     assert len(client.calls) == 2
     assert outcome == StageOutcome([7.0, 3.0], None)
@@ -136,7 +136,7 @@ async def test_rerank_http_error_and_timeout(monkeypatch: pytest.MonkeyPatch) ->
     assert err == StageOutcome(None, "http_error")
     monkeypatch.setattr(settings, "RAG_LLM_STAGE_TIMEOUT", 0.01)
     slow = await llm_rerank(
-        FakeClient(_result("[1] 1\n[2] 2"), delay=1.0), "m", QUESTION, _chunks(2)
+        FakeClient(_result("1: 1\n2: 2"), delay=1.0), "m", QUESTION, _chunks(2)
     )
     assert slow == StageOutcome(None, "timeout")
     assert rag_llm.STAGE_TEMPERATURE == 0.0
