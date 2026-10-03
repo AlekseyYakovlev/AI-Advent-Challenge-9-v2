@@ -4,6 +4,7 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from agent.context_engine import _message_tokens
@@ -144,6 +145,10 @@ async def prepare_rag_turn(
         )
     except Exception as exc:
         logger.error("rag_turn_failed", chat_id=chat_id, error=type(exc).__name__)
+        if isinstance(exc, SQLAlchemyError):
+            # The user message is already committed; reset a possibly failed transaction
+            # so the shared session stays usable for persisting the reply.
+            await session.rollback()
         turn = RagTurn(
             MODE_RAG,
             _payload(
