@@ -231,9 +231,8 @@ async def _lexical_stage(
     """Reorder survivors by fused cosine and lexical score."""
     started = time.perf_counter()
     try:
-        order, lex_scores = await asyncio.to_thread(
-            lexical_rerank, question, [item.chunk for item in survivors]
-        )
+        chunks = [item.chunk for item in survivors]
+        order, lex_scores = await asyncio.to_thread(lexical_rerank, question, chunks)
     except asyncio.CancelledError:
         raise
     except Exception as exc:
