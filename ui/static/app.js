@@ -3841,6 +3841,7 @@ async function loadChatRag(chatId) {
         if (state.currentChatId !== chatId) return;
         state.rag = cfg;
     } catch (err) {
+        if (state.currentChatId !== chatId) return;
         state.rag = null;
     }
     renderRagControls();
@@ -3915,6 +3916,7 @@ function renderRagControls() {
 
 async function saveChatRag(patch) {
     if (!state.currentChatId || !state.rag) return;
+    const chatId = state.currentChatId;
     const prev = state.rag;
     const body = {
         mode: prev.mode,
@@ -3923,11 +3925,14 @@ async function saveChatRag(patch) {
         ...patch,
     };
     try {
-        state.rag = await apiFetch(`/api/v1/chats/${state.currentChatId}/rag`, {
+        const cfg = await apiFetch(`/api/v1/chats/${chatId}/rag`, {
             method: 'PUT',
             body: JSON.stringify(body),
         });
+        if (state.currentChatId !== chatId) return;
+        state.rag = cfg;
     } catch (err) {
+        if (state.currentChatId !== chatId) return;
         state.rag = prev;
         showToast('Не удалось сохранить настройки RAG. Проверьте соединение и попробуйте снова.', 'error');
     }
