@@ -4,9 +4,15 @@ import pytest
 
 from agent import kb_search
 from agent.kb_indexer import run_index_job
-from agent.kb_search import KbIndexCorruptError, KbNotReadyError, search_kb
+from agent.kb_search import (
+    EmbeddingDimMismatchError,
+    KbIndexCorruptError,
+    KbNotReadyError,
+    search_kb,
+)
 from agent.state import cleanup_kb_caches, kb_index_cache
 from kb_helpers import (
+    DIM,
     NOMIC,
     RU_TEXT,
     chunk_rows,
@@ -143,3 +149,18 @@ async def test_foreign_chunk_ids_are_not_returned(monkeypatch: pytest.MonkeyPatc
     assert results
     assert {r["chunk_id"] for r in results} <= a_chunk_ids
     assert b_ids
+
+
+async def test_wrong_query_dimension_raises_dim_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    _, kb_id = await _ready_kb(monkeypatch)
+
+    async def wrong_dim(model_id: str, query: str, *args: object) -> list[float]:
+        return [0.1] * (DIM + 1)
+
+    monkeypatch.setattr(kb_search, "embed_query", wrong_dim)
+    async with async_session_factory() as session:
+        kb = await session.get(KnowledgeBase, kb_id)
+        with pytest.raises(EmbeddingDimMismatchError) as info:
+            await search_kb(session, kb, "q", 3)
+    assert isinstance(info.value, KbIndexCorruptError)
+    assert info.value.message == kb_search.MSG_DIM_MISMATCH

@@ -48,6 +48,8 @@ class Settings(BaseSettings):
     KB_STORAGE_DIR: str = ""
     # Per-request timeout for embeddings and embedding-model loads (separate from LLM_TIMEOUT).
     KB_EMBED_TIMEOUT: float = 120.0
+    # Bound on the query embedding during a chat turn so RAG cannot stall a reply.
+    RAG_EMBED_TIMEOUT: float = 30.0
 
 
 settings = Settings()
