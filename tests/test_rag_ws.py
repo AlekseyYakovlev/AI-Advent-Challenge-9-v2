@@ -1,5 +1,6 @@
 """WebSocket turn tests for RAG: the outbound request is captured with respx."""
 
+import functools
 import json
 from typing import Any
 
@@ -13,6 +14,7 @@ from agent import kb_search
 from agent.embeddings import EmbeddingError
 from agent.kb_indexer import run_index_job
 from agent.main import app
+from agent.rag import NO_FRAGMENTS_INSTRUCTION
 from kb_helpers import DIM, get_kb, install_fake_embedder, seed_kb, vector_for
 from shared.config import settings
 from shared.database import async_session_factory
@@ -74,9 +76,17 @@ async def _ready_kb(user_id: int) -> int:
     return kb_id
 
 
-async def _set_config(chat_id: int, kb_id: int | None, mode: str = "rag", top_k: int = 3) -> None:
+async def _set_config(
+    chat_id: int,
+    kb_id: int | None,
+    mode: str = "rag",
+    top_k: int = 3,
+    **flags: Any,
+) -> None:
     async with async_session_factory() as session:
-        session.add(ChatRagConfig(chat_id=chat_id, kb_id=kb_id, mode=mode, top_k=top_k))
+        session.add(
+            ChatRagConfig(chat_id=chat_id, kb_id=kb_id, mode=mode, top_k=top_k, **flags)
+        )
         await session.commit()
 
 
@@ -101,14 +111,19 @@ def _last_user_content(request_body: dict[str, Any]) -> str:
 
 
 def _open_rag_chat(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch, *, mode: str = "rag", top_k: int = 3
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    mode: str = "rag",
+    top_k: int = 3,
+    **flags: Any,
 ) -> int:
     install_fake_embedder(monkeypatch)
     _patch_query(monkeypatch)
     user_id = login_test_client(client)
     kb_id = client.portal.call(_ready_kb, user_id)
     chat_id = client.post("/api/v1/chats", json={"title": "RAG"}).json()["id"]
-    client.portal.call(_set_config, chat_id, kb_id, mode, top_k)
+    client.portal.call(functools.partial(_set_config, chat_id, kb_id, mode, top_k, **flags))
     return chat_id
 
 
@@ -247,3 +262,109 @@ def test_no_compression_never_deletes_user_message(monkeypatch: pytest.MonkeyPat
         assert (rag["warning"] or {}).get("code") == "context_full" or fitted
         rows = client.portal.call(_messages, chat_id)
         assert [m.content for m in rows if m.role == "user"][-1] == QUESTION
+
+
+def _stage_route(captured: list[dict[str, Any]], *, stage_ok: bool) -> respx.Route:
+    """Serve stage calls (stream false) as JSON or 500, and answer streams as SSE."""
+
+    def _side_effect(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        captured.append(body)
+        if body.get("stream") is False:
+            if not stage_ok:
+                return httpx.Response(500, json={"error": "boom"})
+            content = "значение раздела номер 3"
+            return httpx.Response(
+                200, json={"choices": [{"message": {"content": content}, "finish_reason": "stop"}]}
+            )
+        return _plain_content_response("Ответ готов.")
+
+    return respx.post(f"{BASE_URL}/v1/chat/completions").mock(side_effect=_side_effect)
+
+
+@respx.mock
+def test_done_frame_carries_search_trace_v2(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: list[dict[str, Any]] = []
+    _recording_route(captured)
+    with TestClient(app) as client:
+        chat_id = _open_rag_chat(client, monkeypatch)
+        with client.websocket_connect(
+            f"/ws/chat/{chat_id}", headers={"Origin": WS_ORIGIN}
+        ) as ws:
+            frames = _send_and_drain(ws, QUESTION)
+        rag = frames[-1]["rag"]
+        assert rag["v"] == 2
+        assert rag["verdict"] == "ok"
+        assert rag["search"]["candidates"]
+        assert rag["search"]["query"] == QUESTION
+        stored = json.loads(client.portal.call(_messages, chat_id)[-1].rag_sources)
+        assert stored["verdict"] == rag["verdict"]
+        assert len(stored["search"]["candidates"]) == len(rag["search"]["candidates"])
+
+
+@respx.mock
+def test_below_threshold_turn_still_answers_with_note(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: list[dict[str, Any]] = []
+    _recording_route(captured)
+    with TestClient(app) as client:
+        chat_id = _open_rag_chat(client, monkeypatch, threshold=0.99)
+        with client.websocket_connect(
+            f"/ws/chat/{chat_id}", headers={"Origin": WS_ORIGIN}
+        ) as ws:
+            frames = _send_and_drain(ws, QUESTION)
+        done = frames[-1]
+        assert done["type"] == "done"
+        assert done["rag"]["verdict"] == "below_threshold"
+        assert done["rag"]["warning"] is None
+        outbound = _last_user_content(captured[0])
+        assert NO_FRAGMENTS_INSTRUCTION in outbound
+        assert BLOCK_MARK not in outbound
+        rows = client.portal.call(_messages, chat_id)
+        assert [m.content for m in rows if m.role == "user"] == [QUESTION]
+
+
+@respx.mock
+def test_rewrite_runs_through_answer_client_before_stream(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: list[dict[str, Any]] = []
+    _stage_route(captured, stage_ok=True)
+    with TestClient(app) as client:
+        chat_id = _open_rag_chat(client, monkeypatch, rewrite=True)
+        with client.websocket_connect(
+            f"/ws/chat/{chat_id}", headers={"Origin": WS_ORIGIN}
+        ) as ws:
+            frames = _send_and_drain(ws, QUESTION)
+        assert frames[-1]["type"] == "done"
+    assert captured[0]["stream"] is False
+    assert captured[0]["model"] == MODEL
+    assert captured[-1].get("stream") is not False
+
+
+@respx.mock
+def test_llm_rerank_failure_is_trace_only_skip(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: list[dict[str, Any]] = []
+    _stage_route(captured, stage_ok=False)
+    with TestClient(app) as client:
+        chat_id = _open_rag_chat(client, monkeypatch, llm_rerank=True)
+        with client.websocket_connect(
+            f"/ws/chat/{chat_id}", headers={"Origin": WS_ORIGIN}
+        ) as ws:
+            frames = _send_and_drain(ws, QUESTION)
+        rag = frames[-1]["rag"]
+        assert frames[-1]["type"] == "done"
+        assert rag["warning"] is None
+        assert any(item["stage"] == "llm" for item in rag["search"]["skipped"])
+
+
+@respx.mock
+def test_rag_off_turn_has_off_verdict_and_no_search() -> None:
+    captured: list[dict[str, Any]] = []
+    _recording_route(captured)
+    with TestClient(app) as client:
+        login_test_client(client)
+        chat_id = client.post("/api/v1/chats", json={"title": "Plain"}).json()["id"]
+        with client.websocket_connect(
+            f"/ws/chat/{chat_id}", headers={"Origin": WS_ORIGIN}
+        ) as ws:
+            frames = _send_and_drain(ws, "привет")
+        assert frames[-1]["rag"]["verdict"] == "off"
+        assert frames[-1]["rag"]["search"] is None

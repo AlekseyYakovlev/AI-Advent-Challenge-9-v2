@@ -801,6 +801,8 @@ async def _handle_chat_message(
                 effective.context_length,
                 max_tokens,
                 schema_tokens,
+                client=client,
+                model=payload.model,
             )
 
             assistant_text = ""
