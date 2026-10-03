@@ -15,9 +15,9 @@
     }
   ],
   "cited_sources": [],
-  "answer": "",
+  "answer": "Нет, эксплуатировать автомобиль без полиса ОСАГО **запрещено**.\n\n*   **Штраф:** 800 рублей (ст. 12.37 КоАП РФ).\n*   **Риск:** При ДТП вы несете полную материальную ответственность за ущерб всем пострадавшим.",
   "error": null,
-  "finish_reason": "length",
+  "finish_reason": "stop",
   "has_reasoning": true,
-  "completion_tokens": 1024
+  "completion_tokens": 2315
 }

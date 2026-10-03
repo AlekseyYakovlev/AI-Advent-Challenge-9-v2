@@ -15,9 +15,9 @@
     }
   ],
   "cited_sources": [],
-  "answer": "",
+  "answer": "Штраф составляет **500 рублей** (ст. 12.6 ч. 1 КоАП РФ).",
   "error": null,
-  "finish_reason": "length",
+  "finish_reason": "stop",
   "has_reasoning": true,
-  "completion_tokens": 1024
+  "completion_tokens": 886
 }

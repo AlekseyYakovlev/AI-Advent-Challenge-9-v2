@@ -15,9 +15,9 @@
     }
   ],
   "cited_sources": [],
-  "answer": "",
+  "answer": "Наступает административная ответственность по ст. 12.8 КоАП РФ.\n\nНаказание:\n*   Штраф — 30 000 рублей;\n*   Лишение прав на срок от 1,5 до 2 лет;\n*   Административный арест до 15 суток.",
   "error": null,
-  "finish_reason": "length",
+  "finish_reason": "stop",
   "has_reasoning": true,
-  "completion_tokens": 1024
+  "completion_tokens": 1406
 }

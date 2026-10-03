@@ -15,9 +15,9 @@
     }
   ],
   "cited_sources": [],
-  "answer": "",
+  "answer": "Согласно ст. 12.9 ч. 3 КоАП РФ:\nШтраф от **5 000 до 15 000 рублей**.\n\nТакже возможно лишение прав на срок до 1,5 года или административный арест до 15 суток.",
   "error": null,
-  "finish_reason": "length",
+  "finish_reason": "stop",
   "has_reasoning": true,
-  "completion_tokens": 1024
+  "completion_tokens": 3165
 }

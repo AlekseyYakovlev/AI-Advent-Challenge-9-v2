@@ -10,7 +10,7 @@
   ],
   "temperature": 0.0,
   "context_length": 16384,
-  "max_tokens": 1024,
+  "max_tokens": 4096,
   "identical_chunking": true,
   "kbs": {
     "nomic": {

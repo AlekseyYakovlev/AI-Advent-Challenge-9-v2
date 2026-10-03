@@ -15,9 +15,9 @@
     }
   ],
   "cited_sources": [],
-  "answer": "",
+  "answer": "Право управления легковым автомобилем (категория «B») получают с **18 лет**.\n\nШтраф за управление без прав (ст. 12.7 КоАП РФ):\n*   **5 000 – 15 000 рублей.**\n*   Также возможна конфискация автомобиля на срок до 3 месяцев.",
   "error": null,
-  "finish_reason": "length",
+  "finish_reason": "stop",
   "has_reasoning": true,
-  "completion_tokens": 1024
+  "completion_tokens": 721
 }

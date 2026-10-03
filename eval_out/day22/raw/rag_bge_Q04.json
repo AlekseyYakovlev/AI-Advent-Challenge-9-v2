@@ -82,9 +82,9 @@
   "cited_sources": [
     "[1] Kodex_ot_30_12_2001_N_195-FZ_Kodex_Rossiyskoy_Federatsii_ob_administrativnyh_pravonarusheniyah_s..._Text.pdf / Раздел II > Глава 12 > Статья 12.9"
   ],
-  "answer": "За превышение скорости на величину более 40, но не более 60 км/ч предусмотрен штраф в размере от 1500 до 2250 рублей [1].",
+  "answer": "За превышение установленной скорости движения на величину более 40, но не более 60 км/ч предусмотрен штраф от 1500 до 2250 рублей [1].",
   "error": null,
   "finish_reason": "stop",
   "has_reasoning": true,
-  "completion_tokens": 936
+  "completion_tokens": 990
 }

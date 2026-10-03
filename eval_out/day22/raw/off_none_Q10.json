@@ -15,9 +15,9 @@
     }
   ],
   "cited_sources": [],
-  "answer": "Базовый тариф ОСАГО для легковых автомобилей составляет **19%**.\nКоэффициент бонус-малус (KBM) за отсутствие аварий — **0,5**.",
+  "answer": "",
   "error": null,
-  "finish_reason": "stop",
+  "finish_reason": "length",
   "has_reasoning": true,
-  "completion_tokens": 982
+  "completion_tokens": 4096
 }

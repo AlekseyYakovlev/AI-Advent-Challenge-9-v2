@@ -15,9 +15,9 @@
     }
   ],
   "cited_sources": [],
-  "answer": "Да, подлежат обязательному периодическому техническому осмотру.",
+  "answer": "Да, транспортные средства в эксплуатации подлежат обязательному периодическому техническому осмотру.",
   "error": null,
   "finish_reason": "stop",
   "has_reasoning": true,
-  "completion_tokens": 673
+  "completion_tokens": 678
 }

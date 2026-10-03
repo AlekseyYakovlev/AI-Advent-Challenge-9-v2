@@ -84,5 +84,5 @@
   "error": null,
   "finish_reason": "stop",
   "has_reasoning": true,
-  "completion_tokens": 830
+  "completion_tokens": 822
 }
