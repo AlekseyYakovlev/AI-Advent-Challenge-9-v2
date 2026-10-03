@@ -25,6 +25,7 @@ from agent.dependencies import get_current_user_ws
 from agent import invariants, tasks
 from agent.llm_client import LLMClient, count_tokens
 from agent.mcp_tools import McpToolset, build_mcp_toolset
+from agent.rag_turn import RagTurn, prepare_rag_turn
 from agent.providers import ProviderUnavailableError, resolve_client
 from agent.state import (
     CORS_ORIGINS,
@@ -211,6 +212,7 @@ async def _persist_assistant_message(
     content: str,
     *,
     tool_trace: str | None = None,
+    rag_sources: str | None = None,
 ) -> Message:
     """Insert an assistant message and advance the chat leaf."""
     assistant_msg = Message(
@@ -220,6 +222,7 @@ async def _persist_assistant_message(
         content=content,
         token_count=count_tokens(content),
         tool_trace=tool_trace,
+        rag_sources=rag_sources,
     )
     session.add(assistant_msg)
     await session.flush()
@@ -785,6 +788,21 @@ async def _handle_chat_message(
                     "content": llm_messages[0]["content"] + suffix,
                 }
 
+            # Budgeted after the system prompt and tool schemas are final, and merged only
+            # into the outbound copy, so fragments never reach the compression strategy.
+            schema_tokens = (
+                count_tokens(json.dumps(tool_schemas, ensure_ascii=False)) if tool_schemas else 0
+            )
+            rag_turn: RagTurn = await prepare_rag_turn(
+                session,
+                chat,
+                payload.content,
+                llm_messages,
+                effective.context_length,
+                max_tokens,
+                schema_tokens,
+            )
+
             assistant_text = ""
             pending_tool_calls: list[dict[str, Any]] = []
             stream_task = asyncio.current_task()
@@ -972,6 +990,7 @@ async def _handle_chat_message(
                 user_msg.id,
                 assistant_text,
                 tool_trace=tool_trace,
+                rag_sources=rag_turn.sources_json,
             )
 
             conflict_payload: dict[str, Any] | None = None
@@ -1024,6 +1043,7 @@ async def _handle_chat_message(
                     "memory_writes": memory_writes,
                     "task_writes": task_writes,
                     "invariant_conflict": conflict_payload,
+                    "rag": rag_turn.done_payload,
                 },
             )
 
