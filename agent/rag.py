@@ -13,6 +13,7 @@ from agent.kb_search import (
     KbIndexCorruptError,
     KbNotReadyError,
     search_kb,
+    search_kb_vectors,
 )
 from agent.llm_client import count_tokens
 from shared.config import settings
@@ -102,6 +103,19 @@ class RagFailure(Exception):
         self.text = text
 
 
+def _failure_for(exc: BaseException) -> tuple[str, str]:
+    """Map a search exception to a stable failure code and its user-facing text."""
+    if isinstance(exc, KbNotReadyError):
+        return "kb_not_ready", MSG_KB_NOT_READY
+    if isinstance(exc, EmbeddingDimMismatchError):
+        return "dim_mismatch", MSG_DIM_MISMATCH_WARNING
+    if isinstance(exc, KbIndexCorruptError):
+        return "index_corrupt", MSG_INDEX_CORRUPT_WARNING
+    if isinstance(exc, (EmbeddingError, asyncio.TimeoutError)):
+        return "embedder_unavailable", MSG_EMBEDDER_UNAVAILABLE
+    return "retrieval_failed", MSG_RETRIEVAL_FAILED
+
+
 async def retrieve(
     session: AsyncSession, kb: KnowledgeBase | None, query: str, top_k: int
 ) -> list[dict[str, Any]]:
@@ -116,21 +130,34 @@ async def retrieve(
         )
     except asyncio.CancelledError:
         raise
-    except KbNotReadyError as exc:
-        code, text, failure = "kb_not_ready", MSG_KB_NOT_READY, exc
-    except EmbeddingDimMismatchError as exc:
-        code, text, failure = "dim_mismatch", MSG_DIM_MISMATCH_WARNING, exc
-    except KbIndexCorruptError as exc:
-        code, text, failure = "index_corrupt", MSG_INDEX_CORRUPT_WARNING, exc
-    except (EmbeddingError, asyncio.TimeoutError) as exc:
-        code, text, failure = "embedder_unavailable", MSG_EMBEDDER_UNAVAILABLE, exc
     except Exception as exc:
-        code, text, failure = "retrieval_failed", MSG_RETRIEVAL_FAILED, exc
-    else:
-        logger.info("rag_retrieved", kb_id=kb_id, top_k=top_k, results=len(results))
-        return results
-    logger.warning("rag_retrieve_failed", kb_id=kb_id, code=code, error=type(failure).__name__)
-    raise RagFailure(code, text) from failure
+        code, text = _failure_for(exc)
+        logger.warning("rag_retrieve_failed", kb_id=kb_id, code=code, error=type(exc).__name__)
+        raise RagFailure(code, text) from exc
+    logger.info("rag_retrieved", kb_id=kb_id, top_k=top_k, results=len(results))
+    return results
+
+
+async def retrieve_vectors(
+    session: AsyncSession, kb: KnowledgeBase | None, query: str, top_k: int
+) -> tuple[list[dict[str, Any]], Any]:
+    """Like retrieve, but also return row ids per chunk and the normalised query vector."""
+    if kb is None:
+        raise RagFailure("kb_deleted", MSG_KB_DELETED)
+    kb_id = kb.id
+    try:
+        results, vector = await asyncio.wait_for(
+            search_kb_vectors(session, kb, query, top_k),
+            timeout=settings.RAG_EMBED_TIMEOUT,
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        code, text = _failure_for(exc)
+        logger.warning("rag_retrieve_failed", kb_id=kb_id, code=code, error=type(exc).__name__)
+        raise RagFailure(code, text) from exc
+    logger.info("rag_retrieved", kb_id=kb_id, top_k=top_k, results=len(results))
+    return results, vector
 
 
 def rag_budget(context_length: int, used_tokens: int, max_tokens: int) -> int:
