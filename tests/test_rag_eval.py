@@ -522,8 +522,16 @@ async def test_calibrate_refuses_draft_fixture(
 ) -> None:
     monkeypatch.setenv("DB_PATH", str(tmp_path / "keep.db"))
     monkeypatch.setenv("KB_STORAGE_DIR", str(tmp_path / "keep_kb"))
+    draft = tmp_path / "draft_calibration.json"
+    draft.write_text(
+        json.dumps({"version": 1, "status": "draft", "frozen_at": None, "questions": []}),
+        encoding="utf-8",
+    )
     args = rag_eval.build_parser().parse_args(
-        ["calibrate", "--kb", "bge=2", "--db", str(tmp_path / "x.db"), "--out", str(tmp_path)]
+        [
+            "calibrate", "--kb", "bge=2", "--db", str(tmp_path / "x.db"),
+            "--out", str(tmp_path), "--fixture", str(draft),
+        ]
     )
     with pytest.raises(SystemExit) as exc:
         await rag_eval.calibrate_command(args)
