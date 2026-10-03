@@ -59,6 +59,8 @@ from agent import scheduler_tools  # noqa: F401  (registers the scheduler LLM to
 from agent.events import ws_events
 from agent.scheduler import scheduler
 from agent.kb_api import router as kb_router
+from agent.rag import parse_rag_payload
+from agent.rag_api import router as rag_router
 from agent.providers_api import router as providers_router
 from agent.scheduler_api import router as scheduler_router
 from agent.ws import ws_chat
@@ -359,6 +361,9 @@ def _chat_to_response(chat: Chat) -> ChatResponse:
 
 def _message_to_response(message: Message) -> MessageResponse:
     """Map a Message ORM row to the API response schema."""
+    rag_sources = parse_rag_payload(message.rag_sources)
+    if message.rag_sources and rag_sources is None:
+        logger.warning("rag_sources_parse_failed", message_id=message.id)
     return MessageResponse(
         id=message.id,
         chat_id=message.chat_id,
@@ -367,6 +372,7 @@ def _message_to_response(message: Message) -> MessageResponse:
         content=message.content,
         token_count=message.token_count,
         created_at=message.created_at,
+        rag_sources=rag_sources,
     )
 
 
@@ -420,6 +426,7 @@ app.add_middleware(
 app.include_router(scheduler_router)
 app.include_router(providers_router)
 app.include_router(kb_router)
+app.include_router(rag_router)
 
 
 @app.get("/debug/routes")
