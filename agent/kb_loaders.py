@@ -37,8 +37,8 @@ _SPACES_RE: re.Pattern[str] = re.compile(r"[ \t]{2,}")
 
 # Bounded `[^()]{0,400}?` keeps the match linear on 100 KB+ paragraphs.
 _ANNOTATION_RE: re.Pattern[str] = re.compile(
-    r"\((?:Часть|Пункт|Абзац|Статья|Наименование|В редакции|в ред\.|п\. [\d.]+ введен|абзац введен)"
-    r"[^()]{0,400}?(?:См\. предыдущую редакцию|ред\.|N \d+-\s*ФЗ)\s*\)",
+    r"\((?:Часть|Пункт|Абзац|Статья|Наименование|Примечание|В редакции|в ред\.|п\. [\d.]+ (?:введен|в ред\.)"
+    r"|абзац введен)[^()]{0,1200}?(?:См\. предыдущую редакцию|ред\.|N \d+-\s*ФЗ)\s*\)",
     re.DOTALL | re.IGNORECASE,
 )
 _CONSULTANT_NOTE_RE: re.Pattern[str] = re.compile(
