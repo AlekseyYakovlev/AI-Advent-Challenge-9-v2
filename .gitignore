@@ -4,6 +4,7 @@
 .env.*.local
 
 # Python
+*_kb/
 __pycache__/
 *.py[cod]
 *$py.class

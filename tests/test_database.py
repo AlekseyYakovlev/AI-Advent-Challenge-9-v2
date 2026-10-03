@@ -81,6 +81,9 @@ async def test_init_db_creates_all_tables() -> None:
         "taskrun",
         "llmprovider",
         "llmproviderseed",
+        "knowledgebase",
+        "kbdocument",
+        "kbchunk",
     }
 
 
