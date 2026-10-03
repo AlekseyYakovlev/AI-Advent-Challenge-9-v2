@@ -120,3 +120,38 @@ async def test_compute_chat_stats_grows_after_memory_row_saved(
         stats_after = await compute_chat_stats(session, chat_id, MODEL)
 
         assert stats_after["current_context_size"] > stats_before["current_context_size"]
+
+
+@pytest.mark.asyncio
+async def test_prompt_reflects_long_term_edit(authenticated_client: AsyncClient) -> None:
+    """After an edit the prompt carries the new key/value and not the old ones."""
+    user_id = authenticated_client.seeded_user_id
+    chat_id = await _create_chat(user_id, "Edit chat")
+
+    async with async_session_factory() as session:
+        row = await memory.save_long_term_memory(session, user_id, "user_name", "Alex")
+        await memory.update_long_term_memory(
+            session, user_id, row.id, key="full_name", value="Aleksey",
+        )
+
+        prompt = await build_system_prompt(session, chat_id)
+        assert "full_name" in prompt
+        assert "Aleksey" in prompt
+        assert "user_name" not in prompt
+        assert '"Alex"' not in prompt
+
+
+@pytest.mark.asyncio
+async def test_prompt_drops_long_term_label_after_last_entry_deleted(
+    authenticated_client: AsyncClient,
+) -> None:
+    """Deleting the last long-term entry removes the long-term block from the prompt."""
+    user_id = authenticated_client.seeded_user_id
+    chat_id = await _create_chat(user_id, "Delete chat")
+
+    async with async_session_factory() as session:
+        row = await memory.save_long_term_memory(session, user_id, "user_name", "Alex")
+        assert await memory.delete_long_term_memory(session, user_id, row.id) is True
+
+        prompt = await build_system_prompt(session, chat_id)
+        assert "Long-term memory" not in prompt
