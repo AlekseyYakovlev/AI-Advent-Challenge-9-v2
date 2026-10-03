@@ -260,3 +260,28 @@ Title tests must create chats titled `New Chat` and classify mocked LLM requests
   disabling the provider removes its entries and shows the fallback toast; delete with confirm; no
   API response contains a key value; optional DeepSeek chat when a real key exists.
 
+
+## Knowledge bases (Day 21)
+
+- `test_kb_models.py`: table creation and cascade deletes of KB, document and chunk rows.
+- `test_kb_storage.py`: storage paths, FAISS byte-buffer round trip, in-memory state.
+- `test_kb_loaders.py`: golden cleaning of КоАП and ФЗ-196 excerpts, page offsets, de-hyphenation, scan detection, broken PDF, text decoding.
+- `test_kb_chunking.py`: fixed and structural chunking, breadcrumbs, 2000-char cap, parameter validation messages.
+- `test_kb_embeddings.py`: LM Studio embeddings client, model guard (D-24), batching, prefixes, error mapping.
+- `test_kb_indexer.py`: background job, progress, all-or-nothing failure.
+- `test_kb_lifecycle.py`: delete with cancel, orphan recovery, shutdown, lifespan wiring.
+- `test_kb_events.py`: `kb_progress` / `kb_deleted` frames and `/health` responsiveness during indexing.
+- `test_kb_search.py`: top-k search, not-ready and corrupt-index handling.
+- `test_kb_api.py`: create/validate/list/get/delete/search/embedding endpoints and Russian messages.
+- `test_kb_scoping.py`: authentication and per-user isolation (404 for foreign ids).
+- `test_kb_real_pdfs.py`: real ФЗ-196 and КоАП РФ PDFs from `C:\Projects\RAG`; skipped when the files are absent. Pins the unique article counts (КоАП 907, ФЗ-196 34), asserts both strategies keep every chunk within 2000 characters and that the pipeline finishes in under 30 s.
+
+### scripts/e2e_kb_playwright.py (browser UAT, not part of pytest)
+- Runs a temporary copy of the app at UI :18000 / Agent :18001 with a scratch database and KB storage
+  against the real LM Studio and both real PDFs; never touches :8000/:8001 and stops only processes it
+  started. Exit 0 all passed, 1 a check failed, 2 blocked (ports busy, LM Studio, embeddings model or
+  PDFs missing), 4 Playwright missing. Takes about 20-30 minutes.
+- Scenarios: empty panel, embeddings model hidden from the chat picker, embedding check (giga rejected,
+  nomic dim 768), inline validation, both PDFs with both strategies, live progress with `/health` polling,
+  test search cards, scan PDF and giga failures, Agent killed mid-job (restart message), delete during
+  and after indexing (directory removed), second-user isolation.
