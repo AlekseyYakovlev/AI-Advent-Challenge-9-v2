@@ -4,11 +4,13 @@ import asyncio
 
 import pytest
 from httpx import AsyncClient
+from sqlmodel import select
 from agent.state import chat_locks, title_tasks, ws_rate_limiter
 from shared.database import async_session_factory
 from shared.models import (
     Chat,
     ChatInvariant,
+    ChatRagConfig,
     InvariantConflict,
     Message,
     Settings,
@@ -201,3 +203,59 @@ async def test_delete_chat_cascades_invariant_conflicts(
 
     async with async_session_factory() as session:
         assert (await session.get(InvariantConflict, conflict_id)) is None
+
+
+@pytest.mark.asyncio
+async def test_delete_chat_removes_rag_config(authenticated_client: AsyncClient) -> None:
+    """Deleting a chat cascades to its ChatRagConfig row."""
+    async with async_session_factory() as session:
+        chat = Chat(title="Rag cascade", user_id=authenticated_client.seeded_user_id)
+        session.add(chat)
+        await session.commit()
+        await session.refresh(chat)
+        session.add(ChatRagConfig(chat_id=chat.id, mode="rag", top_k=5))
+        await session.commit()
+        chat_id = chat.id
+
+    resp = await authenticated_client.delete(f"/api/v1/chats/{chat_id}")
+    assert resp.status_code == 204
+
+    async with async_session_factory() as session:
+        assert (await session.get(ChatRagConfig, chat_id)) is None
+
+
+@pytest.mark.asyncio
+async def test_delete_kb_nulls_rag_config_kb_id(authenticated_client: AsyncClient) -> None:
+    """Deleting a knowledge base keeps the chat RAG row but clears kb_id."""
+    from agent.kb_indexer import delete_kb
+    from shared.models import KnowledgeBase
+
+    user_id = authenticated_client.seeded_user_id
+    async with async_session_factory() as session:
+        chat = Chat(title="Rag kb", user_id=user_id)
+        session.add(chat)
+        kb = KnowledgeBase(
+            user_id=user_id,
+            name="kb",
+            strategy="fixed",
+            chunk_size=300,
+            chunk_overlap=50,
+            embedding_model="m",
+        )
+        session.add(kb)
+        await session.commit()
+        await session.refresh(chat)
+        await session.refresh(kb)
+        session.add(ChatRagConfig(chat_id=chat.id, kb_id=kb.id, mode="rag", top_k=5))
+        await session.commit()
+        chat_id = chat.id
+
+    async with async_session_factory() as session:
+        kb = (await session.exec(select(KnowledgeBase))).first()
+        await delete_kb(session, kb)
+
+    async with async_session_factory() as session:
+        row = await session.get(ChatRagConfig, chat_id)
+        assert row is not None
+        assert row.kb_id is None
+        assert row.mode == "rag"

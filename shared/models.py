@@ -75,6 +75,7 @@ class Message(SQLModel, table=True):
     content: str
     token_count: int = Field(default=0)
     tool_trace: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    rag_sources: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
     )
@@ -711,3 +712,22 @@ class KbChunk(SQLModel, table=True):
     page_start: int | None = None
     char_start: int
     char_end: int
+
+
+class ChatRagConfig(SQLModel, table=True):
+    """Per-chat RAG settings; an absent row means RAG is off."""
+
+    chat_id: int = Field(
+        sa_column=Column(
+            Integer, ForeignKey("chat.id", ondelete="CASCADE"), primary_key=True
+        )
+    )
+    kb_id: int | None = Field(
+        default=None,
+        sa_column=Column(
+            Integer, ForeignKey("knowledgebase.id", ondelete="SET NULL"), nullable=True
+        ),
+    )
+    mode: str = Field(default="off", max_length=20)
+    top_k: int = Field(default=5)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

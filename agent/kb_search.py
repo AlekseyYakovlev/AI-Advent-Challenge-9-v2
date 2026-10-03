@@ -18,6 +18,7 @@ logger = get_logger(__name__)
 
 MSG_NOT_READY = "Поиск доступен после завершения индексации"
 MSG_INDEX_CORRUPT = "Индекс базы знаний повреждён. Удалите её и создайте заново."
+MSG_DIM_MISMATCH = "Размерность эмбеддинга не совпадает с индексом базы."
 
 
 class KbNotReadyError(Exception):
@@ -34,6 +35,14 @@ class KbIndexCorruptError(Exception):
     def __init__(self) -> None:
         super().__init__(MSG_INDEX_CORRUPT)
         self.message = MSG_INDEX_CORRUPT
+
+
+class EmbeddingDimMismatchError(KbIndexCorruptError):
+    """The query embedding has a different dimension than the stored index."""
+
+    def __init__(self) -> None:
+        Exception.__init__(self, MSG_DIM_MISMATCH)
+        self.message = MSG_DIM_MISMATCH
 
 
 async def load_index_cached(kb: KnowledgeBase) -> faiss.Index:
@@ -62,8 +71,10 @@ async def search_kb(
     index = await load_index_cached(kb)
     vector = await embed_query(kb.embedding_model, query, None, kb.query_prefix)
     array = np.asarray([vector], dtype="float32")
-    if array.shape[1] != index.d:
-        raise KbIndexCorruptError()
+    got = int(array.shape[1])
+    if got != index.d or (kb.dim is not None and got != kb.dim):
+        logger.error("kb_search_dim_mismatch", kb_id=kb.id, expected=index.d, got=got)
+        raise EmbeddingDimMismatchError()
     faiss.normalize_L2(array)
     scores, ids = await asyncio.to_thread(index.search, array, top_k)
     ranked = [
