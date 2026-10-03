@@ -62,8 +62,35 @@ RAG_INSTRUCTION = (
 )
 QUESTION_PREFIX = "Вопрос: "
 PAYLOAD_VERSION = 1
+DEFAULT_CANDIDATE_K = 20
+# Keys are lowercase markers matched as substrings of KnowledgeBase.embedding_model
+# (same style as agent/embeddings.py::MODEL_PREFIXES). Values are raw-cosine cut-offs
+# measured by scripts/rag_eval.py calibrate on the frozen calibration set; a model
+# without an entry has no cut.
+CALIBRATED_THRESHOLDS: dict[str, float] = {}
 
 _DELIMITER_RUN = re.compile(r"={3,}")
+
+
+def calibrated_threshold(model_id: str | None) -> float | None:
+    """Return the calibrated cosine cut-off for an embedding model, or None when unknown."""
+    if not model_id:
+        return None
+    lowered = model_id.lower()
+    for marker, value in CALIBRATED_THRESHOLDS.items():
+        if marker in lowered:
+            return value
+    return None
+
+
+def resolve_threshold(override: float | None, model_id: str | None) -> tuple[float, str]:
+    """Return (effective threshold, source) where source is user, calibrated or none."""
+    if override is not None:
+        return override, "user"
+    calibrated = calibrated_threshold(model_id)
+    if calibrated is not None:
+        return calibrated, "calibrated"
+    return 0.0, "none"
 
 
 class RagFailure(Exception):

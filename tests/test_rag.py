@@ -246,3 +246,26 @@ def test_parse_rag_payload_tolerates_garbage() -> None:
     assert rag.parse_rag_payload("not json") is None
     assert rag.parse_rag_payload(None) is None
     assert rag.parse_rag_payload("[1]") is None
+
+
+def test_calibrated_threshold_matches_by_lowercase_substring(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(rag, "CALIBRATED_THRESHOLDS", {"bge-m3": 0.59})
+    assert rag.calibrated_threshold("text-embedding-BGE-M3") == 0.59
+    assert rag.calibrated_threshold("other-model") is None
+    assert rag.calibrated_threshold(None) is None
+    assert rag.calibrated_threshold("") is None
+
+
+def test_resolve_threshold_sources(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(rag, "CALIBRATED_THRESHOLDS", {"bge-m3": 0.59})
+    assert rag.resolve_threshold(None, "text-embedding-bge-m3") == (0.59, "calibrated")
+    assert rag.resolve_threshold(0.7, "text-embedding-bge-m3") == (0.7, "user")
+    assert rag.resolve_threshold(0.7, None) == (0.7, "user")
+    assert rag.resolve_threshold(None, "unknown-model") == (0.0, "none")
+
+
+def test_shipped_calibrated_thresholds_are_valid_cosines() -> None:
+    for marker, value in rag.CALIBRATED_THRESHOLDS.items():
+        assert marker == marker.lower()
+        assert isinstance(value, float)
+        assert 0.0 <= value <= 1.0
