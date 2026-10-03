@@ -83,7 +83,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 11-03-PLAN.md — Docs sync (API_SPEC, ARCHITECTURE, TESTING_GUIDE, USER_GUIDE) + full-suite regression gate (wave 2)
+- [x] 11-03-PLAN.md — Docs sync (API_SPEC, ARCHITECTURE, TESTING_GUIDE, USER_GUIDE) + full-suite regression gate (wave 2)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -237,7 +237,7 @@ Plans:
 | 9. Auto-rename chats with LLM (Day 21) | v2.0 | 6/6 | Complete   | 2026-10-02 |
 | 12. LLM providers section in Settings (Day 21) | v2.0 | 6/6 | Complete   | 2026-10-02 |
 | 10. Modals close only via x button (Day 21) | v3.0 | 1/1 | Complete   | 2026-10-02 |
-| 11. Edit and delete long-term memory entries via UI (Day 21) | v3.0 | 2/4 | In Progress|  |
+| 11. Edit and delete long-term memory entries via UI (Day 21) | v3.0 | 3/4 | In Progress|  |
 | 13. Knowledge base indexing (Day 21) | v3.0 | 8/8 | Complete   | 2026-10-03 |
 | 14. First RAG query (Day 22) | v3.0 | 0/TBD | Not started | - |
 | 15. Reranking and filtering (Day 23) | v3.0 | 0/TBD | Not started | - |
