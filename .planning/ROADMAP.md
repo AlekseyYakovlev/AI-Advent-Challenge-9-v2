@@ -227,7 +227,7 @@ Plans:
 
 **Wave 9** *(blocked on Wave 8 completion)*
 
-- [ ] 15-11-PLAN.md — DeepSeek key + model check, judge column, Day23_report.md, user review (checkpoints)
+- [x] 15-11-PLAN.md — DeepSeek key + model check, judge column, Day23_report.md, user review (checkpoints)
 
 **Wave 10** *(blocked on Wave 9 completion)*
 
@@ -285,7 +285,7 @@ Plans:
 | 11. Edit and delete long-term memory entries via UI (Day 21) | v3.0 | 4/4 | Complete    | 2026-10-03 |
 | 13. Knowledge base indexing (Day 21) | v3.0 | 8/8 | Complete   | 2026-10-03 |
 | 14. First RAG query (Day 22) | v3.0 | 8/8 | Complete    | 2026-10-03 |
-| 15. Reranking and filtering (Day 23) | v3.0 | 11/13 | In Progress|  |
+| 15. Reranking and filtering (Day 23) | v3.0 | 12/13 | In Progress|  |
 | 16. Citations and anti-hallucination (Day 24) | v3.0 | 0/TBD | Not started | - |
 | 17. Mini-chat with RAG and task memory (Day 25) | v3.0 | 0/TBD | Not started | - |
 
