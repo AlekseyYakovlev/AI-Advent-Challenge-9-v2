@@ -70,6 +70,7 @@ Plans:
 **Depends on**: Phase 8
 **Milestone**: v3.0 (carried over from v2.0)
 **Promoted from**: backlog 999.6 (2026-10-02)
+**Assumptions (2026-10-02, adopted from 11-RESEARCH.md; planned without CONTEXT.md, UI-SPEC.md or AI-SPEC.md)**: both `key` and `value` are editable; editing is inline in the sidebar memory panel (no modal); delete is confirmed with the native `confirm()`; no live cross-tab sync; the new PUT/DELETE routes check Origin and JSON content type.
 **Requirements**: MEMUI-01, MEMUI-02, MEMUI-03, MEMUI-04, MEMUI-05, MEMUI-06
 **Plans**: 4 plans
 **UI hint**: yes
