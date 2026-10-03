@@ -278,3 +278,106 @@ def test_cli_parses_both_subcommands() -> None:
     assert run.model == "qwen/qwen3.5-9b" and run.top_k == 5 and run.modes == "off,rag"
     build = parser.parse_args(["build-kbs"])
     assert build.strategy == "structural" and build.chunk_size == 1000
+
+
+CAL_QUESTIONS = [
+    {"id": "C01", "category": "answerable", "question": "a", "expected_sources": [{"file_contains": "FZ_N_196_FZ", "article": "26"}]},
+    {"id": "C02", "category": "answerable", "question": "b", "expected_sources": [{"file_contains": "FZ_N_196_FZ", "article": "99"}]},
+    {"id": "C03", "category": "out_of_corpus", "question": "c", "expected_sources": []},
+    {"id": "C04", "category": "out_of_corpus", "question": "d", "expected_sources": []},
+]
+
+
+def _scored(source: str, section: str, score: float) -> dict[str, Any]:
+    return {**_chunk(source, section), "score": score}
+
+
+def _cal_results() -> dict[str, list[dict[str, Any]]]:
+    return {
+        "C01": [_scored(KOAP, "Статья 1. x", 0.7), _scored(FZ, "Статья 26. y", 0.65)],
+        "C02": [_scored(FZ, "Статья 1. z", 0.5)],
+        "C03": [_scored(FZ, "Статья 1. z", 0.4)],
+        "C04": [_scored(FZ, "Статья 2. z", 0.3)],
+    }
+
+
+def test_compute_calibration_collects_both_classes() -> None:
+    data = rag_eval.compute_calibration(CAL_QUESTIONS, _cal_results())
+    assert data["gold_scores"] == [0.65]
+    assert data["gold_missing"] == ["C02"]
+    assert data["answerable_top1"] == [0.7, 0.5]
+    assert sorted(data["ooc_top1"]) == [0.3, 0.4]
+    assert data["stats"]["separable"] is True
+    assert data["threshold"] == pytest.approx(0.53, abs=0.011)
+
+
+def test_control_check_reports_survivors() -> None:
+    rows = rag_eval.control_check(CAL_QUESTIONS, _cal_results(), 0.6)
+    by_id = {row["id"]: row for row in rows}
+    assert by_id["C01"]["top1"] == 0.7 and by_id["C01"]["gold"] == 0.65 and by_id["C01"]["survivors"] == 2
+    assert by_id["C02"]["gold"] is None and by_id["C02"]["survivors"] == 0
+    assert by_id["C03"]["survivors"] == 0
+
+
+def _report(separable: bool) -> dict[str, Any]:
+    return {
+        "fixtures": {"calibration": {"name": "c.json", "sha256": "x"}},
+        "candidate_k": 20,
+        "kbs": {
+            "bge": {
+                "embedding_model": "bge-m3",
+                "marker": "bge-m3",
+                "gold_scores": [0.7, 0.6],
+                "ooc_top1": [0.5, 0.4],
+                "gold_missing": [],
+                "threshold": 0.55,
+                "stats": {"separable": separable, "method": "midpoint"},
+                "control_check": [{"id": "Q01", "category": "direct", "top1": 0.7, "gold": 0.7, "survivors": 3}],
+                "fts_probe": {"ooc_total": 8, "ooc_with_exempt": ["C13"], "gold_rescued_by_fts": []},
+            }
+        },
+    }
+
+
+def test_render_calibration_md_flags_inseparable() -> None:
+    text = rag_eval.render_calibration_md(_report(False))
+    assert "## bge (bge-m3)" in text and "0.600, 0.700" in text and "0.400, 0.500" in text
+    assert "min 0.600 / median 0.650 / max 0.700" in text
+    assert "threshold: 0.55" in text and "not separable" in text
+    assert "not separable" not in rag_eval.render_calibration_md(_report(True))
+
+
+def test_summarize_fts_probe() -> None:
+    traces = {
+        "C01": {"candidates": [{"file": FZ, "section": "Статья 26. y", "fts_exempt": True, "status": "in_answer"}]},
+        "C02": {"candidates": [{"file": FZ, "section": "Статья 99. y", "fts_exempt": False, "status": "in_answer"}]},
+        "C03": {"candidates": [{"file": FZ, "section": "Статья 1", "fts_exempt": True, "status": "in_answer"}]},
+        "C04": {"candidates": []},
+    }
+    probe = rag_eval.summarize_fts_probe(CAL_QUESTIONS, traces)
+    assert probe == {"ooc_total": 2, "ooc_with_exempt": ["C03"], "gold_rescued_by_fts": ["C01"]}
+
+
+def test_marker_for_model_ids() -> None:
+    assert rag_eval._marker_for("text-embedding-bge-m3") == "bge-m3"
+    assert rag_eval._marker_for("text-embedding-nomic-embed-text-v1.5") == "nomic"
+    assert rag_eval._marker_for("Other-Model") == "other-model"
+
+
+def test_cli_parses_calibrate_arguments() -> None:
+    args = rag_eval.build_parser().parse_args(["calibrate", "--kb", "bge=2", "--candidate-k", "30"])
+    assert args.candidate_k == 30 and args.control_fixture == rag_eval.DEFAULT_FIXTURE
+    assert args.fixture == rag_eval.DEFAULT_CALIBRATION_FIXTURE and args.allow_draft is False
+
+
+async def test_calibrate_refuses_draft_fixture(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "keep.db"))
+    monkeypatch.setenv("KB_STORAGE_DIR", str(tmp_path / "keep_kb"))
+    args = rag_eval.build_parser().parse_args(
+        ["calibrate", "--kb", "bge=2", "--db", str(tmp_path / "x.db"), "--out", str(tmp_path)]
+    )
+    with pytest.raises(SystemExit) as exc:
+        await rag_eval.calibrate_command(args)
+    assert exc.value.code == 2

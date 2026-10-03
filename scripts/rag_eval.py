@@ -4,11 +4,18 @@ Usage:
   python scripts/rag_eval.py build-kbs [--db PATH] [--embedder LABEL=MODEL_ID ...] [--pdf PATH ...]
   python scripts/rag_eval.py run --kb LABEL=ID [--kb LABEL=ID ...] [--provider lmstudio|deepseek]
                                  [--model ID] [--top-k 5] [--modes off,rag] [--only-kb LABEL]
+  python scripts/rag_eval.py calibrate --kb LABEL=ID [--kb LABEL=ID ...] [--candidate-k 20]
+  python scripts/rag_eval.py ablate --kb LABEL=ID [--runs baseline,threshold,...] [--threshold F]
+                                    [--max-tokens 4096] [--provider lmstudio|deepseek]
 
 build-kbs indexes the corpus PDFs once per embedder with identical strategy, chunk size and
 overlap into a scratch database (never app.db). run answers every control-set question without
 and with retrieval at temperature 0, scores retrieval hit@k against the expected sources and
 writes raw outputs, retrieval.md, answers.md, answers.csv (empty verdict column) and run_meta.json.
+
+calibrate measures per-embedder score distributions on the frozen calibration set and derives the
+relevance threshold; ablate runs the retrieval-pipeline configurations over the control set through
+the same pipeline as the chat and writes ablation.md, answers.md, answers.csv and run_meta.json.
 
 Exit codes: 0 ok, 1 run error, 2 preflight failure.
 """
@@ -21,8 +28,11 @@ import io
 import json
 import os
 import re
+import statistics
 import sys
+import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -55,6 +65,23 @@ DEFAULT_PDFS: tuple[Path, ...] = (
 EVAL_USERNAME: str = "rag_eval"
 ANSWER_TABLE_CHARS: int = 300
 EXIT_OK, EXIT_ERROR, EXIT_PREFLIGHT = 0, 1, 2
+DEFAULT_CALIBRATION_FIXTURE: Path = REPO_ROOT / "tests" / "fixtures" / "rag" / "calibration_set.json"
+DAY23_OUT: Path = REPO_ROOT / "eval_out" / "day23"
+DAY23_DB: Path = DAY23_OUT / "eval.db"
+DEFAULT_CANDIDATE_K: int = 20
+# The Day 22 baseline answers were produced at 4096 (eval_out/day22/run_meta.json). The same
+# budget keeps the ablation comparable and fixes how many fragments rag_budget lets through.
+DEFAULT_ABLATE_MAX_TOKENS = 4096
+ABLATION_RUNS: dict[str, dict[str, bool]] = {
+    "baseline": {},
+    "threshold": {},
+    "lexical": {"lexical": True},
+    "llm_rerank": {"llm_rerank": True},
+    "hybrid": {"hybrid": True},
+    "rewrite": {"rewrite": True},
+    "all": {"lexical": True, "llm_rerank": True, "hybrid": True, "rewrite": True},
+}
+JUDGE_COLUMNS: tuple[str, ...] = ("verdict", "comment", "judge_verdict", "judge_comment")
 
 
 def parse_article(text: str | None) -> str | None:
@@ -609,6 +636,285 @@ async def run_command(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _kb_ids(items: list[str]) -> dict[str, int]:
+    """Parse repeated LABEL=ID arguments into integer KB ids."""
+    try:
+        return {label: int(value) for label, value in _parse_pairs(items, "--kb").items()}
+    except ValueError:
+        print("preflight: --kb ids must be integers")
+        raise SystemExit(EXIT_PREFLIGHT) from None
+
+
+def _fmt_stats(values: list[float]) -> str:
+    """min/median/max of a score list for Markdown."""
+    if not values:
+        return "n/a"
+    return f"min {min(values):.3f} / median {statistics.median(values):.3f} / max {max(values):.3f}"
+
+
+def _matches(chunk: dict[str, Any], question: dict[str, Any]) -> bool:
+    """True when the chunk matches any expected source of the question."""
+    return any(chunk_hits(chunk, exp) for exp in question.get("expected_sources") or [])
+
+
+def compute_calibration(
+    questions: list[dict[str, Any]], results_by_question: dict[str, list[dict[str, Any]]]
+) -> dict[str, Any]:
+    """Score distributions of one KB on the calibration set and the threshold derived from them."""
+    from agent.rag_rank import choose_threshold
+
+    gold_scores: list[float] = []
+    gold_missing: list[str] = []
+    answerable_top1: list[float] = []
+    ooc_top1: list[float] = []
+    rows: list[dict[str, Any]] = []
+    for question in questions:
+        results = sorted(results_by_question.get(question["id"], []), key=lambda c: -c["score"])
+        top1 = results[0]["score"] if results else None
+        gold: float | None = None
+        if question["category"] == "out_of_corpus":
+            if top1 is not None:
+                ooc_top1.append(top1)
+        else:
+            if top1 is not None:
+                answerable_top1.append(top1)
+            matching = [c["score"] for c in results if _matches(c, question)]
+            if matching:
+                gold = max(matching)
+                gold_scores.append(gold)
+            else:
+                gold_missing.append(question["id"])
+        rows.append({"id": question["id"], "category": question["category"], "top1": top1, "gold": gold})
+    threshold, stats = choose_threshold(gold_scores, ooc_top1)
+    return {
+        "gold_scores": gold_scores,
+        "gold_missing": gold_missing,
+        "answerable_top1": answerable_top1,
+        "ooc_top1": ooc_top1,
+        "threshold": threshold,
+        "stats": stats,
+        "rows": rows,
+    }
+
+
+def control_check(
+    questions: list[dict[str, Any]],
+    results_by_question: dict[str, list[dict[str, Any]]],
+    threshold: float,
+) -> list[dict[str, Any]]:
+    """How the calibrated threshold behaves on the control questions (reporting only)."""
+    rows: list[dict[str, Any]] = []
+    for question in questions:
+        results = sorted(results_by_question.get(question["id"], []), key=lambda c: -c["score"])
+        matching = [c["score"] for c in results if _matches(c, question)]
+        rows.append(
+            {
+                "id": question["id"],
+                "category": question["category"],
+                "top1": results[0]["score"] if results else None,
+                "gold": max(matching) if matching else None,
+                "survivors": sum(1 for c in results if c["score"] >= threshold),
+            }
+        )
+    return rows
+
+
+def _trace_matches(candidate: dict[str, Any], question: dict[str, Any]) -> bool:
+    """Match a pipeline-trace candidate (file/section keys) against the expected sources."""
+    return _matches({"source": candidate.get("file"), "section": candidate.get("section")}, question)
+
+
+def summarize_fts_probe(
+    questions: list[dict[str, Any]], traces: dict[str, dict[str, Any]]
+) -> dict[str, Any]:
+    """Which questions got FTS-exempt candidates when hybrid is on at the chosen threshold."""
+    ooc_exempt: list[str] = []
+    gold_rescued: list[str] = []
+    for question in questions:
+        candidates = (traces.get(question["id"]) or {}).get("candidates", [])
+        exempt = [c for c in candidates if c.get("fts_exempt")]
+        if question["category"] == "out_of_corpus":
+            if exempt:
+                ooc_exempt.append(question["id"])
+            continue
+        survived = any(
+            _trace_matches(c, question)
+            for c in candidates
+            if not c.get("fts_exempt") and c.get("status") != "below_threshold"
+        )
+        if not survived and any(_trace_matches(c, question) for c in exempt):
+            gold_rescued.append(question["id"])
+    return {
+        "ooc_total": sum(1 for q in questions if q["category"] == "out_of_corpus"),
+        "ooc_with_exempt": ooc_exempt,
+        "gold_rescued_by_fts": gold_rescued,
+    }
+
+
+def render_calibration_md(data: dict[str, Any]) -> str:
+    """Markdown report of the calibration: distributions, threshold and control behaviour."""
+    lines = ["# Calibration", ""]
+    fixtures = data.get("fixtures", {})
+    for name, info in fixtures.items():
+        lines.append(f"- {name}: {info['name']} sha256 {info['sha256']}")
+    lines += [f"- candidate_k: {data.get('candidate_k')}", ""]
+    for label, kb in data["kbs"].items():
+        stats = kb["stats"]
+        lines += [f"## {label} ({kb['embedding_model']})", ""]
+        lines.append(f"- answerable gold scores: {', '.join(f'{v:.3f}' for v in sorted(kb['gold_scores']))}")
+        lines.append(f"  - {_fmt_stats(kb['gold_scores'])}")
+        lines.append(f"- out-of-corpus top-1 scores: {', '.join(f'{v:.3f}' for v in sorted(kb['ooc_top1']))}")
+        lines.append(f"  - {_fmt_stats(kb['ooc_top1'])}")
+        if kb["gold_missing"]:
+            lines.append(f"- answerable without a matching candidate: {', '.join(kb['gold_missing'])}")
+        lines.append(f"- threshold: {kb['threshold']} (method {stats.get('method')}, marker {kb['marker']})")
+        if not stats.get("separable"):
+            lines.append("- classes are **not separable** by a single cosine cut-off")
+        lines += ["", "Control set behaviour at this threshold:", ""]
+        lines += ["| id | category | top1 | gold | survivors |", "|---|---|---|---|---|"]
+        for row in kb["control_check"]:
+            lines.append(
+                f"| {row['id']} | {row['category']} | {_score(row['top1'])} | "
+                f"{_score(row['gold'])} | {row['survivors']} |"
+            )
+        probe = kb["fts_probe"]
+        lines += [
+            "",
+            f"FTS probe (hybrid on): out-of-corpus questions with an exempt candidate "
+            f"{len(probe['ooc_with_exempt'])}/{probe['ooc_total']} "
+            f"({', '.join(probe['ooc_with_exempt']) or '-'}); answerable gold rescued only by the "
+            f"exemption: {', '.join(probe['gold_rescued_by_fts']) or '-'}",
+            "",
+        ]
+    return "\n".join(lines)
+
+
+def _marker_for(model_id: str) -> str:
+    """CALIBRATED_THRESHOLDS key for an embedding model id."""
+    lowered = model_id.lower()
+    for marker in ("bge-m3", "nomic"):
+        if marker in lowered:
+            return marker
+    return lowered
+
+
+async def _lm_studio_reachable(base_url: str) -> bool:
+    """True when the LM Studio models endpoint answers."""
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as http:
+            (await http.get(f"{base_url.rstrip('/')}/v1/models")).raise_for_status()
+    except httpx.HTTPError as exc:
+        print(f"preflight: LM Studio is not reachable at {base_url} ({type(exc).__name__})")
+        return False
+    return True
+
+
+async def _search_all(
+    session: Any, kb: Any, questions: list[dict[str, Any]], candidate_k: int
+) -> dict[str, list[dict[str, Any]]]:
+    """Vector search per question; chunk text is dropped, scores and metadata kept."""
+    from agent.rag import retrieve_vectors
+
+    found: dict[str, list[dict[str, Any]]] = {}
+    for question in questions:
+        results, _ = await retrieve_vectors(session, kb, question["question"], candidate_k)
+        found[question["id"]] = [{k: v for k, v in c.items() if k != "text"} for c in results]
+    return found
+
+
+async def _calibrate_kb(
+    session: Any, kb: Any, calibration: dict[str, Any], control: dict[str, Any], candidate_k: int
+) -> dict[str, Any]:
+    """Full calibration of one KB: distributions, threshold, control check and FTS probe."""
+    from agent.rag_pipeline import PipelineConfig, run_retrieval_pipeline
+
+    questions = calibration["questions"]
+    found = await _search_all(session, kb, questions, candidate_k)
+    result = compute_calibration(questions, found)
+    threshold = result["threshold"]
+    control_found = await _search_all(session, kb, control["questions"], candidate_k)
+    config = PipelineConfig(
+        candidate_k=candidate_k,
+        top_k=5,
+        threshold=threshold,
+        threshold_source="calibrated",
+        hybrid=True,
+    )
+    traces: dict[str, dict[str, Any]] = {}
+    for question in questions:
+        _, traces[question["id"]] = await run_retrieval_pipeline(
+            session, kb, question["question"], config
+        )
+    return {
+        "embedding_model": kb.embedding_model,
+        "marker": _marker_for(kb.embedding_model),
+        **result,
+        "control_check": control_check(control["questions"], control_found, threshold),
+        "fts_probe": summarize_fts_probe(questions, traces),
+    }
+
+
+async def calibrate_command(args: argparse.Namespace) -> int:
+    """Measure score distributions per KB on the calibration set and derive thresholds."""
+    _use_scratch_storage(args.db)
+    kb_ids = _kb_ids(args.kb)
+    calibration = load_fixture(args.fixture, require_frozen=not args.allow_draft)
+    control = load_fixture(args.control_fixture, require_frozen=True)
+
+    from agent.rag import RagFailure
+    from shared.database import async_session_factory, init_db
+    from shared.models import KbStatus, KnowledgeBase
+
+    await init_db()
+    base_url = os.environ.get("LM_STUDIO_BASE_URL", "http://localhost:1234")
+    if not await _lm_studio_reachable(base_url):
+        return EXIT_PREFLIGHT
+    report: dict[str, Any] = {
+        "fixtures": {
+            "calibration": {"name": args.fixture.name, "sha256": fixture_sha256(args.fixture)},
+            "control": {"name": args.control_fixture.name, "sha256": fixture_sha256(args.control_fixture)},
+        },
+        "candidate_k": args.candidate_k,
+        "kbs": {},
+    }
+    async with async_session_factory() as session:
+        for label, kb_id in kb_ids.items():
+            kb = await session.get(KnowledgeBase, kb_id)
+            if kb is None or kb.status != KbStatus.READY:
+                print(f"preflight: knowledge base {label}={kb_id} does not exist or is not ready")
+                return EXIT_PREFLIGHT
+            try:
+                report["kbs"][label] = await _calibrate_kb(
+                    session, kb, calibration, control, args.candidate_k
+                )
+            except RagFailure as failure:
+                print(f"error: retrieval failed for {label}={kb_id} ({failure.code})")
+                return EXIT_ERROR
+    args.out.mkdir(parents=True, exist_ok=True)
+    _write_json(args.out / "calibration.json", report)
+    (args.out / "calibration.md").write_text(render_calibration_md(report), encoding="utf-8")
+    for label, kb in report["kbs"].items():
+        print(
+            f'CALIBRATED_THRESHOLDS["{kb["marker"]}"] = {kb["threshold"]}'
+            f'  # separable={bool(kb["stats"].get("separable"))} ({label})'
+        )
+    return EXIT_OK
+
+
+def _add_calibrate_parser(sub: Any) -> None:
+    """Register the calibrate subcommand."""
+    calibrate = sub.add_parser("calibrate", help="derive the relevance threshold per embedder")
+    calibrate.add_argument("--db", type=Path, default=DAY23_DB)
+    calibrate.add_argument("--kb", action="append", required=True, metavar="LABEL=ID")
+    calibrate.add_argument("--fixture", type=Path, default=DEFAULT_CALIBRATION_FIXTURE)
+    calibrate.add_argument("--control-fixture", type=Path, default=DEFAULT_FIXTURE)
+    calibrate.add_argument("--candidate-k", type=int, default=DEFAULT_CANDIDATE_K)
+    calibrate.add_argument("--out", type=Path, default=DAY23_OUT)
+    calibrate.add_argument("--allow-draft", action="store_true", help="testing only")
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Command-line interface."""
     parser = argparse.ArgumentParser(description="Offline RAG evaluation runner.")
@@ -634,14 +940,19 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--out", type=Path, default=DEFAULT_OUT)
     run.add_argument("--allow-draft", action="store_true", help="testing only")
     run.add_argument("--only-kb", metavar="LABEL", default=None)
+    _add_calibrate_parser(sub)
     return parser
 
 
 def main() -> int:
     """Entry point."""
     args = build_parser().parse_args()
-    handler = build_kbs if args.command == "build-kbs" else run_command
-    return asyncio.run(handler(args))
+    handlers = {
+        "build-kbs": build_kbs,
+        "run": run_command,
+        "calibrate": calibrate_command,
+    }
+    return asyncio.run(handlers[args.command](args))
 
 
 if __name__ == "__main__":
