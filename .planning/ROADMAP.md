@@ -202,7 +202,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 15-04-PLAN.md — shared two-stage retrieval pipeline with optional stages and metadata-only trace
+- [x] 15-04-PLAN.md — shared two-stage retrieval pipeline with optional stages and metadata-only trace
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -285,7 +285,7 @@ Plans:
 | 11. Edit and delete long-term memory entries via UI (Day 21) | v3.0 | 4/4 | Complete    | 2026-10-03 |
 | 13. Knowledge base indexing (Day 21) | v3.0 | 8/8 | Complete   | 2026-10-03 |
 | 14. First RAG query (Day 22) | v3.0 | 8/8 | Complete    | 2026-10-03 |
-| 15. Reranking and filtering (Day 23) | v3.0 | 4/13 | In Progress|  |
+| 15. Reranking and filtering (Day 23) | v3.0 | 5/13 | In Progress|  |
 | 16. Citations and anti-hallucination (Day 24) | v3.0 | 0/TBD | Not started | - |
 | 17. Mini-chat with RAG and task memory (Day 25) | v3.0 | 0/TBD | Not started | - |
 
