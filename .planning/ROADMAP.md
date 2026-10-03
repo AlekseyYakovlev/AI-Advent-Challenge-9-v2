@@ -219,7 +219,7 @@ Plans:
 
 **Wave 7** *(blocked on Wave 6 completion)*
 
-- [ ] 15-09-PLAN.md — user decisions on thresholds and FTS exemption, calibrated constants written (checkpoints)
+- [x] 15-09-PLAN.md — user decisions on thresholds and FTS exemption, calibrated constants written (checkpoints)
 
 **Wave 8** *(blocked on Wave 7 completion)*
 
@@ -285,7 +285,7 @@ Plans:
 | 11. Edit and delete long-term memory entries via UI (Day 21) | v3.0 | 4/4 | Complete    | 2026-10-03 |
 | 13. Knowledge base indexing (Day 21) | v3.0 | 8/8 | Complete   | 2026-10-03 |
 | 14. First RAG query (Day 22) | v3.0 | 8/8 | Complete    | 2026-10-03 |
-| 15. Reranking and filtering (Day 23) | v3.0 | 9/13 | In Progress|  |
+| 15. Reranking and filtering (Day 23) | v3.0 | 10/13 | In Progress|  |
 | 16. Citations and anti-hallucination (Day 24) | v3.0 | 0/TBD | Not started | - |
 | 17. Mini-chat with RAG and task memory (Day 25) | v3.0 | 0/TBD | Not started | - |
 
