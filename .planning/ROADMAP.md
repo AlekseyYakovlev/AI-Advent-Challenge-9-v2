@@ -125,7 +125,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 13-06-PLAN.md — KB REST API (multipart 202 create with caps/dedupe, list/get/delete, search, embedding models/check) + search service
+- [x] 13-06-PLAN.md — KB REST API (multipart 202 create with caps/dedupe, list/get/delete, search, embedding models/check) + search service
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
@@ -215,7 +215,7 @@ Plans:
 | 12. LLM providers section in Settings (Day 21) | v2.0 | 6/6 | Complete   | 2026-10-02 |
 | 10. Modals close only via x button (Day 21) | v3.0 | 1/1 | Complete   | 2026-10-02 |
 | 11. Edit and delete long-term memory entries via UI (Day 21) | v3.0 | 0/4 | Planned | - |
-| 13. Knowledge base indexing (Day 21) | v3.0 | 6/8 | In Progress|  |
+| 13. Knowledge base indexing (Day 21) | v3.0 | 7/8 | In Progress|  |
 | 14. First RAG query (Day 22) | v3.0 | 0/TBD | Not started | - |
 | 15. Reranking and filtering (Day 23) | v3.0 | 0/TBD | Not started | - |
 | 16. Citations and anti-hallucination (Day 24) | v3.0 | 0/TBD | Not started | - |
