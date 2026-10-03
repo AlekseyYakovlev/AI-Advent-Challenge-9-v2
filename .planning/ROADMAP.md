@@ -41,7 +41,7 @@ Full details: [milestones/v2.0-ROADMAP.md](milestones/v2.0-ROADMAP.md)
 
 - [x] **Phase 11: Edit and delete long-term memory entries via UI (Day 21)** — carried over from v2.0; "Редактировать" / "Удалить" buttons per long-term memory entry (completed 2026-10-03)
 - [x] **Phase 13: Knowledge base indexing (Day 21)** — upload PDF/TXT/MD, chunk (fixed or structural), embed via LM Studio, persist FAISS + SQLite, background indexing with live progress (completed 2026-10-03)
-- [ ] **Phase 14: First RAG query (Day 22)** — attach a KB to a chat, toggle RAG, retrieve top-K chunks into the LLM request, show sources, frozen 10-question eval and Day22 report
+- [x] **Phase 14: First RAG query (Day 22)** — attach a KB to a chat, toggle RAG, retrieve top-K chunks into the LLM request, show sources, frozen 10-question eval and Day22 report (completed 2026-10-03)
 - [ ] **Phase 15: Reranking and filtering (Day 23)** — two-stage retrieval with threshold, lexical/LLM rerank, hybrid FTS5, query rewrite, "Детали поиска", Day23 report
 - [ ] **Phase 16: Citations and anti-hallucination (Day 24)** — sources and verified quotes on every answer, code-enforced "не знаю" with a clarifying question
 - [ ] **Phase 17: Mini-chat with RAG and task memory (Day 25)** — the existing chat as RAG mini-chat with per-chat task memory, two long scripted scenarios, Day25 report
@@ -169,7 +169,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 14-08-PLAN.md — Playwright E2E on the isolated copy (18000/18001) and docs sync
+- [x] 14-08-PLAN.md — Playwright E2E on the isolated copy (18000/18001) and docs sync
 
 ### Phase 15: Reranking and filtering (Day 23)
 
@@ -254,7 +254,7 @@ Plans:
 | 10. Modals close only via x button (Day 21) | v3.0 | 1/1 | Complete   | 2026-10-02 |
 | 11. Edit and delete long-term memory entries via UI (Day 21) | v3.0 | 4/4 | Complete    | 2026-10-03 |
 | 13. Knowledge base indexing (Day 21) | v3.0 | 8/8 | Complete   | 2026-10-03 |
-| 14. First RAG query (Day 22) | v3.0 | 7/8 | In Progress|  |
+| 14. First RAG query (Day 22) | v3.0 | 8/8 | Complete   | 2026-10-03 |
 | 15. Reranking and filtering (Day 23) | v3.0 | 0/TBD | Not started | - |
 | 16. Citations and anti-hallucination (Day 24) | v3.0 | 0/TBD | Not started | - |
 | 17. Mini-chat with RAG and task memory (Day 25) | v3.0 | 0/TBD | Not started | - |
