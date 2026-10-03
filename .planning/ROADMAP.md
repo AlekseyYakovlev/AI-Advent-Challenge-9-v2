@@ -184,7 +184,7 @@ Plans:
   3. A collapsible "Детали поиска" block under each RAG answer shows the (rewritten) query, candidates with scores, what was cut and why, and the final chunks
   4. The threshold is calibrated per embedding model on the control set, and `Day23_report.md` compares no filter vs filter, each reranker and rewrite (optional LLM-judge column, manual verdict primary)
 
-**Plans**: 12 plans
+**Plans**: 13 plans
 **UI hint**: yes
 **Research flag**: needs deeper research (empirical threshold calibration, rewrite drift on a 9B local model)
 
@@ -195,13 +195,14 @@ Plans:
 - [ ] 15-03-PLAN.md — retrieval primitives: vector search with query vector, FTS5 search, non-streaming rewrite and rerank calls
 - [ ] 15-04-PLAN.md — shared two-stage retrieval pipeline with optional stages and metadata-only trace
 - [ ] 15-05-PLAN.md — chat-turn integration: payload v2, below-threshold path, client/model wiring in ws
-- [ ] 15-06-PLAN.md — eval tooling: draft calibration fixture, calibrate and ablate subcommands, DeepSeek judge script
-- [x] 15-07-PLAN.md — UI: "Поиск ⚙" popover, "Детали поиска" block, grey below-threshold line (requires Phase 14 plan 14-06) (completed 2026-10-03)
+- [ ] 15-06-PLAN.md — eval tooling: draft calibration fixture, calibrate and ablate subcommands (ablate at the Day 22 max_tokens 4096)
+- [ ] 15-07-PLAN.md — UI: "Поиск ⚙" popover, "Детали поиска" block, grey below-threshold line (requires Phase 14 plan 14-06)
 - [ ] 15-08-PLAN.md — calibration set approval and freeze, live calibration for nomic and bge-m3 (checkpoint)
 - [ ] 15-09-PLAN.md — user decisions on thresholds and FTS exemption, calibrated constants written (checkpoints)
 - [ ] 15-10-PLAN.md — live 7-run ablation on the Day 22 winner and manual verdicts (requires Phase 14 plan 14-07)
-- [ ] 15-11-PLAN.md — DeepSeek key checkpoint, judge column, Day23_report.md, user review (checkpoints)
+- [ ] 15-11-PLAN.md — DeepSeek key + model check, judge column, Day23_report.md, user review (checkpoints)
 - [ ] 15-12-PLAN.md — Playwright E2E on the isolated copy and docs sync
+- [ ] 15-13-PLAN.md — DeepSeek LLM-judge script with key/model `--check` (wave 1; split out of 15-06)
 
 ### Phase 16: Citations and anti-hallucination (Day 24)
 

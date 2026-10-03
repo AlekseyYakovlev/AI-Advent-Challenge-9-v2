@@ -64,7 +64,7 @@
 
 ## Summary
 
-Phase 14 is only partly executed in the repo (branch `Day21` checkout, plans 14-01..14-05 have SUMMARYs; 14-06 UI, 14-07 eval/`Day22_report.md`, 14-08 docs/E2E do not). The backend this phase extends exists and is small: `agent/rag.py` (`retrieve`, `build_rag_block`, versioned payload, `PAYLOAD_VERSION = 1`), `agent/rag_turn.py::prepare_rag_turn` (called from `agent/ws.py` before the stream; payload goes to `Message.rag_sources` and `done.rag`), `agent/rag_api.py` (GET/PUT `/api/v1/chats/{id}/rag`), `agent/kb_search.py::search_kb`, and `scripts/rag_eval.py` + `tests/fixtures/rag/control_set.json` (frozen, 10 questions). `ui/static/app.js` contains no RAG code yet, so Phase 15 UI work depends on Phase 14 plan 06 landing first (the `#rag-k-wrap` anchor and the "Источники" block do not exist). The planner must sequence Phase 14 plans 06-08 before Phase 15 UI work, or state this dependency explicitly.
+At research time Phase 14 was only partly executed (plans 14-01..14-05 had SUMMARYs; 14-06 UI, 14-07 eval/`Day22_report.md`, 14-08 docs/E2E did not). Update 2026-10-03: Phase 14 is now fully executed — see Open Questions (RESOLVED), item 1. The backend this phase extends exists and is small: `agent/rag.py` (`retrieve`, `build_rag_block`, versioned payload, `PAYLOAD_VERSION = 1`), `agent/rag_turn.py::prepare_rag_turn` (called from `agent/ws.py` before the stream; payload goes to `Message.rag_sources` and `done.rag`), `agent/rag_api.py` (GET/PUT `/api/v1/chats/{id}/rag`), `agent/kb_search.py::search_kb`, and `scripts/rag_eval.py` + `tests/fixtures/rag/control_set.json` (frozen, 10 questions). `ui/static/app.js` contains no RAG code yet, so Phase 15 UI work depends on Phase 14 plan 06 landing first (the `#rag-k-wrap` anchor and the "Источники" block do not exist). The planner must sequence Phase 14 plans 06-08 before Phase 15 UI work, or state this dependency explicitly.
 
 No new Python packages are needed. FTS5 works in the Python/SQLite build in use (SQLite 3.50.4, `unicode61` tokenizer case-folds Cyrillic, prefix queries and triggers work, FK cascades fire the FTS delete trigger). FAISS `IndexIDMap2` supports `reconstruct(id)`, which gives the cosine of an FTS-only hit without re-embedding. The lexical reranker is hand-rolled pure Python (no `rank_bm25`, no stemmer package).
 
@@ -259,7 +259,7 @@ Preliminary evidence from `eval_out/day22/raw/rag_*_Q*.json` (control set top-5,
 | bge-m3 | gold chunk 0.634-0.758 (all rank 1) | Q09 0.540, Q10 0.517 | separable; gap about 0.54-0.63, midpoint about 0.59 |
 | nomic | top-1 0.757-0.839 (gold only in 3/8) | Q09 0.756, Q10 0.772 | not separable: OOC top-1 inside the answerable band; any cut that drops OOC drops answerable chunks |
 
-Also visible: bge non-gold chunks of answerable questions score 0.59-0.65, so a ~0.59 cut mostly removes out-of-corpus noise, not weak neighbours; nomic hit@5 was 2/6 on direct questions vs bge 6/6, so by Day 22 retrieval data bge-m3 is the likely D-16 winner. `Day22_report.md` does not exist yet (14-07 pending), so the planner must confirm the winner from it before the ablation (checkpoint). For nomic, decide the constant by the rule above and state `not separable`; an open question below asks whether to force 0.0 instead.
+Also visible: bge non-gold chunks of answerable questions score 0.59-0.65, so a ~0.59 cut mostly removes out-of-corpus noise, not weak neighbours; nomic hit@5 was 2/6 on direct questions vs bge 6/6, so by Day 22 retrieval data bge-m3 is the likely D-16 winner. `Day22_report.md` did not exist at research time; it has since been written (Phase 14 complete), and plan 15-10 Step 1 confirms the winner from it before the ablation. For nomic, decide the constant by the rule above and state `not separable`; an open question below asks whether to force 0.0 instead.
 
 ### Anti-Patterns to Avoid
 - **Copying a tutorial threshold (0.75):** bge-m3 here lives at 0.5-0.76; 0.75 would cut nearly everything (Pitfall 16).
@@ -395,19 +395,28 @@ def build_fts_query(question: str) -> str | None:
 | A4 | Rewrite validator rules (lengths, markers, number preservation) catch 9B drift | Pattern 5 | Some bad rewrites pass; mitigated by D-12 merge + threshold |
 | A5 | cos(q, rewrite) floor can be set empirically; no floor proposed now | Pattern 5 | None until measured |
 | A6 | LM Studio supports `response_format` JSON schema | Pattern 6 | Only affects an optional path |
-| A7 | bge-m3 will be the Day 22 winner (inferred from raw hit@k; `Day22_report.md` not written) | Pattern 7 | Matrix would need to run on nomic |
+| A7 | bge-m3 will be the Day 22 winner (inferred from raw hit@k at research time; `Day22_report.md` has since been written — plan 15-10 Step 1 reads the winner from it) | Pattern 7 | Matrix would need to run on nomic |
 | A8 | `reasoning_effort: none` works for qwen3.5-9b in LM Studio (works in `titles.py` per existing code; not re-tested here) | Pitfall 5 | Rewrite empties; retry path covers rejection but not silent ignoring |
 
-## Open Questions
+## Open Questions (RESOLVED)
+
+All five questions were closed during planning / plan revision (2026-10-03). Each item keeps the original question and adds its resolution.
 
 1. **Phase 14 UI/report not finished.**
-   - Known: 14-06 (UI), 14-07 (Day22 eval + report), 14-08 (E2E/docs) have no SUMMARY; `app.js` has no RAG code.
-   - Unclear: whether Phase 15 plans run after those are executed.
-   - Recommendation: planner makes Phase 15 UI plans and the ablation depend on 14-06/14-07 explicitly, or flags the sequence to the user.
-2. **FTS exemption scope (Pitfall 2).** D-08 says an FTS hit passes the cut; research recommends gating the exemption with a keyword check so out-of-corpus questions are not flooded. Confirm with the user or implement behind a documented constant.
-3. **Nomic threshold when not separable.** Day 22 data suggests no threshold separates nomic. Recommendation: still report distributions (RANK-07), store the max-J value, mark `not separable` in the report; alternative is 0.0 (no cut). User choice at the calibration checkpoint.
-4. **Judge model name.** `DEEPSEEK_BASE_URL` is `https://api.deepseek.com`; the model id (`deepseek-chat`) should be read from the seeded provider rather than hardcoded [ASSUMED]. `.env` key value is unverified.
-5. **Candidate cap in payload.** D-06 says no cap; at candidate-K 50 with two queries and FTS the list is at most ~100 rows (~20 KB). Acceptable; no action.
+   - Original: 14-06 (UI), 14-07 (Day22 eval + report), 14-08 (E2E/docs) had no SUMMARY at research time; `app.js` had no RAG code.
+   - RESOLVED: Phase 14 is now fully executed. `14-06-SUMMARY.md`, `14-07-SUMMARY.md` and `14-08-SUMMARY.md` exist, `Day22_report.md` is at the repo root, `ui/static/index.html` has `id="rag-k-wrap"` and `ui/static/app.js` has `buildRagSourcesBlock` and the other RAG functions. Plans 15-07, 15-10 and 15-12 keep their fail-closed precondition checks on these artifacts (they now pass). Statements elsewhere in this document that these artifacts are missing (Summary, Pattern 7, assumption A7) describe the state at research time and are superseded by this item.
+2. **FTS exemption scope (Pitfall 2).**
+   - Original: D-08 says an FTS hit passes the cut; research recommends gating the exemption with a keyword check so out-of-corpus questions are not flooded.
+   - RESOLVED: decided by the user at the blocking `checkpoint:decision` in plan 15-09 Task 2, on the measured FTS-probe counts from plan 15-08 (`calibration.json` `fts_probe`); the locked D-08 behaviour is the default option, and the chosen constant is written by 15-09.
+3. **Nomic threshold when not separable.**
+   - Original: Day 22 data suggests no threshold separates nomic; store the max-J value marked `not separable`, or 0.0 (no cut)?
+   - RESOLVED: decided by the user at the blocking `checkpoint:decision` in plan 15-09 Task 1, on the measured distributions from plan 15-08; option a (the rule-derived value per D-15/D-16, reported as `not separable`) is the locked default. RANK-07 distributions for both embedders are reported in `Day23_report.md` (plan 15-11) whichever option is chosen.
+4. **Judge model name.**
+   - Original: the model id should be read from the seeded DeepSeek provider rather than hardcoded [ASSUMED]; `.env` key value unverified.
+   - RESOLVED: the seeded provider (`agent/providers.py::_seed_fields`) has no model field (only name, base_url, kind, api_key_env), so there is nothing to read. The judge default is the concrete literal `deepseek-chat` — the only DeepSeek model id used in the codebase (`tests/test_live_deepseek_title.py`, preferred when the provider's model list contains it) — defined as `JUDGE_DEFAULT_MODEL` in `scripts/rag_judge.py` (plan 15-13) and overridable with `--model`. Before the judge run, plan 15-11 Task 1 runs `rag_judge.py --check`, which confirms against the live API that the key and the model id are accepted, and selects another listed id if `deepseek-chat` is not offered.
+5. **Candidate cap in payload.**
+   - Original: D-06 says no cap; at candidate-K 50 with two queries and FTS the list is at most ~100 rows (~20 KB).
+   - RESOLVED: no action. The trace is metadata only (no chunk text), bounded by the validated candidate-K range, and ~20 KB per message in SQLite and in one `done` frame is negligible for a local single-deployment app; adding a cap would contradict D-06.
 
 ## Environment Availability
 
