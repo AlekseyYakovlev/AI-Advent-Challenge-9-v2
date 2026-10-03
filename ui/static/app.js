@@ -1267,6 +1267,7 @@ async function selectChat(chatId) {
         return;
     }
     disconnectWs(false);
+    closeRagSearchPopover(false);
     state.currentChatId = chatId;
     state.lastStats = null;
     state.lastStatsChatId = null;
@@ -3351,6 +3352,7 @@ function bindEvents() {
     $('rag-kb-select').addEventListener('change', (e) => {
         saveChatRag({ kb_id: e.target.value ? Number(e.target.value) : null });
     });
+    bindRagSearchUi();
     $('rag-k-input').addEventListener('change', (e) => {
         const clamped = Math.min(20, Math.max(1, parseInt(e.target.value, 10) || 5));
         e.target.value = String(clamped);
@@ -3878,6 +3880,7 @@ function renderRagControls() {
         badge.textContent = 'без RAG';
         badge.title = 'без RAG';
         badge.classList.remove('text-yellow-400');
+        closeRagSearchPopover(false);
         return;
     }
 
@@ -3912,9 +3915,107 @@ function renderRagControls() {
     badge.title = text;
     badge.classList.toggle('text-yellow-400', unavailable);
     badge.classList.toggle('text-slate-300', !unavailable);
+    if (!isOn) closeRagSearchPopover(false);
+    renderRagSearchPopover();
 }
 
-async function saveChatRag(patch) {
+function closeRagSearchPopover(returnFocus) {
+    const pop = $('rag-search-popover');
+    const btn = $('rag-search-btn');
+    if (!pop || !btn || pop.classList.contains('hidden')) return;
+    pop.classList.add('hidden');
+    btn.setAttribute('aria-expanded', 'false');
+    if (returnFocus) btn.focus();
+}
+
+function renderRagSearchPopover() {
+    const cfg = state.rag;
+    const btn = $('rag-search-btn');
+    if (!cfg || !btn) return;
+    const candidate = $('rag-candidate-k');
+    candidate.min = String(cfg.top_k || 1);
+    candidate.value = String(cfg.candidate_k || 20);
+
+    const threshold = $('rag-threshold');
+    const note = $('rag-threshold-note');
+    const reset = $('rag-threshold-reset');
+    const hasOverride = typeof cfg.threshold === 'number';
+    if (hasOverride) {
+        threshold.value = cfg.threshold.toFixed(2);
+        note.textContent = '';
+    } else if (typeof cfg.calibrated_threshold === 'number') {
+        threshold.value = cfg.calibrated_threshold.toFixed(2);
+        note.textContent = '(калибр.)';
+    } else {
+        threshold.value = '0.00';
+        note.textContent = '(нет калибровки)';
+    }
+    reset.classList.toggle('hidden', !hasOverride);
+
+    const flags = {
+        'rag-stage-lexical': cfg.lexical,
+        'rag-stage-llm': cfg.llm_rerank,
+        'rag-stage-hybrid': cfg.hybrid,
+        'rag-stage-rewrite': cfg.rewrite,
+    };
+    Object.entries(flags).forEach(([id, value]) => { $(id).checked = Boolean(value); });
+    const anyOn = Object.values(flags).some(Boolean);
+    ['border-indigo-500', 'text-white'].forEach((c) => btn.classList.toggle(c, anyOn));
+    ['border-slate-700', 'text-slate-300'].forEach((c) => btn.classList.toggle(c, !anyOn));
+}
+
+async function saveRagSearchSetting(patch) {
+    await saveChatRag(
+        patch,
+        'Не удалось сохранить настройки поиска. Проверьте соединение и попробуйте снова.',
+    );
+}
+
+function bindRagSearchUi() {
+    const btn = $('rag-search-btn');
+    const pop = $('rag-search-popover');
+    btn.addEventListener('click', () => {
+        const opening = pop.classList.contains('hidden');
+        pop.classList.toggle('hidden', !opening);
+        btn.setAttribute('aria-expanded', String(opening));
+        if (opening) $('rag-candidate-k').focus();
+    });
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && !pop.classList.contains('hidden')) closeRagSearchPopover(true);
+    });
+    document.addEventListener('click', (e) => {
+        if (!pop.classList.contains('hidden') && !pop.parentElement.contains(e.target)) {
+            closeRagSearchPopover(false);
+        }
+    });
+    $('rag-candidate-k').addEventListener('change', (e) => {
+        if (!state.rag) return;
+        const low = state.rag.top_k || 1;
+        const clamped = Math.min(50, Math.max(low, parseInt(e.target.value, 10) || low));
+        e.target.value = String(clamped);
+        saveRagSearchSetting({ candidate_k: clamped });
+    });
+    $('rag-threshold').addEventListener('change', (e) => {
+        if (e.target.value.trim() === '') {
+            saveRagSearchSetting({ threshold: null });
+            return;
+        }
+        const parsed = parseFloat(e.target.value);
+        const value = Number.isFinite(parsed) ? Math.round(Math.min(1, Math.max(0, parsed)) * 100) / 100 : 0;
+        saveRagSearchSetting({ threshold: value });
+    });
+    $('rag-threshold-reset').addEventListener('click', () => saveRagSearchSetting({ threshold: null }));
+    [
+        ['rag-stage-lexical', 'lexical'],
+        ['rag-stage-llm', 'llm_rerank'],
+        ['rag-stage-hybrid', 'hybrid'],
+        ['rag-stage-rewrite', 'rewrite'],
+    ].forEach(([id, field]) => {
+        $(id).addEventListener('change', (e) => saveRagSearchSetting({ [field]: e.target.checked }));
+    });
+}
+
+async function saveChatRag(patch, errorText) {
     if (!state.currentChatId || !state.rag) return;
     const chatId = state.currentChatId;
     const prev = state.rag;
@@ -3922,8 +4023,11 @@ async function saveChatRag(patch) {
         mode: prev.mode,
         kb_id: prev.kb_id,
         top_k: prev.top_k,
-        ...patch,
     };
+    ['mode', 'kb_id', 'top_k', 'candidate_k', 'threshold', 'lexical', 'llm_rerank', 'hybrid', 'rewrite']
+        .forEach((key) => {
+            if (key in patch) body[key] = patch[key];
+        });
     try {
         const cfg = await apiFetch(`/api/v1/chats/${chatId}/rag`, {
             method: 'PUT',
@@ -3934,7 +4038,7 @@ async function saveChatRag(patch) {
     } catch (err) {
         if (state.currentChatId !== chatId) return;
         state.rag = prev;
-        showToast('Не удалось сохранить настройки RAG. Проверьте соединение и попробуйте снова.', 'error');
+        showToast(errorText || 'Не удалось сохранить настройки RAG. Проверьте соединение и попробуйте снова.', 'error');
     }
     renderRagControls();
 }
