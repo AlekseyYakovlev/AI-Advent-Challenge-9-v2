@@ -616,3 +616,98 @@ class LlmProviderSeed(SQLModel, table=True):
         ),
     )
     seed_key: str = Field(primary_key=True, max_length=50)
+
+
+class KbStatus(str, Enum):
+    """Indexing lifecycle status of a knowledge base."""
+
+    QUEUED = "queued"
+    INDEXING = "indexing"
+    READY = "ready"
+    FAILED = "failed"
+
+
+class KbStrategy(str, Enum):
+    """Chunking strategy used when indexing a knowledge base."""
+
+    FIXED = "fixed"
+    STRUCTURAL = "structural"
+
+
+def _kb_enum_column(enum_cls: type[Enum]) -> Column:
+    """Build a non-null enum column that stores member values."""
+    return Column(
+        SAEnum(enum_cls, values_callable=lambda cls: [member.value for member in cls]),
+        nullable=False,
+    )
+
+
+class KnowledgeBase(SQLModel, table=True):
+    """A user-owned document collection with its indexing configuration and progress."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(
+        sa_column=Column(
+            Integer, ForeignKey("user.id", ondelete="CASCADE"), nullable=False, index=True
+        )
+    )
+    name: str = Field(max_length=200)
+    status: KbStatus = Field(default=KbStatus.QUEUED, sa_column=_kb_enum_column(KbStatus))
+    error: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    strategy: KbStrategy = Field(sa_column=_kb_enum_column(KbStrategy))
+    chunk_size: int
+    chunk_overlap: int
+    embedding_model: str
+    dim: int | None = None
+    query_prefix: str = ""
+    doc_prefix: str = ""
+    file_count: int = 0
+    chunk_count: int = 0
+    done_chunks: int = 0
+    total_chunks: int = 0
+    phase: str | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class KbDocument(SQLModel, table=True):
+    """A source file uploaded into a knowledge base."""
+
+    __table_args__ = (UniqueConstraint("kb_id", "sha256", name="uq_kbdocument_kb_sha256"),)
+
+    id: int | None = Field(default=None, primary_key=True)
+    kb_id: int = Field(
+        sa_column=Column(
+            Integer, ForeignKey("knowledgebase.id", ondelete="CASCADE"), nullable=False, index=True
+        )
+    )
+    filename: str
+    sha256: str = Field(max_length=64)
+    size_bytes: int
+    page_count: int | None = None
+    stored_name: str
+
+
+class KbChunk(SQLModel, table=True):
+    """A text chunk of a document; its id doubles as the FAISS vector id."""
+
+    id: int | None = Field(default=None, primary_key=True)
+    kb_id: int = Field(
+        sa_column=Column(
+            Integer, ForeignKey("knowledgebase.id", ondelete="CASCADE"), nullable=False, index=True
+        )
+    )
+    document_id: int = Field(
+        sa_column=Column(
+            Integer, ForeignKey("kbdocument.id", ondelete="CASCADE"), nullable=False, index=True
+        )
+    )
+    chunk_index: int
+    chunk_id: str
+    text: str = Field(sa_column=Column(Text, nullable=False))
+    section: str | None = None
+    source: str
+    title: str
+    page_start: int | None = None
+    char_start: int
+    char_end: int

@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     LLM_PROVIDER_CHECK_TIMEOUT: float = 10.0
     # File whose declared variable names provider key references may resolve.
     LLM_PROVIDER_ENV_FILE: str = ".env"
+    # Knowledge-base storage root; empty means "<DB_PATH stem>_kb" next to the DB file.
+    KB_STORAGE_DIR: str = ""
+    # Per-request timeout for embeddings and embedding-model loads (separate from LLM_TIMEOUT).
+    KB_EMBED_TIMEOUT: float = 120.0
 
 
 settings = Settings()
