@@ -129,7 +129,14 @@ def test_render_answers_table_truncates() -> None:
 
 
 def test_importing_module_creates_no_db() -> None:
-    assert not (REPO_ROOT / "eval_out" / "day22" / "eval.db").exists()
+    """Importing the script must not create or touch the scratch DB (it may already exist after a live eval run)."""
+    scratch_db = REPO_ROOT / "eval_out" / "day22" / "eval.db"
+    before = scratch_db.stat().st_mtime_ns if scratch_db.exists() else None
+    spec = importlib.util.spec_from_file_location("rag_eval_reimport", REPO_ROOT / "scripts" / "rag_eval.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    after = scratch_db.stat().st_mtime_ns if scratch_db.exists() else None
+    assert before == after
 
 
 DOC = {"doc.txt": " ".join(f"Раздел номер {i} описывает тему {i * 7919}." for i in range(80))}
