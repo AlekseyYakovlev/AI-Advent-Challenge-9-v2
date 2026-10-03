@@ -232,7 +232,7 @@ function renderStatsPanel() {
 
     const stats = state.lastStats;
     const ctxSize = stats?.current_context_size ?? (userTokens + assistantTokens);
-    const ctxWindow = stats?.context_window_size ?? state.contextWindow ?? 16384;
+    const ctxWindow = stats?.context_window_size ?? state.contextWindow ?? 65536;
     const percent = stats?.usage_percent
         ?? (ctxWindow > 0 ? Math.round((ctxSize / ctxWindow) * 1000) / 10 : 0);
 
@@ -3223,7 +3223,7 @@ async function openSettingsModal() {
 
     $('settings-strategy').value = settings.strategy;
 
-    const contextLength = settings.context_length || 16384;
+    const contextLength = settings.context_length || 65536;
     $('settings-context-length').value = contextLength;
     $('context-length-value').textContent = contextLength;
 

@@ -96,8 +96,8 @@ class Settings(SQLModel, table=True):
     )
     system_prompt: str = Field(default="You are a helpful assistant.")
     temperature: float = Field(default=0.7)
-    context_length: int = Field(default=16384, ge=512, le=32768)
-    max_tokens: int = Field(default=4096)
+    context_length: int = Field(default=65536, ge=512, le=131072)
+    max_tokens: int = Field(default=65536)
     strategy: ContextStrategy = Field(
         default=ContextStrategy.SLIDING_WINDOW,
         sa_column=Column(

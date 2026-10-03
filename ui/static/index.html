@@ -227,7 +227,7 @@
                     </div>
                     <div>
                         <div class="text-slate-500">Текущий контекст</div>
-                        <div id="stats-current-context" class="text-white font-semibold">0 / 16384</div>
+                        <div id="stats-current-context" class="text-white font-semibold">0 / 65536</div>
                     </div>
                     <div>
                         <div class="text-slate-500">Использование</div>
@@ -286,15 +286,15 @@
                 <div>
                     <label for="settings-context-length" class="block text-sm text-slate-400 mb-1">
                         Context Length (tokens)
-                        <span id="context-length-value" class="text-indigo-400">16384</span>
+                        <span id="context-length-value" class="text-indigo-400">65536</span>
                     </label>
                     <input type="range" id="settings-context-length"
-                           min="512" max="32768" step="512" value="16384"
+                           min="512" max="131072" step="512" value="65536"
                            class="w-full accent-indigo-500">
                     <div class="flex justify-between text-xs text-slate-500 mt-1">
                         <span>512</span>
-                        <span>16384</span>
-                        <span>32768</span>
+                        <span>65536</span>
+                        <span>131072</span>
                     </div>
                     <p class="text-xs text-slate-500 mt-1">
                         Максимальный размер контекстного окна. Рекомендуется не превышать лимит вашей модели.
@@ -312,7 +312,7 @@
                 </div>
                 <div>
                     <label for="settings-max-tokens" class="block text-sm text-slate-400 mb-1">Max Tokens (response)</label>
-                    <input type="number" id="settings-max-tokens" min="256" max="128000" step="256" value="4096"
+                    <input type="number" id="settings-max-tokens" min="256" max="128000" step="256" value="65536"
                         class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
                     <p class="text-xs text-slate-500 mt-1">Maximum response length</p>
                 </div>

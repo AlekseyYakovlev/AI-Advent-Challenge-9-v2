@@ -91,7 +91,7 @@ class SettingsUpdate(BaseModel):
         max_length=SYSTEM_PROMPT_MAX_LENGTH,
     )
     temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
-    context_length: Optional[int] = Field(default=None, ge=512, le=32768)
+    context_length: Optional[int] = Field(default=None, ge=512, le=131072)
     max_tokens: Optional[int] = Field(default=None, ge=256, le=128000)
     strategy: Optional[ContextStrategy] = None
     facts_json: Optional[str] = Field(
