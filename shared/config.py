@@ -50,6 +50,8 @@ class Settings(BaseSettings):
     KB_EMBED_TIMEOUT: float = 120.0
     # Bound on the query embedding during a chat turn so RAG cannot stall a reply.
     RAG_EMBED_TIMEOUT: float = 30.0
+    # Timeout in seconds for one query-rewrite or LLM-rerank call.
+    RAG_LLM_STAGE_TIMEOUT: float = 45.0
 
 
 settings = Settings()
