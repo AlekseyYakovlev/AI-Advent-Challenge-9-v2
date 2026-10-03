@@ -38,6 +38,7 @@ Full details: [milestones/v2.0-ROADMAP.md](milestones/v2.0-ROADMAP.md)
 
 - [x] **Phase 10: Modals close only via x button (Day 21)** — carried over from v2.0; a modal closes only on its 'x'; a backdrop click no longer closes it
  (completed 2026-10-02)
+
 - [ ] **Phase 11: Edit and delete long-term memory entries via UI (Day 21)** — carried over from v2.0; "Редактировать" / "Удалить" buttons per long-term memory entry
 - [ ] **Phase 13: Knowledge base indexing (Day 21)** — upload PDF/TXT/MD, chunk (fixed or structural), embed via LM Studio, persist FAISS + SQLite, background indexing with live progress
 - [ ] **Phase 14: First RAG query (Day 22)** — attach a KB to a chat, toggle RAG, retrieve top-K chunks into the LLM request, show sources, frozen 10-question eval and Day22 report
@@ -94,24 +95,40 @@ Plans:
 **Depends on**: Phase 10 (the KB modal holds a file selection and must close only via ×)
 **Requirements**: KB-01, KB-02, KB-03, KB-04, KB-05, KB-06, KB-07, KB-08, KB-09, KB-10, KB-11
 **Success Criteria** (what must be TRUE):
+
   1. User opens "Добавить" in the sidebar "База знаний" block, fills the modal (name, files, chunking strategy, size/overlap, embedding model) and clicks "Индексировать"; the KB appears in the list with name, status and file/chunk counts
   2. Both PDFs from `C:\Projects\RAG` (ФЗ-196, КоАП РФ) index successfully with each chunking strategy; a scanned PDF without a text layer fails with a readable message and invalid size/overlap is rejected in Russian
   3. While indexing runs, the UI shows live status and progress (queued / x of y / ready / failed) and the Agent keeps passing health checks; a job interrupted by an Agent restart shows as failed
   4. A "тест поиска" query against a ready KB returns top chunks with scores and metadata (source, section, chunk_id)
   5. Deleting a KB removes its rows, on-disk index and uploaded files; another user's KB is never visible (404)
+
 **Plans**: 8 plans
 **UI hint**: yes
 **Research flag**: needs deeper research (embedding round trip and per-model prefixes, КоАП header/footer patterns, VRAM co-loading with the chat model); start with a short spike
 
 Plans:
 
+**Wave 1**
+
 - [ ] 13-01-PLAN.md — Foundation: pinned RAG deps, KB config keys, KnowledgeBase/KbDocument/KbChunk tables, FAISS bytes storage helper, KB state, test isolation
 - [ ] 13-02-PLAN.md — KB limits module + pure chunkers (fixed with validation, structural cascade with breadcrumbs and 2000-char sub-split)
 - [ ] 13-03-PLAN.md — PyMuPDF/TXT/MD loaders with header/footer/annotation cleaning, scan detection, golden tests on real КоАП/ФЗ-196 pages
-- [ ] 13-04-PLAN.md — Embeddings client with D-24 identity guard, explicit load, batching, prefixes; additive `type` on provider models
-- [ ] 13-05-PLAN.md — Background indexing job (all-or-nothing), delete with cancel, orphan recovery, kb_progress events, lifespan wiring
-- [ ] 13-06-PLAN.md — KB REST API (multipart 202 create with caps/dedupe, list/get/delete, search, embedding models/check) + search service
 - [ ] 13-07-PLAN.md — Sidebar «База знаний» block, create modal, test-search modal, live progress, chat picker hides embeddings
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 13-04-PLAN.md — Embeddings client with D-24 identity guard, explicit load, batching, prefixes; additive `type` on provider models
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 13-05-PLAN.md — Background indexing job (all-or-nothing), delete with cancel, orphan recovery, kb_progress events, lifespan wiring
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 13-06-PLAN.md — KB REST API (multipart 202 create with caps/dedupe, list/get/delete, search, embedding models/check) + search service
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
 - [ ] 13-08-PLAN.md — Real-PDF golden tests, Playwright E2E on isolated copy (18000/18001) with both PDFs and strategies, docs sync
 
 ### Phase 14: First RAG query (Day 22)
@@ -121,10 +138,12 @@ Plans:
 **Depends on**: Phase 13
 **Requirements**: RAG-01, RAG-02, RAG-03, RAG-04, RAG-05, RAG-06, RAG-07, RAG-08
 **Success Criteria** (what must be TRUE):
+
   1. User attaches a KB to a chat and switches between "без RAG" and "с RAG"; the current mode and KB are visibly indicated in the chat
   2. With RAG on, an answer is based on the top-K retrieved chunks and shows its sources (file, section, chunk_id, score) under the message; the stored user message remains the raw question
   3. If the embedding model is unavailable or the KB was deleted, the turn still answers without RAG and shows a visible warning; a large RAG block never deletes the user message
   4. `scripts/rag_eval.py` runs the frozen 10-question control set (including out-of-corpus questions) and `Day22_report.md` compares no-RAG vs RAG answers and giga vs nomic embeddings on hit@k
+
 **Plans**: TBD
 **UI hint**: yes
 **Research flag**: standard patterns; decide the retrieval result shape, `rag_sources` storage and eval fixture here
@@ -136,10 +155,12 @@ Plans:
 **Depends on**: Phase 14
 **Requirements**: RANK-01, RANK-02, RANK-03, RANK-04, RANK-05, RANK-06, RANK-07, RANK-08, RANK-09
 **Success Criteria** (what must be TRUE):
+
   1. User can configure candidate top-K, final top-K and the similarity threshold per chat, and low-scoring chunks are cut before reaching the LLM
   2. User can enable the lexical reranker, the LLM reranker, hybrid FTS5 retrieval and query rewrite independently; rewrite falls back to the original question on bad output
   3. A collapsible "Детали поиска" block under each RAG answer shows the (rewritten) query, candidates with scores, what was cut and why, and the final chunks
   4. The threshold is calibrated per embedding model on the control set, and `Day23_report.md` compares no filter vs filter, each reranker and rewrite (optional LLM-judge column, manual verdict primary)
+
 **Plans**: TBD
 **UI hint**: yes
 **Research flag**: needs deeper research (empirical threshold calibration, rewrite drift on a 9B local model)
@@ -151,10 +172,12 @@ Plans:
 **Depends on**: Phase 15
 **Requirements**: CITE-01, CITE-02, CITE-03, CITE-04
 **Success Criteria** (what must be TRUE):
+
   1. Each RAG answer shows the answer text, a list of sources (source + section / chunk_id) and quotes taken from the retrieved chunks
   2. Each quote is marked verified or unverified by a server-side substring check against the cited chunk, and sources are rendered from chunk metadata, not from model text
   3. An out-of-corpus question gets "не знаю" plus a clarifying question, enforced in code when best relevance is below the threshold
   4. The Day 24 report section records, per control question, sources present, quotes present, meaning matches quotes, and correct "не знаю" on out-of-corpus questions
+
 **Plans**: TBD
 **UI hint**: yes
 **Research flag**: needs deeper research (local-model compliance with `[n]` citations and verbatim quotes)
@@ -166,10 +189,12 @@ Plans:
 **Depends on**: Phase 16
 **Requirements**: RCHAT-01, RCHAT-02, RCHAT-03, RCHAT-04, RCHAT-05
 **Success Criteria** (what must be TRUE):
+
   1. In a RAG chat, history is kept, retrieval runs on every new question and every answer shows its sources
   2. Task memory (goal, clarified points, constraints/terms) updates after each turn and is visible in the UI
   3. A follow-up question that depends on earlier turns retrieves correctly because task memory and recent history feed the query rewrite and the system prompt
   4. Two scripted 10-15 message scenarios run end to end with the goal kept and sources on every turn, documented in `Day25_report.md`
+
 **Plans**: TBD
 **UI hint**: yes
 **Research flag**: standard patterns; confirm `dialog_state` rendering in the memory panel during planning

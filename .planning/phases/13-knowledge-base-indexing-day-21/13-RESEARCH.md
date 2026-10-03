@@ -380,13 +380,13 @@ Create via `create_all` (no migration needed for new tables). `file_count`/`chun
 | A5 | Dehyphenation rule (lowercase next line, >=3 letters) | Spike (b) | Minor word glue; golden test catches |
 | A6 | Annotation regex scope for Техэксперт/КонсультантПлюс | Spike (b) | Residual noise in chunks; tune with golden test |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **BLOCKER: what to do about giga (D-07/D-09 default)?**
+1. **BLOCKER: what to do about giga (D-07/D-09 default)?** RESOLVED: D-24 (user-confirmed guard + nomic default).
    - Known: LM Studio cannot serve giga on `/v1/embeddings`; with nomic loaded, giga requests return nomic vectors; alone it errors "No models loaded". The assignment named giga as default.
    - Recommendation: keep giga in the list but mark unsupported via the type guard (error text above), make the dropdown default the first model that passes the guard (nomic), keep the D-09 prefix table with giga = none. Needs user confirmation (planner should add a `checkpoint:decision` or encode the guard + fallback default as the documented deviation). Optionally the user can try a different LM Studio build/another embeddings GGUF (e.g. bge-m3), which would then pass the guard automatically.
-2. **Size upper bound 2000 chars** is an addition to D-11 (needed by the truncation finding). Recommend accepting it.
-3. **Exact КоАП golden counts** (unique articles after cleaning) should be fixed in the golden test from the first implementation run.
+2. **Size upper bound 2000 chars** is an addition to D-11 (needed by the truncation finding). Recommend accepting it. RESOLVED: D-25.
+3. **Exact КоАП golden counts** (unique articles after cleaning) should be fixed in the golden test from the first implementation run. RESOLVED: plan 13-08 golden test (tests/test_kb_real_pdfs.py).
 
 ## Sources
 
