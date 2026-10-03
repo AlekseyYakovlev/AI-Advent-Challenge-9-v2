@@ -192,9 +192,9 @@ Plans:
 
 **Wave 1**
 
-- [ ] 15-01-PLAN.md — pure ranking helpers: lexical score, fusion, RRF, FTS query builder, rewrite validator, rerank parser, calibration rule
-- [ ] 15-02-PLAN.md — ChatRagConfig search columns, FTS5 mirror with triggers/backfill, calibrated-threshold lookup, partial-update settings API
-- [ ] 15-13-PLAN.md — DeepSeek LLM-judge script with key/model `--check` (wave 1; split out of 15-06)
+- [x] 15-01-PLAN.md — pure ranking helpers: lexical score, fusion, RRF, FTS query builder, rewrite validator, rerank parser, calibration rule
+- [x] 15-02-PLAN.md — ChatRagConfig search columns, FTS5 mirror with triggers/backfill, calibrated-threshold lookup, partial-update settings API
+- [x] 15-13-PLAN.md — DeepSeek LLM-judge script with key/model `--check` (wave 1; split out of 15-06)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -285,7 +285,7 @@ Plans:
 | 11. Edit and delete long-term memory entries via UI (Day 21) | v3.0 | 4/4 | Complete    | 2026-10-03 |
 | 13. Knowledge base indexing (Day 21) | v3.0 | 8/8 | Complete   | 2026-10-03 |
 | 14. First RAG query (Day 22) | v3.0 | 8/8 | Complete    | 2026-10-03 |
-| 15. Reranking and filtering (Day 23) | v3.0 | 0/TBD | Not started | - |
+| 15. Reranking and filtering (Day 23) | v3.0 | 3/13 | In Progress|  |
 | 16. Citations and anti-hallucination (Day 24) | v3.0 | 0/TBD | Not started | - |
 | 17. Mini-chat with RAG and task memory (Day 25) | v3.0 | 0/TBD | Not started | - |
 
