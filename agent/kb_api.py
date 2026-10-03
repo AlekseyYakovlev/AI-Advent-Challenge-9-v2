@@ -284,8 +284,10 @@ async def create_kb(
     except HTTPException as exc:
         logger.warning("kb_create_rejected", user_id=current_user.id, status=exc.status_code)
         raise
+    user_id = current_user.id
+    kb_id: int | None = None
     kb = KnowledgeBase(
-        user_id=current_user.id,
+        user_id=user_id,
         name=name,
         status=KbStatus.QUEUED,
         strategy=kb_strategy,
@@ -298,7 +300,7 @@ async def create_kb(
     try:
         await session.flush()
         kb_id = kb.id
-        stored = await _store_all(files or [], names, current_user.id, kb_id)
+        stored = await _store_all(files or [], names, user_id, kb_id)
         for filename, stored_name, file_size, sha in stored:
             session.add(
                 KbDocument(
@@ -312,21 +314,22 @@ async def create_kb(
         await session.commit()
     except UploadRejectedError as exc:
         await session.rollback()
-        await asyncio.to_thread(remove_kb_dir, current_user.id, kb_id)
-        logger.warning("kb_create_rejected", user_id=current_user.id, reason="upload_rule")
+        if kb_id is not None:
+            await asyncio.to_thread(remove_kb_dir, user_id, kb_id)
+        logger.warning("kb_create_rejected", user_id=user_id, reason="upload_rule")
         raise _unprocessable(exc.message) from exc
     except Exception:
         await session.rollback()
-        if kb.id is not None:
-            await asyncio.to_thread(remove_kb_dir, current_user.id, kb.id)
+        if kb_id is not None:
+            await asyncio.to_thread(remove_kb_dir, user_id, kb_id)
         raise
     await session.refresh(kb)
-    kb_indexer.spawn_index_job(kb.id, current_user.id)
-    hub.publish(current_user.id, kb_progress_frame(kb))
+    kb_indexer.spawn_index_job(kb.id, user_id)
+    hub.publish(user_id, kb_progress_frame(kb))
     logger.info(
         "kb_created",
         kb_id=kb.id,
-        user_id=current_user.id,
+        user_id=user_id,
         file_count=kb.file_count,
         strategy=kb_strategy.value,
     )
