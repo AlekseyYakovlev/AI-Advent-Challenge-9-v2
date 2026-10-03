@@ -337,6 +337,31 @@ chats are not retitled retroactively. A backend that accepts `reasoning_effort` 
 spends the 30 tokens on reasoning and gets the fallback title; this shows up in the log as
 `chat_title_llm_unusable` with `finish_reason` `length` and `has_reasoning` true.
 
+## Long-term memory editing
+
+**Storage.** Table `LongTermMemory`, unique `(user_id, key)`. No schema change.
+
+**CRUD layer.** `agent/memory.py`: `get_long_term_memory` filters by `id` AND `user_id` in one query;
+`update_long_term_memory` checks the key collision before mutating and maps a commit-time `IntegrityError`
+to `MemoryKeyConflictError`; `delete_long_term_memory` returns a bool. Edits never go through the upsert
+`save_long_term_memory`, which would create a second row on a rename.
+
+**Routes.** `PUT` / `DELETE /api/v1/memory/long-term/{entry_id}` are user-scoped without a chat id, answer
+404 for foreign ids and 409 for a duplicate key. Both check Origin; PUT also checks the JSON content type.
+
+**No cache, no event.** `build_system_prompt` and the headless scheduler prompt call
+`list_long_term_memory` on every turn / run, so an edit applies from the next turn. Nothing is stored in
+`agent/state.py` and no `/ws/events` frame is sent, so another tab shows the old list until its next
+refresh.
+
+**Frontend.** `renderMemoryEntries(..., { editable: true })` is used for the long-term list only. The
+edit form is inline (no modal); the draft lives in `state.editingMemory`, so the reload after a `done`
+frame does not discard typing. Memory text is written with `textContent` / `.value` only. Delete asks
+with a native `confirm()` first.
+
+**Known limits.** The model may save a deleted fact again, or re-create a renamed key, through
+`save_long_term_memory`. Working memory is not editable. There is no undo.
+
 ## Knowledge base indexing
 
 Users upload PDF/TXT/MD files into a knowledge base (KB); the Agent splits them into chunks, embeds

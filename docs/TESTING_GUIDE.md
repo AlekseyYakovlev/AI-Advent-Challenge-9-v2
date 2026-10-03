@@ -12,6 +12,7 @@
 - test_titles.py / test_titles_ws.py: see "Chat auto-titling (Day 21)" below
 - test_llm_complete_chat.py: see "Chat auto-titling (Day 21)" below
 - test_modal_close_policy.py: modals have no backdrop-click or Escape closer; every "*-modal" overlay has a bound "btn-close-*" button
+- test_memory.py / test_memory_api.py / test_context_engine_memory.py / test_memory_panel_ui.py: see "Long-term memory editing (Day 21)" below
 
 ## Fixtures
 - Use conftest.py for shared fixtures
@@ -285,3 +286,31 @@ Title tests must create chats titled `New Chat` and classify mocked LLM requests
   nomic dim 768), inline validation, both PDFs with both strategies, live progress with `/health` polling,
   test search cards, scan PDF and giga failures, Agent killed mid-job (restart message), delete during
   and after indexing (directory removed), second-user isolation.
+
+## Long-term memory editing (Day 21)
+
+### test_memory.py (CRUD helpers)
+- owner-only get; update keeps `created_at` and refreshes `updated_at`
+- rename keeps one row; the same key is not a conflict
+- rename conflict and the commit race both raise `MemoryKeyConflictError` and change nothing
+- another user gets None / False; delete removes only the own row
+
+### test_memory_api.py (REST)
+- 401 without a session
+- value-only and key+value updates; key stripped, value stored verbatim
+- 422 table: empty body, both null, blank key, whitespace-only value, over-long key / value; maximum lengths accepted
+- 409 on a duplicate key with both rows unchanged; own current key accepted
+- 404 for a foreign and an unknown id with the same detail; delete 204 then 404
+- working memory is never reachable through the long-term routes
+- 403 for a foreign Origin; 415 for a non-JSON PUT
+
+### test_context_engine_memory.py (prompt effect)
+- the prompt shows the edited key/value and not the old one
+- the long-term label disappears after the last entry is deleted
+
+### test_memory_panel_ui.py (frontend source guard)
+- button labels; no HTML insertion in the memory region; user-scoped routes
+- `confirm()` before the DELETE request; only the long-term list is editable
+- the form is seeded from the full value; no modal and no key handler
+
+Rows are seeded with `memory.save_long_term_memory`; cross-user cases use `second_authenticated_client`.

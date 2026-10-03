@@ -88,6 +88,19 @@ Color indicators:
 - 🟡 Yellow: 75-90% usage (warning)
 - 🔴 Red: 90-100% usage (critical)
 
+## Memory
+
+The memory panel is in the sidebar ("Память"); click the arrow to expand it. It has three layers:
+"Кратковременная", "Рабочая (этот чат)" and "Долговременная (все чаты)".
+
+- Long-term entries are created by the assistant and are shared by all your chats.
+- Each long-term entry has "Редактировать" (change the key and the text in place, then "Сохранить" or "Отмена") and "Удалить" (asks for confirmation; cannot be undone).
+- Two entries cannot have the same key.
+- The assistant uses the changed memory starting with your next message.
+- The assistant may save a deleted fact again if it comes up in conversation.
+- Working memory is read-only.
+- Another open browser tab shows the change after its next answer or chat switch.
+
 ## Context Overflow
 
 When using "No Compression" and context exceeds window:

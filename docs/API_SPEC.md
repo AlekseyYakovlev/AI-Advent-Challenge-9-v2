@@ -8,6 +8,8 @@
 - GET  /api/v1/chats/{chat_id}/tree
 - GET  /api/v1/chats/{chat_id}/stats
 - POST /api/v1/chats/{chat_id}/branch
+- GET  /api/v1/chats/{chat_id}/memory (see "Long-term memory")
+- PUT/DELETE /api/v1/memory/long-term/{entry_id} (see "Long-term memory")
 - GET  /api/v1/settings?chat_id={id}
 - PUT  /api/v1/settings
 - WS   /ws/chat/{chat_id}
@@ -459,6 +461,50 @@ The guard (D-24) therefore rejects non-embedding models with a message containin
 - `kb_deleted`: the knowledge base was removed. Frames go only to the owner's sockets.
 - After an Agent restart, jobs left in `queued` or `indexing` become `failed` with
   `Индексация прервана перезапуском агента. Удалите базу и создайте её заново.`
+
+## Long-term memory (Day 21)
+
+Long-term memory is stored per user and shared by all of the user's chats. All routes below need the
+session cookie. Ownership is enforced in SQL by `user_id`: another user's entry is indistinguishable
+from a missing one.
+
+### GET /api/v1/chats/{chat_id}/memory
+
+Response: `{ "chat_id": 1, "short_term_message_count": 4, "working": [entry], "long_term": [entry] }`
+where `entry = { "id": 7, "key": "...", "value": "...", "updated_at": "..." }`. `long_term` is the same
+list from every chat of the user. Status codes: 200, 401 (no session), 404 (chat of another user or
+unknown).
+
+### PUT /api/v1/memory/long-term/{entry_id}
+
+Request body (JSON, at least one field):
+
+```json
+{ "key": "example_key", "value": "example text" }
+```
+
+- `key` (optional): stripped, 1-200 characters.
+- `value` (optional): not whitespace-only, at most 50 000 characters, stored verbatim.
+
+Response 200: the updated entry `{ id, key, value, updated_at }`.
+
+| Status | Meaning |
+|--------|---------|
+| 200 | Entry updated |
+| 401 | No session |
+| 403 | Origin not allowed |
+| 404 | `Запись памяти не найдена` (unknown id or another user's entry) |
+| 409 | `Запись с таким ключом уже существует` (another entry of the same user has this key; nothing is changed) |
+| 415 | Content-Type is not application/json |
+| 422 | Validation: no field, blank key, whitespace-only value, key over 200, value over 50 000 |
+
+### DELETE /api/v1/memory/long-term/{entry_id}
+
+Status codes: 204 (deleted), 401, 403, 404 (unknown id or another user's entry).
+
+Notes: `updated_at` is refreshed and `created_at` is kept on update. There is no create route (entries are
+created by the LLM tool `save_long_term_memory`). No WebSocket frame is sent for edits; the change is
+visible to the model from the next turn.
 
 ## Environment Settings
 
