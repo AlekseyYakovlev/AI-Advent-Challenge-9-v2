@@ -1,10 +1,11 @@
 ---
 phase: 14
 slug: first-rag-query-day-22
-status: draft
+status: approved
 shadcn_initialized: false
 preset: none
 created: 2026-10-03
+reviewed_at: 2026-10-03
 ---
 
 # Phase 14 — UI Design Contract
