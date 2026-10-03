@@ -39,7 +39,7 @@ Full details: [milestones/v2.0-ROADMAP.md](milestones/v2.0-ROADMAP.md)
 - [x] **Phase 10: Modals close only via x button (Day 21)** — carried over from v2.0; a modal closes only on its 'x'; a backdrop click no longer closes it
  (completed 2026-10-02)
 
-- [ ] **Phase 11: Edit and delete long-term memory entries via UI (Day 21)** — carried over from v2.0; "Редактировать" / "Удалить" buttons per long-term memory entry
+- [x] **Phase 11: Edit and delete long-term memory entries via UI (Day 21)** — carried over from v2.0; "Редактировать" / "Удалить" buttons per long-term memory entry (completed 2026-10-03)
 - [x] **Phase 13: Knowledge base indexing (Day 21)** — upload PDF/TXT/MD, chunk (fixed or structural), embed via LM Studio, persist FAISS + SQLite, background indexing with live progress (completed 2026-10-03)
 - [ ] **Phase 14: First RAG query (Day 22)** — attach a KB to a chat, toggle RAG, retrieve top-K chunks into the LLM request, show sources, frozen 10-question eval and Day22 report
 - [ ] **Phase 15: Reranking and filtering (Day 23)** — two-stage retrieval with threshold, lexical/LLM rerank, hybrid FTS5, query rewrite, "Детали поиска", Day23 report
@@ -87,7 +87,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 11-04-PLAN.md — Playwright browser UAT (S1-S11) on the isolated copy at 18000/18001 with an exit-code / result-file gate and a capped fix-and-rerun loop (wave 3)
+- [x] 11-04-PLAN.md — Playwright browser UAT (S1-S11) on the isolated copy at 18000/18001 with an exit-code / result-file gate and a capped fix-and-rerun loop (wave 3)
 
 ### Phase 13: Knowledge base indexing (Day 21)
 
@@ -237,7 +237,7 @@ Plans:
 | 9. Auto-rename chats with LLM (Day 21) | v2.0 | 6/6 | Complete   | 2026-10-02 |
 | 12. LLM providers section in Settings (Day 21) | v2.0 | 6/6 | Complete   | 2026-10-02 |
 | 10. Modals close only via x button (Day 21) | v3.0 | 1/1 | Complete   | 2026-10-02 |
-| 11. Edit and delete long-term memory entries via UI (Day 21) | v3.0 | 3/4 | In Progress|  |
+| 11. Edit and delete long-term memory entries via UI (Day 21) | v3.0 | 4/4 | Complete   | 2026-10-03 |
 | 13. Knowledge base indexing (Day 21) | v3.0 | 8/8 | Complete   | 2026-10-03 |
 | 14. First RAG query (Day 22) | v3.0 | 0/TBD | Not started | - |
 | 15. Reranking and filtering (Day 23) | v3.0 | 0/TBD | Not started | - |

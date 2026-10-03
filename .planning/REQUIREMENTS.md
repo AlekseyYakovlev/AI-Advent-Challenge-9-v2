@@ -12,12 +12,12 @@
 
 ### Long-term memory editing (carried over from v2.0, Day 21)
 
-- [ ] **MEMUI-01**: Each entry of the sidebar long-term memory list (`#memory-long-term`) has "Редактировать" and "Удалить" buttons; the working-memory list stays read-only
-- [ ] **MEMUI-02**: "Редактировать" opens an inline form in place of the entry (key input + value textarea prefilled with the full stored value, not the 160-character preview; "Сохранить" / "Отмена"); no modal is added; an unsaved draft survives panel re-renders; saving updates the entry, refreshes the panel and shows a toast; keys and values are rendered as plain text only
-- [ ] **MEMUI-03**: `PUT /api/v1/memory/long-term/{entry_id}` updates `key` and/or `value` of the caller's own entry with server-side validation (key stripped and non-blank, value not whitespace-only, at most 200 / 50 000 characters, at least one field); `updated_at` is refreshed and `created_at` kept; a foreign or unknown id returns 404; the route requires the session cookie (401), an allowed Origin (403) and a JSON content type (415)
-- [ ] **MEMUI-04**: Renaming a key onto another existing key of the same user returns 409 with a Russian message and changes nothing (unique `(user_id, key)`)
-- [ ] **MEMUI-05**: `DELETE /api/v1/memory/long-term/{entry_id}` removes the caller's own entry (204; foreign or unknown id -> 404; session cookie and allowed Origin required); the UI asks for confirmation with `confirm()` before the request and refreshes the list
-- [ ] **MEMUI-06**: An edit or delete takes effect on the next turn without any cache invalidation (the next `build_system_prompt` and the headless scheduler prompt reflect the new content); pytest covers CRUD, scoping, validation, conflict and the prompt effect; docs are in sync; the full suite passes
+- [x] **MEMUI-01**: Each entry of the sidebar long-term memory list (`#memory-long-term`) has "Редактировать" and "Удалить" buttons; the working-memory list stays read-only
+- [x] **MEMUI-02**: "Редактировать" opens an inline form in place of the entry (key input + value textarea prefilled with the full stored value, not the 160-character preview; "Сохранить" / "Отмена"); no modal is added; an unsaved draft survives panel re-renders; saving updates the entry, refreshes the panel and shows a toast; keys and values are rendered as plain text only
+- [x] **MEMUI-03**: `PUT /api/v1/memory/long-term/{entry_id}` updates `key` and/or `value` of the caller's own entry with server-side validation (key stripped and non-blank, value not whitespace-only, at most 200 / 50 000 characters, at least one field); `updated_at` is refreshed and `created_at` kept; a foreign or unknown id returns 404; the route requires the session cookie (401), an allowed Origin (403) and a JSON content type (415)
+- [x] **MEMUI-04**: Renaming a key onto another existing key of the same user returns 409 with a Russian message and changes nothing (unique `(user_id, key)`)
+- [x] **MEMUI-05**: `DELETE /api/v1/memory/long-term/{entry_id}` removes the caller's own entry (204; foreign or unknown id -> 404; session cookie and allowed Origin required); the UI asks for confirmation with `confirm()` before the request and refreshes the list
+- [x] **MEMUI-06**: An edit or delete takes effect on the next turn without any cache invalidation (the next `build_system_prompt` and the headless scheduler prompt reflect the new content); pytest covers CRUD, scoping, validation, conflict and the prompt effect; docs are in sync; the full suite passes
 
 ### Knowledge base indexing (Day 21)
 
@@ -95,12 +95,12 @@
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | MODAL-01 | Phase 10 | Pending |
-| MEMUI-01 | Phase 11 | Pending |
-| MEMUI-02 | Phase 11 | Pending |
-| MEMUI-03 | Phase 11 | Pending |
-| MEMUI-04 | Phase 11 | Pending |
-| MEMUI-05 | Phase 11 | Pending |
-| MEMUI-06 | Phase 11 | Pending |
+| MEMUI-01 | Phase 11 | Complete |
+| MEMUI-02 | Phase 11 | Complete |
+| MEMUI-03 | Phase 11 | Complete |
+| MEMUI-04 | Phase 11 | Complete |
+| MEMUI-05 | Phase 11 | Complete |
+| MEMUI-06 | Phase 11 | Complete |
 | KB-01 | Phase 13 | Pending |
 | KB-02 | Phase 13 | Pending |
 | KB-03 | Phase 13 | Pending |
