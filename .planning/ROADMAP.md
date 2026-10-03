@@ -110,10 +110,10 @@ Plans:
 
 **Wave 1**
 
-- [ ] 13-01-PLAN.md — Foundation: pinned RAG deps, KB config keys, KnowledgeBase/KbDocument/KbChunk tables, FAISS bytes storage helper, KB state, test isolation
-- [ ] 13-02-PLAN.md — KB limits module + pure chunkers (fixed with validation, structural cascade with breadcrumbs and 2000-char sub-split)
-- [ ] 13-03-PLAN.md — PyMuPDF/TXT/MD loaders with header/footer/annotation cleaning, scan detection, golden tests on real КоАП/ФЗ-196 pages
-- [ ] 13-07-PLAN.md — Sidebar «База знаний» block, create modal, test-search modal, live progress, chat picker hides embeddings
+- [x] 13-01-PLAN.md — Foundation: pinned RAG deps, KB config keys, KnowledgeBase/KbDocument/KbChunk tables, FAISS bytes storage helper, KB state, test isolation
+- [x] 13-02-PLAN.md — KB limits module + pure chunkers (fixed with validation, structural cascade with breadcrumbs and 2000-char sub-split)
+- [x] 13-03-PLAN.md — PyMuPDF/TXT/MD loaders with header/footer/annotation cleaning, scan detection, golden tests on real КоАП/ФЗ-196 pages
+- [x] 13-07-PLAN.md — Sidebar «База знаний» block, create modal, test-search modal, live progress, chat picker hides embeddings
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -215,7 +215,7 @@ Plans:
 | 12. LLM providers section in Settings (Day 21) | v2.0 | 6/6 | Complete   | 2026-10-02 |
 | 10. Modals close only via x button (Day 21) | v3.0 | 1/1 | Complete   | 2026-10-02 |
 | 11. Edit and delete long-term memory entries via UI (Day 21) | v3.0 | 0/4 | Planned | - |
-| 13. Knowledge base indexing (Day 21) | v3.0 | 0/TBD | Not started | - |
+| 13. Knowledge base indexing (Day 21) | v3.0 | 4/8 | In Progress|  |
 | 14. First RAG query (Day 22) | v3.0 | 0/TBD | Not started | - |
 | 15. Reranking and filtering (Day 23) | v3.0 | 0/TBD | Not started | - |
 | 16. Citations and anti-hallucination (Day 24) | v3.0 | 0/TBD | Not started | - |
