@@ -344,14 +344,17 @@ Existing rows get 1 via the column DEFAULT. API: `strict: StrictBool | None = No
 | A4 | `max_tokens` 8192 for the Day 24 run is enough to remove the empty-answer cases | Pitfall 1 | Not tested; verify in the first run and raise if still `length` |
 | A5 | Existing tests asserting `v == 2` or the below-threshold LLM call need strict-off/updated expectations | Pitfall 7 | Plan under-scopes test updates |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Empty answer (reasoning exhausted budget) in the live chat**
    - What we know: happens 1-3 times in 10 with qwen3.5-9b at 4096; in the app `max_tokens` comes from user settings.
    - What's unclear: current app behaviour for an empty `assistant_text` (persist empty message?).
    - Recommendation: add `answer_empty` handling in `process_answer` (neutral grey note, no amber, no auto quotes) and check how `ws.py` treats empty text today; report in Day 24 as its own category.
+   - RESOLVED: plan 16-01 (`process_answer` returns `answer_empty` True with no quotes, no auto quotes and `answer_supported` None), plan 16-04 Task 2 (the empty answer is persisted as before, with `answer_empty: true` in the payload), plan 16-06 Task 3 (neutral grey note, no amber line), plans 16-05 and 16-07 (kind `empty` is its own category in the Day 24 tables and report).
 2. **Zero-candidate retrieval in strict mode (A3).** Recommend gating it with the no-candidates copy.
+   - RESOLVED: plan 16-03 Task 2 (the strict gate in `prepare_rag_turn` also fires when retrieval returns no candidates: `gated: true`, verdict `ok`), with the no-candidates sentence of `build_idk_reply` from plan 16-01 Task 3 and the grey «Подходящих фрагментов не найдено» line kept by plan 16-06 Task 3. Assumption A3 is accepted.
 3. **Where the strict flag shows in the per-answer mode label (14 D-03).** Recommend no change: label stays `с RAG · K=N`.
+   - RESOLVED: plan 16-04 Task 2 (the per-answer mode label of 14 D-03 is unchanged; the strict flag travels in the payload and is shown by the «Цитаты (N)» block and the answer lines of plan 16-06, not by the label).
 
 ## Environment Availability
 
