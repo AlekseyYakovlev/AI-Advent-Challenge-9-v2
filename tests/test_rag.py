@@ -269,3 +269,53 @@ def test_shipped_calibrated_thresholds_are_valid_cosines() -> None:
         assert marker == marker.lower()
         assert isinstance(value, float)
         assert 0.0 <= value <= 1.0
+
+
+def test_payload_defaults_are_v2_ok_without_search() -> None:
+    payload = rag.build_rag_payload(
+        mode="rag",
+        kb_id=1,
+        kb_name="n",
+        top_k=3,
+        sources=[],
+        dropped=0,
+        context_tokens=0,
+        warning=None,
+    )
+    assert payload["v"] == 2
+    assert payload["verdict"] == "ok"
+    assert payload["search"] is None
+
+
+def test_parse_stored_v1_payload_still_works() -> None:
+    raw = (
+        '{"v": 1, "mode": "rag", "kb_id": 1, "kb_name": "n", "top_k": 3, "sources": [],'
+        ' "dropped": 0, "context_tokens": 0, "warning": null}'
+    )
+    parsed = rag.parse_rag_payload(raw)
+    assert parsed is not None
+    assert parsed["v"] == 1
+    assert "verdict" not in parsed and "search" not in parsed
+
+
+def test_merge_no_fragments_note_changes_only_last_user_message() -> None:
+    llm = [
+        {"role": "system", "content": "sys", "token_count": 1},
+        {"role": "user", "content": "старый", "token_count": 1},
+        {"role": "assistant", "content": "ответ", "token_count": 1},
+        {"role": "user", "content": "новый вопрос", "token_count": 3},
+    ]
+    originals = list(llm)
+    rag.merge_no_fragments_note(llm)
+    assert llm[3]["content"] == (
+        f"{rag.NO_FRAGMENTS_INSTRUCTION}\n\nВопрос: новый вопрос"
+    )
+    assert llm[3]["token_count"] == count_tokens(llm[3]["content"])
+    for position in range(3):
+        assert llm[position] is originals[position]
+
+
+def test_merge_no_fragments_note_without_user_message_is_noop() -> None:
+    llm = [{"role": "system", "content": "sys", "token_count": 1}]
+    rag.merge_no_fragments_note(llm)
+    assert llm == [{"role": "system", "content": "sys", "token_count": 1}]

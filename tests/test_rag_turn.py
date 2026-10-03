@@ -8,7 +8,7 @@ import pytest
 from agent import kb_search, rag_turn
 from agent.kb_indexer import run_index_job
 from agent.llm_client import count_tokens
-from agent.rag import BLOCK_OPEN, RagFailure
+from agent.rag import BLOCK_OPEN, NO_FRAGMENTS_INSTRUCTION, RagFailure
 from agent.rag_turn import prepare_rag_turn
 from kb_helpers import get_kb, install_fake_embedder, seed_kb, seed_user, vector_for
 from shared.database import async_session_factory
@@ -33,13 +33,27 @@ async def _ready_kb(monkeypatch: pytest.MonkeyPatch) -> tuple[int, int]:
     return user_id, kb_id
 
 
-async def _chat(user_id: int, kb_id: int | None, mode: str = "rag", top_k: int = 3) -> int:
+async def _chat(
+    user_id: int,
+    kb_id: int | None,
+    mode: str = "rag",
+    top_k: int = 3,
+    threshold: float | None = None,
+    rewrite: bool = False,
+) -> int:
     async with async_session_factory() as session:
         chat = Chat(title="t", user_id=user_id)
         session.add(chat)
         await session.commit()
         await session.refresh(chat)
-        session.add(ChatRagConfig(chat_id=chat.id, kb_id=kb_id, mode=mode, top_k=top_k))
+        session.add(ChatRagConfig(
+                chat_id=chat.id,
+                kb_id=kb_id,
+                mode=mode,
+                top_k=top_k,
+                threshold=threshold,
+                rewrite=rewrite,
+            ))
         await session.commit()
         return chat.id
 
@@ -52,11 +66,15 @@ def _messages() -> list[dict[str, Any]]:
 
 
 async def _run(
-    chat_id: int, msgs: list[dict[str, Any]], ctx: int = CTX, max_tokens: int = 512
+    chat_id: int,
+    msgs: list[dict[str, Any]],
+    ctx: int = CTX,
+    max_tokens: int = 512,
+    **kwargs: Any,
 ) -> rag_turn.RagTurn:
     async with async_session_factory() as session:
         chat = await session.get(Chat, chat_id)
-        return await prepare_rag_turn(session, chat, QUESTION, msgs, ctx, max_tokens)
+        return await prepare_rag_turn(session, chat, QUESTION, msgs, ctx, max_tokens, **kwargs)
 
 
 async def test_no_config_is_off() -> None:
@@ -82,7 +100,7 @@ async def test_mode_off_with_kb_does_not_retrieve(monkeypatch: pytest.MonkeyPatc
     async def boom(*args: object) -> list[dict[str, Any]]:
         raise AssertionError("retrieve must not run")
 
-    monkeypatch.setattr(rag_turn, "retrieve", boom)
+    monkeypatch.setattr(rag_turn, "run_retrieval_pipeline", boom)
     msgs = _messages()
     turn = await _run(chat_id, msgs)
     assert turn.mode == "off"
@@ -137,7 +155,7 @@ async def test_rag_failure_becomes_warning(monkeypatch: pytest.MonkeyPatch) -> N
     async def failing(*args: object) -> list[dict[str, Any]]:
         raise RagFailure("embedder_unavailable", "нет модели")
 
-    monkeypatch.setattr(rag_turn, "retrieve", failing)
+    monkeypatch.setattr(rag_turn, "run_retrieval_pipeline", failing)
     msgs = _messages()
     turn = await _run(chat_id, msgs)
     assert turn.payload["warning"] == {"code": "embedder_unavailable", "text": "нет модели"}
@@ -153,7 +171,7 @@ async def test_unexpected_error_becomes_retrieval_failed(
     async def failing(*args: object) -> list[dict[str, Any]]:
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(rag_turn, "retrieve", failing)
+    monkeypatch.setattr(rag_turn, "run_retrieval_pipeline", failing)
     turn = await _run(chat_id, _messages())
     assert turn.payload["warning"]["code"] == "retrieval_failed"
 
@@ -165,7 +183,7 @@ async def test_cancellation_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
     async def cancelled(*args: object) -> list[dict[str, Any]]:
         raise asyncio.CancelledError
 
-    monkeypatch.setattr(rag_turn, "retrieve", cancelled)
+    monkeypatch.setattr(rag_turn, "run_retrieval_pipeline", cancelled)
     with pytest.raises(asyncio.CancelledError):
         await _run(chat_id, _messages())
 
@@ -174,10 +192,10 @@ async def test_empty_result_is_rag_without_warning(monkeypatch: pytest.MonkeyPat
     user_id, kb_id = await _ready_kb(monkeypatch)
     chat_id = await _chat(user_id, kb_id)
 
-    async def empty(*args: object) -> list[dict[str, Any]]:
-        return []
+    async def empty(*args: object) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        return [], {"verdict": "ok", "candidates": [], "skipped": []}
 
-    monkeypatch.setattr(rag_turn, "retrieve", empty)
+    monkeypatch.setattr(rag_turn, "run_retrieval_pipeline", empty)
     msgs = _messages()
     turn = await _run(chat_id, msgs)
     assert turn.mode == "rag"
@@ -204,3 +222,88 @@ async def test_partial_fit_reports_dropped(monkeypatch: pytest.MonkeyPatch) -> N
     assert turn.payload["warning"] is None
     assert len(turn.payload["sources"]) + turn.payload["dropped"] == 10
     assert turn.payload["context_tokens"] <= int(1500 * 0.30)
+
+
+async def test_payload_v2_ok_with_trace_and_no_chunk_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    user_id, kb_id = await _ready_kb(monkeypatch)
+    chat_id = await _chat(user_id, kb_id, top_k=3)
+    turn = await _run(chat_id, _messages())
+    payload = turn.payload
+    assert payload["v"] == 2
+    assert payload["verdict"] == "ok"
+    assert len(payload["search"]["candidates"]) >= len(payload["sources"])
+    assert "verdict" not in payload["search"]
+    assert "Раздел номер 3 описывает тему" not in turn.sources_json
+
+
+async def test_below_threshold_sends_note_without_block(monkeypatch: pytest.MonkeyPatch) -> None:
+    user_id, kb_id = await _ready_kb(monkeypatch)
+    chat_id = await _chat(user_id, kb_id, threshold=0.99)
+    msgs = _messages()
+    turn = await _run(chat_id, msgs)
+    assert all(BLOCK_OPEN not in m["content"] for m in msgs)
+    assert msgs[-1]["content"].startswith(NO_FRAGMENTS_INSTRUCTION)
+    assert msgs[-1]["content"].endswith(QUESTION)
+    payload = turn.payload
+    assert payload["verdict"] == "below_threshold"
+    assert payload["warning"] is None
+    assert payload["sources"] == []
+    assert isinstance(payload["search"]["best_cosine"], float)
+    assert payload["search"]["best_cosine"] < 0.99
+    assert payload["search"]["config"]["threshold"] == 0.99
+
+
+async def test_over_budget_candidates_marked(monkeypatch: pytest.MonkeyPatch) -> None:
+    user_id, kb_id = await _ready_kb(monkeypatch)
+    chat_id = await _chat(user_id, kb_id, top_k=10)
+    turn = await _run(chat_id, _messages(), ctx=1500, max_tokens=256)
+    over = [c for c in turn.payload["search"]["candidates"] if c["status"] == "over_budget"]
+    assert turn.payload["dropped"] > 0
+    assert len(over) == turn.payload["dropped"]
+
+
+async def test_rewrite_without_client_is_silent_skip(monkeypatch: pytest.MonkeyPatch) -> None:
+    user_id, kb_id = await _ready_kb(monkeypatch)
+    chat_id = await _chat(user_id, kb_id, rewrite=True)
+    turn = await _run(chat_id, _messages())
+    assert turn.payload["warning"] is None
+    assert {"stage": "rewrite", "reason": "no_llm"} in turn.payload["search"]["skipped"]
+
+
+async def test_off_and_failure_verdicts(monkeypatch: pytest.MonkeyPatch) -> None:
+    user_id, kb_id = await _ready_kb(monkeypatch)
+    off = await _run(await _chat(user_id, kb_id, mode="off"), _messages())
+    assert off.payload["verdict"] == "off"
+    assert off.payload["search"] is None
+
+    async def failing(*args: object) -> None:
+        raise RagFailure("embedder_unavailable", "нет модели")
+
+    monkeypatch.setattr(rag_turn, "run_retrieval_pipeline", failing)
+    turn = await _run(await _chat(user_id, kb_id), _messages())
+    assert turn.payload["verdict"] == "kb_unavailable"
+    assert turn.payload["search"] is None
+    assert turn.payload["warning"]["code"] == "embedder_unavailable"
+
+
+async def test_context_full_has_kb_unavailable_verdict(monkeypatch: pytest.MonkeyPatch) -> None:
+    user_id, kb_id = await _ready_kb(monkeypatch)
+    turn = await _run(await _chat(user_id, kb_id), _messages(), ctx=100, max_tokens=100)
+    assert turn.payload["warning"]["code"] == "context_full"
+    assert turn.payload["verdict"] == "kb_unavailable"
+
+
+async def test_client_and_model_are_passed_to_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
+    user_id, kb_id = await _ready_kb(monkeypatch)
+    chat_id = await _chat(user_id, kb_id)
+    seen: dict[str, Any] = {}
+    real = rag_turn.run_retrieval_pipeline
+
+    async def spy(session: Any, kb: Any, question: str, config: Any, client: Any, model: Any) -> Any:
+        seen["client"], seen["model"] = client, model
+        return await real(session, kb, question, config, client, model)
+
+    monkeypatch.setattr(rag_turn, "run_retrieval_pipeline", spy)
+    sentinel = object()
+    await _run(chat_id, _messages(), client=sentinel, model="m-1")
+    assert seen == {"client": sentinel, "model": "m-1"}
