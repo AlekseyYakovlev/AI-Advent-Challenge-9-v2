@@ -443,7 +443,13 @@ async def test_mapper_duration_and_running_summary(seed_user: Any) -> None:
 def _fake_turn(text: str = "ok") -> Any:
     """Build a run_headless_turn stand-in returning a fixed successful result."""
 
-    async def _run(_session: Any, _user_id: int, _prompt: str, _model: str) -> HeadlessResult:
+    async def _run(
+        _session: Any,
+        _user_id: int,
+        _prompt: str,
+        _model: str,
+        _provider_id: int | None = None,
+    ) -> HeadlessResult:
         return HeadlessResult(text=text, results=[], tool_trace=None, mcp_tool_count=0)
 
     return _run
@@ -452,7 +458,13 @@ def _fake_turn(text: str = "ok") -> Any:
 def _raising_turn(exc: BaseException) -> Any:
     """Build a run_headless_turn stand-in that raises exc."""
 
-    async def _run(_session: Any, _user_id: int, _prompt: str, _model: str) -> HeadlessResult:
+    async def _run(
+        _session: Any,
+        _user_id: int,
+        _prompt: str,
+        _model: str,
+        _provider_id: int | None = None,
+    ) -> HeadlessResult:
         raise exc
 
     return _run

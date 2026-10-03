@@ -16,9 +16,10 @@ import httpx
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from agent import mcp_config, memory, ws
+from agent import mcp_config, memory, providers, ws
 from agent.context_engine import serialize_tool_trace
 from agent.mcp_tools import McpToolset, build_mcp_toolset
+from agent.providers import ProviderUnavailableError, resolve_client
 from agent.tool_guard import (
     MULTI_STEP_TOOL_HINT,
     TOOL_USE_RULE,
@@ -40,6 +41,8 @@ HEADLESS_PREFACE = (
 )
 MCP_UNAVAILABLE_NOTE = "Примечание: MCP-инструменты были недоступны во время этого запуска."
 EMPTY_ANSWER_MESSAGE = "Модель вернула пустой ответ"
+MSG_PROVIDER_UNAVAILABLE = "Провайдер недоступен (удалён или отключён)"
+MSG_SERVER_DOWN = "Модель недоступна: сервер «{name}» не отвечает"
 DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant."
 
 
@@ -160,10 +163,12 @@ async def _prepare(
     )
 
 
-def _map_llm_error(exc: BaseException) -> HeadlessRunError | None:
+def _map_llm_error(exc: BaseException, provider: Any | None = None) -> HeadlessRunError | None:
     """Translate a transport failure into its Russian message; None when it is not one."""
     if isinstance(exc, httpx.ConnectError):
-        return HeadlessRunError("Модель недоступна: LM Studio не запущен")
+        if provider is None or provider.kind == providers.KIND_LM_STUDIO:
+            return HeadlessRunError("Модель недоступна: LM Studio не запущен")
+        return HeadlessRunError(MSG_SERVER_DOWN.format(name=provider.name))
     if isinstance(exc, httpx.HTTPStatusError):
         return HeadlessRunError(f"Модель недоступна: HTTP {exc.response.status_code}")
     if isinstance(exc, httpx.TimeoutException):
@@ -171,9 +176,9 @@ def _map_llm_error(exc: BaseException) -> HeadlessRunError | None:
     return None
 
 
-def _raise_mapped(exc: Exception) -> None:
+def _raise_mapped(exc: Exception, provider: Any | None = None) -> None:
     """Raise the mapped HeadlessRunError for a known LLM failure, else the original error."""
-    mapped = _map_llm_error(exc)
+    mapped = _map_llm_error(exc, provider)
     if mapped is None:
         raise exc
     raise mapped from exc
@@ -182,6 +187,7 @@ def _raise_mapped(exc: Exception) -> None:
 async def _drive_tool_loop(
     turn: Any,
     prepared: _Prepared,
+    provider: Any | None = None,
 ) -> tuple[str, Any | None]:
     """Run the first LLM call and any tool rounds; return the streamed text and the rounds."""
     acc = ws._ToolRoundsResult()
@@ -195,9 +201,9 @@ async def _drive_tool_loop(
             return acc.text, None
         rounds = await ws._run_tool_rounds(turn, calls, text)
     except httpx.HTTPError as exc:
-        _raise_mapped(exc)
+        _raise_mapped(exc, provider)
     if rounds.error is not None:
-        _raise_mapped(rounds.error)
+        _raise_mapped(rounds.error, provider)
     return acc.text + rounds.text, rounds
 
 
@@ -224,13 +230,20 @@ async def run_headless_turn(
     user_id: int,
     prompt: str,
     model: str,
+    provider_id: int | None = None,
 ) -> HeadlessResult:
     """Send the job prompt to the LLM and run its tool loop without a socket, chat or lock.
 
-    Only the headless allowlist plus the user's MCP tools are offered, and the dispatcher
+    The job's LLM provider is resolved first; a deleted or disabled one fails the run without
+    any fallback. Only the headless allowlist plus the user's MCP tools are offered, and the dispatcher
     rejects anything else. Mapped LLM failures and an empty answer raise HeadlessRunError;
     TimeoutError and cancellation propagate so the caller owns the overall deadline.
     """
+    try:
+        client, provider = await resolve_client(user_id, provider_id)
+    except ProviderUnavailableError as exc:
+        logger.warning("headless_provider_unavailable", user_id=user_id, provider_id=provider_id)
+        raise HeadlessRunError(MSG_PROVIDER_UNAVAILABLE) from exc
     prepared = await _prepare(session, user_id, prompt)
     turn = ws._ToolTurn(
         websocket=RecordingSink(),
@@ -244,9 +257,10 @@ async def run_headless_turn(
         temperature=prepared.temperature,
         max_tokens=prepared.max_tokens,
         allowed_tools=HEADLESS_TOOL_ALLOWLIST,
+        client=client,
     )
     try:
-        streamed, rounds = await _drive_tool_loop(turn, prepared)
+        streamed, rounds = await _drive_tool_loop(turn, prepared, provider)
         final = _finalize_text(streamed, rounds, prompt, prepared.mcp_missing)
     except HeadlessRunError:
         logger.info(

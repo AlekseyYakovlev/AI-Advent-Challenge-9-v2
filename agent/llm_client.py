@@ -9,15 +9,22 @@ from typing import Any
 import httpx
 import tiktoken
 
-from agent.schemas import ModelLoadResult, ModelLoadStatus
+from agent.schemas import ModelLoadResult, ModelLoadStatus, normalize_base_url
 from shared.config import settings
 from shared.logger import get_logger
 
 logger = get_logger(__name__)
 
+_ENCODING = tiktoken.get_encoding("cl100k_base")
+
 LOAD_TIMEOUT = 120.0
 UNLOAD_TIMEOUT = 10.0
 EMERGENCY_UNLOAD_TIMEOUT = 5.0
+
+
+def count_tokens(text: str) -> int:
+    """Count tokens with cl100k_base; provider-independent."""
+    return len(_ENCODING.encode(text))
 
 
 @dataclass(frozen=True)
@@ -42,11 +49,10 @@ class LLMClient:
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
         self._timeout = timeout or settings.LLM_TIMEOUT
-        self._encoding = tiktoken.get_encoding("cl100k_base")
 
     def count_tokens(self, text: str) -> int:
         """Count tokens using the cl100k_base encoding."""
-        return len(self._encoding.encode(text))
+        return count_tokens(text)
 
     async def _post_chat_completion(self, payload: dict[str, Any]) -> dict[str, Any]:
         """POST a non-streaming chat completion and return the decoded JSON body."""
@@ -238,6 +244,11 @@ class LMStudioClient:
         self._current_loaded_model: str | None = None
         self._instance_ids: dict[str, str] = {}
 
+    @property
+    def model_switch_lock(self) -> asyncio.Lock:
+        """Lock serializing model load/unload requests against this LM Studio host."""
+        return self._model_switch_lock
+
     async def list_models(self) -> list[dict[str, Any]]:
         """Return available models from the OpenAI-compatible endpoint."""
         url = f"{self._openai_base}/models"
@@ -389,7 +400,19 @@ class LMStudioClient:
         self._instance_ids.pop(model_id, None)
 
 
-llm_client = LLMClient(
-    base_url=settings.LM_STUDIO_BASE_URL,
-    api_key=settings.DEEPSEEK_API_KEY,
-)
+# One instance per LM Studio host so all provider rows and users share one model-switch lock.
+_lm_studio_clients: dict[str, LMStudioClient] = {}
+
+
+def get_lm_studio_client(base_url: str) -> LMStudioClient:
+    """Return the shared LMStudioClient for a normalized base URL, creating it on first use."""
+    normalized = normalize_base_url(base_url)
+    client = _lm_studio_clients.get(normalized)
+    if client is None:
+        client = LMStudioClient(base_url=normalized)
+        _lm_studio_clients[normalized] = client
+    return client
+
+
+# Token-counting alias only: every LLM call resolves a per-provider client via agent.providers.
+llm_client = LLMClient(base_url=settings.LM_STUDIO_BASE_URL)

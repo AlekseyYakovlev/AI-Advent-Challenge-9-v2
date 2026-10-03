@@ -8,6 +8,8 @@
 - GET  /api/v1/chats/{chat_id}/tree
 - GET  /api/v1/chats/{chat_id}/stats
 - POST /api/v1/chats/{chat_id}/branch
+- GET  /api/v1/chats/{chat_id}/memory (see "Long-term memory")
+- PUT/DELETE /api/v1/memory/long-term/{entry_id} (see "Long-term memory")
 - GET  /api/v1/settings?chat_id={id}
 - PUT  /api/v1/settings
 - WS   /ws/chat/{chat_id}
@@ -15,6 +17,11 @@
 - GET/POST/DELETE /api/v1/scheduler/... (see "Scheduler")
 
 ## LM Studio
+Each route accepts an optional `provider_id` (query for models and unload-model, body for load-model)
+that must reference the user's LM Studio provider; without it the configured `LM_STUDIO_BASE_URL`
+host is used. A foreign or missing id gives 404 `Провайдер не найден`, a provider of another kind
+gives 400 `Провайдер не является LM Studio`.
+
 - GET  /api/v1/lm-studio/models
 - POST /api/v1/lm-studio/load-model
 - POST /api/v1/lm-studio/unload-model/{model_id}
@@ -99,6 +106,23 @@ Returns real-time statistics for a chat.
   MCP result or the preview was cut.
 - MCP failures (disconnected server, timeout, `isError`) are reported only here with `ok: false`;
   no `TOOL_ERROR` frame is sent for them. Built-in tool failures still send `TOOL_ERROR`.
+
+**Client -> Server (chat message):** the payload may carry an optional `provider_id` (integer, the id
+from `GET /api/v1/llm-providers`) next to `model`. Without it the turn goes to the user's LM Studio
+provider (legacy behaviour). The same client serves the answer, tool follow-ups, the auto-title and
+fact extraction of that turn.
+
+**error (provider unavailable):**
+```json
+{
+  "type": "error",
+  "code": "PROVIDER_UNAVAILABLE",
+  "detail": "Провайдер «Stub» недоступен. Выберите другую модель или проверьте настройки провайдера."
+}
+```
+Sent when the provider is deleted, disabled or belongs to another user (a foreign provider's name is
+never disclosed) and also when the provider answers HTTP 401/403 during the turn (the detail names
+the provider, never the key). No user message is stored for such a turn.
 
 **error (context overflow):**
 ```json
@@ -286,6 +310,68 @@ the chatting user's jobs.
   `not_found` (missing or foreign job) and `conflict` (job already finished). There is no implicit
   "current job"; the id must be explicit.
 
+## LLM providers (Day 21)
+
+User-scoped OpenAI-compatible providers. Every route needs the session cookie; mutating routes also
+require an allowed `Origin` and `Content-Type: application/json` (DELETE and `check` need only the
+origin). A missing or foreign id is always 404 `Провайдер не найден` (never 403).
+
+- GET    /api/v1/llm-providers
+- POST   /api/v1/llm-providers
+- PUT    /api/v1/llm-providers/{provider_id}
+- DELETE /api/v1/llm-providers/{provider_id}
+- POST   /api/v1/llm-providers/{provider_id}/check
+- GET    /api/v1/llm-providers/models?refresh=false
+
+### Request and response shapes
+
+Create body: `{"name": "OpenRouter", "base_url": "https://openrouter.ai/api", "api_key_env": "OPENROUTER_API_KEY", "enabled": true}`.
+Update body: any subset of the same fields; an explicit empty or null `api_key_env` clears the key
+reference. Response (`LlmProviderOut`):
+
+```json
+{
+  "id": 3, "name": "Stub", "base_url": "http://127.0.0.1:18766", "kind": "openai",
+  "api_key_env": "STUB_KEY", "enabled": true,
+  "created_at": "2026-10-02T10:00:00Z", "updated_at": "2026-10-02T10:00:00Z",
+  "check": {"status": "ok", "model_count": 1, "checked_at": "2026-10-02T10:00:01Z"}
+}
+```
+
+`check.status` is `not_checked`, `ok` or `error`; on `error` the body adds `code` and a Russian
+`message`. `GET .../models` returns one group per enabled provider:
+`[{"provider_id": 3, "name": "Stub", "kind": "openai", "models": [{"id": "stub-model", "loaded": null}], "error": null}]`;
+a failing provider has an empty `models` list and a non-null `error`. `refresh=true` re-fetches every
+provider instead of using the cached check.
+
+### Errors
+- 404 `Провайдер не найден`
+- 409 duplicate name for the same user (names are unique per user)
+- 422 with a Russian `detail` shown verbatim by the UI: empty or too long name, a base URL that does
+  not start with `http://` or `https://`, a malformed environment variable name
+
+A connection check never raises an HTTP error: failures are returned in `check` with one of the codes
+`env_missing` (variable not resolvable, no request made), `bad_key` (HTTP 401/403), `unreachable`,
+`timeout`, `http` (any other status) and `bad_response` (the model list is not an OpenAI-style
+`data` list). Redirects are not followed.
+
+### Keys are referenced by variable name
+A provider stores only `api_key_env`, the name of a variable; the key value is never stored,
+returned or logged. A name resolves when it is declared in the `.env` file (`LLM_PROVIDER_ENV_FILE`)
+or is `DEEPSEEK_API_KEY`; a process variable overrides the file value for a declared name. Undeclared
+process variables cannot be referenced. An empty `api_key_env` means no `Authorization` header.
+
+### Seeding and URLs
+On first access each user gets an "LM Studio" provider (kind `lm_studio`, from `LM_STUDIO_BASE_URL`)
+and, when a `DEEPSEEK_API_KEY` is configured, a "DeepSeek" provider (`https://api.deepseek.com`).
+A seeded provider that the user deleted is never created again. Base URLs are normalized: surrounding
+whitespace, trailing slashes and a trailing `/v1` are removed.
+
+### Scheduler
+`POST /api/v1/scheduler/tasks` accepts an optional `provider_id` (a foreign or missing id gives 422
+`Провайдер не найден`) and the task output carries it; a run uses that provider and fails with a recorded error
+when it was deleted or disabled. Tasks created by the `schedule_task` tool inherit the chat's provider.
+
 ## Chat titles (Day 21)
 
 `POST /api/v1/chats` creates a chat titled `New Chat` unless a title is given. The Agent replaces the
@@ -297,7 +383,181 @@ attempt). If the backend answers HTTP 400 or 422 the call is repeated once witho
 from the first user message (at most 50 characters, `…` when cut); if that is empty the chat keeps
 `New Chat`. A non-default title is never
 overwritten. The `done` frame of `/ws/chat/{chat_id}` is unchanged and is not delayed; the new title
-arrives separately as a `chat_title_updated` frame on `/ws/events`.
+arrives separately as a `chat_title_updated` frame on `/ws/events`. The title request goes through the
+same provider as the turn (`provider_id`).
+
+## Knowledge bases (Day 21)
+
+User-scoped document collections indexed into a FAISS vector index with an LM Studio embedding model.
+All routes require the session cookie; a knowledge base owned by another user answers `404` (never
+`403`). Mutating routes (`POST`, `DELETE`) also require an allowed `Origin`; JSON routes require
+`Content-Type: application/json`. Error messages are Russian and shown inline by the UI.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/kb` | List the caller's knowledge bases, newest first (`KbOut[]`) |
+| POST | `/api/v1/kb` | Create from `multipart/form-data`; answers `202` with `KbOut` and indexes in the background |
+| GET | `/api/v1/kb/{kb_id}` | One knowledge base (`KbOut`) |
+| DELETE | `/api/v1/kb/{kb_id}` | Cancel a running job, delete rows and the storage directory; `204` |
+| POST | `/api/v1/kb/{kb_id}/search` | Test search: body `{"query": str, "top_k": 1..20 = 5}`; `{"results": [...]}` |
+| GET | `/api/v1/kb/embedding-models` | LM Studio models with `type`, loaded state and embedding eligibility |
+| POST | `/api/v1/kb/embedding-check` | Body `{"model": str}`; runs the indexing guard and returns `{"model", "dim"}` |
+
+### Create (multipart fields)
+
+`name` (1-200 chars), `strategy` (`fixed` | `structural`), `chunk_size` (100-2000, default 1000),
+`chunk_overlap` (default 150, less than the size and at most half of it; both ignored for the
+`structural` strategy except as the upper bound), `embedding_model` (required) and one or more `files`.
+
+Caps (`agent/kb_limits.py`): up to 10 files, 50 MB per file, 100 MB in total, extensions `.pdf`, `.txt`,
+`.md` only. Files are SHA-256 de-duplicated per knowledge base. Validation runs on the server before
+anything is kept; any violation answers `422` (`413` for a declared request above the cap) and leaves
+no rows or files behind. Messages: `Введите название базы знаний.`, `Выберите хотя бы один файл.`,
+`Можно загрузить не больше 10 файлов.`, `Файл {name}: поддерживаются только PDF, TXT и MD.`,
+`Файл {name} больше 50 МБ.`, `Общий размер файлов больше 100 МБ.`, `Файл {name} пустой.`,
+`Файл {name} уже добавлен.`, `Размер чанка должен быть не меньше 100`,
+`Размер чанка не должен превышать 2000`, `Перекрытие должно быть меньше размера чанка и не больше его половины`.
+
+### KbOut
+
+```json
+{
+  "id": 3, "name": "ФЗ-196", "status": "indexing", "error": null,
+  "strategy": "structural", "chunk_size": 1000, "chunk_overlap": 150,
+  "embedding_model": "text-embedding-nomic-embed-text-v1.5", "dim": 768,
+  "file_count": 1, "chunk_count": 0, "done": 320, "total": 1450,
+  "phase": "embedding", "created_at": "2026-10-03T10:00:00Z"
+}
+```
+
+`status` is `queued`, `indexing`, `ready` or `failed`; `phase` is `loading_model`, `parsing` or
+`embedding` while indexing. `error` is a readable Russian message when `failed`.
+
+### Search result item
+
+`{"rank", "score", "chunk_id", "source", "section", "page_start", "text"}` - `score` is cosine
+similarity, `section` is the structural breadcrumb (for example `Глава 5 > Статья 5.1`) or null.
+Status codes: `409` the knowledge base is not ready or its index is corrupt, `422` empty query or an
+embedding error, `503` LM Studio is not running.
+
+### Embedding models
+
+Only models LM Studio reports as `type: embeddings` are eligible. LM Studio's `/v1/embeddings`
+ignores the requested model name and answers with whichever embedding model is loaded, so an `llm`
+model such as `giga-embeddings-instruct-480m-0826` would silently produce vectors from another model.
+The guard (D-24) therefore rejects non-embedding models with a message containing
+`не поддерживает эмбеддинги`; `POST /embedding-check` and the indexer apply the same guard.
+
+### Events on /ws/events
+
+```json
+{ "type": "kb_progress", "kb": { "...": "KbOut" } }
+{ "type": "kb_deleted", "kb_id": 3 }
+```
+
+- `kb_progress`: status or progress changed (throttled to about two frames per second while indexing).
+  A job cancelled by a delete may publish a final `failed` frame (`Индексация прервана.`) just before
+  `kb_deleted`.
+- `kb_deleted`: the knowledge base was removed. Frames go only to the owner's sockets.
+- After an Agent restart, jobs left in `queued` or `indexing` become `failed` with
+  `Индексация прервана перезапуском агента. Удалите базу и создайте её заново.`
+
+## Long-term memory (Day 21)
+
+Long-term memory is stored per user and shared by all of the user's chats. All routes below need the
+session cookie. Ownership is enforced in SQL by `user_id`: another user's entry is indistinguishable
+from a missing one.
+
+### GET /api/v1/chats/{chat_id}/memory
+
+Response: `{ "chat_id": 1, "short_term_message_count": 4, "working": [entry], "long_term": [entry] }`
+where `entry = { "id": 7, "key": "...", "value": "...", "updated_at": "..." }`. `long_term` is the same
+list from every chat of the user. Status codes: 200, 401 (no session), 404 (chat of another user or
+unknown).
+
+### PUT /api/v1/memory/long-term/{entry_id}
+
+Request body (JSON, at least one field):
+
+```json
+{ "key": "example_key", "value": "example text" }
+```
+
+- `key` (optional): stripped, 1-200 characters.
+- `value` (optional): not whitespace-only, at most 50 000 characters, stored verbatim.
+
+Response 200: the updated entry `{ id, key, value, updated_at }`.
+
+| Status | Meaning |
+|--------|---------|
+| 200 | Entry updated |
+| 401 | No session |
+| 403 | Origin not allowed |
+| 404 | `Запись памяти не найдена` (unknown id or another user's entry) |
+| 409 | `Запись с таким ключом уже существует` (another entry of the same user has this key; nothing is changed) |
+| 415 | Content-Type is not application/json |
+| 422 | Validation: no field, blank key, whitespace-only value, key over 200, value over 50 000 |
+
+### DELETE /api/v1/memory/long-term/{entry_id}
+
+Status codes: 204 (deleted), 401, 403, 404 (unknown id or another user's entry).
+
+Notes: `updated_at` is refreshed and `created_at` is kept on update. There is no create route (entries are
+created by the LLM tool `save_long_term_memory`). No WebSocket frame is sent for edits; the change is
+visible to the model from the next turn.
+
+## Chat RAG (Day 22)
+
+A chat can answer with fragments retrieved from one of the caller's ready knowledge bases. The
+setting is per chat and stored in `ChatRagConfig`; the knowledge base stays the Day 21 one. A chat
+with no row behaves as `off`.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/chats/{chat_id}/rag` | Current setting: `{chat_id, mode, kb_id, kb_name, kb_status, top_k}`; defaults `off`, `null`, `5` |
+| PUT | `/api/v1/chats/{chat_id}/rag` | Body `{"mode": "off" or "rag", "kb_id": int or null, "top_k": 1..20 = 5}`; answers the same object |
+| GET | `/api/v1/kb/{kb_id}/chunks/{chunk_id}?file=` | Text of one chunk: `{chunk_id, source, section, title, text}` |
+
+- `PUT` requires an allowed `Origin` and `Content-Type: application/json`. A chat or knowledge base
+  owned by another user answers `404` (never `403`). A knowledge base that is not `ready` answers
+  `422` ("База знаний ещё не готова"); `mode` or `top_k` outside the allowed values answer `422`.
+  `kb_id: null` forces `mode` to `off`.
+- A deleted knowledge base is detached (`kb_id` becomes `null`, the row keeps its `mode`).
+- The chunk route answers `404` when the knowledge base is not the caller's, the chunk does not
+  exist, or `file` is given and differs from the chunk's source (guards a stale citation against a
+  reused `kb_id`).
+
+### Message.rag_sources
+
+`MessageResponse` (history, `GET /api/v1/chats/{id}/tree`) carries `rag_sources`: `null` for user
+messages and for messages written before this feature, otherwise the payload below. Only metadata is
+stored, never fragment text; the stored user message is always the raw question.
+
+### done.rag
+
+The final WebSocket `done` frame carries the same payload under `rag`:
+
+```json
+{
+  "v": 1,
+  "mode": "rag",
+  "kb_id": 3,
+  "kb_name": "fz196",
+  "top_k": 5,
+  "sources": [
+    {"rank": 1, "chunk_id": "c-12", "file": "FZ_196.pdf", "section": "Глава IV > Статья 26", "page": "1-74", "score": 0.804}
+  ],
+  "dropped": 0,
+  "context_tokens": 1450,
+  "warning": null
+}
+```
+
+- `mode` is `off` or `rag`; with `off` the source list is empty and `warning` is `null`.
+- `dropped` counts fragments removed (lowest score first) to fit the RAG budget.
+- `warning` is `{code, text}` when retrieval failed and the answer was produced without fragments
+  (the turn never fails because of RAG). Codes: `kb_deleted`, `kb_not_ready`, `embedder_unavailable`,
+  `dim_mismatch`, `index_corrupt`, `context_full`, `retrieval_failed`. `text` is a Russian message.
 
 ## Environment Settings
 
@@ -312,6 +572,10 @@ arrives separately as a `chat_title_updated` frame on `/ws/events`.
 | SCHEDULER_MAX_ACTIVE_TASKS_PER_USER | 50 | Cap on active plus paused jobs per user |
 | MCP_TOOL_CALL_TIMEOUT | 30.0 | Seconds allowed for one MCP tool call made from a chat turn |
 | MCP_TOOL_RESULT_MAX_CHARS | 20000 | Maximum characters of an MCP tool result sent to the model |
+| LLM_PROVIDER_CHECK_TIMEOUT | 10.0 | Seconds allowed for a provider connection check or model-list request (not `LLM_TIMEOUT`) |
+| LLM_PROVIDER_ENV_FILE | .env | File whose declared variable names provider `api_key_env` references may resolve |
+| KB_STORAGE_DIR | empty | Root for knowledge-base uploads and indexes; empty means `<DB_PATH stem>_kb` next to the database |
+| KB_EMBED_TIMEOUT | 120.0 | Seconds allowed for one embeddings request to LM Studio |
 | MCP_AUTO_CONNECT | true | Connect the user's enabled, unconnected MCP servers at the start of a chat turn (failures not retried until manual reconnect/edit) |
 
 With `MCP_AUTO_CONNECT` on, the first chat turn may wait up to `MCP_CONNECT_TIMEOUT` for a server

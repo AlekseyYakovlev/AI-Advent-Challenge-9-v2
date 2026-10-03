@@ -73,6 +73,7 @@ class MessageResponse(BaseModel):
     content: str = Field(max_length=CONTENT_MAX_LENGTH)
     token_count: int = 0
     created_at: datetime
+    rag_sources: Optional[dict[str, Any]] = None
 
 
 class BranchRequest(BaseModel):
@@ -272,6 +273,73 @@ class McpServerUpdate(BaseModel):
         return _validate_mcp_env(value)
 
 
+def normalize_base_url(url: str) -> str:
+    """Strip whitespace, trailing slashes and one trailing /v1 so paths are never doubled."""
+    value = url.strip().rstrip("/")
+    if value.lower().endswith("/v1"):
+        value = value[:-3]
+    return value.rstrip("/")
+
+
+class LlmProviderCreate(BaseModel):
+    """Request body for creating an LLM provider (validated in agent.providers)."""
+
+    name: str = ""
+    base_url: str = ""
+    api_key_env: str | None = None
+    enabled: bool = True
+
+
+class LlmProviderUpdate(BaseModel):
+    """Partial update of an LLM provider (validated in agent.providers)."""
+
+    name: str | None = None
+    base_url: str | None = None
+    api_key_env: str | None = None
+    enabled: bool | None = None
+
+
+class ProviderCheckOut(BaseModel):
+    """Result of the last connection check of a provider."""
+
+    status: Literal["ok", "error", "not_checked"]
+    code: str | None = None
+    message: str | None = None
+    model_count: int | None = None
+    checked_at: datetime | None = None
+
+
+class LlmProviderOut(BaseModel):
+    """Serialized provider; the API key value is never included, only its variable name."""
+
+    id: int
+    name: str
+    base_url: str
+    kind: str
+    api_key_env: str | None
+    enabled: bool
+    created_at: datetime
+    updated_at: datetime
+    check: ProviderCheckOut
+
+
+class ProviderModelOut(BaseModel):
+    """One model offered by a provider."""
+
+    id: str
+    loaded: bool | None = None
+
+
+class ProviderModelGroup(BaseModel):
+    """Models of one provider, or the error that prevented listing them."""
+
+    provider_id: int
+    name: str
+    kind: str
+    models: list[ProviderModelOut]
+    error: str | None = None
+
+
 class McpServerResponse(BaseModel):
     """Serialized MCP server config; env values are never exposed, only their names."""
 
@@ -292,6 +360,8 @@ class MessagePayload(BaseModel):
 
     content: str = Field(min_length=1, max_length=CONTENT_MAX_LENGTH)
     model: str = Field(min_length=1, max_length=200)
+    # None = legacy client -> the user's seeded LM Studio provider
+    provider_id: int | None = Field(default=None, ge=1)
 
 
 class ToolCallEvent(BaseModel):
@@ -314,6 +384,7 @@ class ModelLoadRequest(BaseModel):
     model_id: str
     gpu_offload: int = Field(default=0, ge=-1, le=100)
     context_length: Optional[int] = Field(default=None, gt=0)
+    provider_id: int | None = Field(default=None, ge=1)
 
 
 class LoginRequest(BaseModel):
@@ -353,6 +424,36 @@ class ChatMemoryResponse(BaseModel):
     short_term_message_count: int
     working: list[MemoryEntryResponse]
     long_term: list[MemoryEntryResponse]
+
+
+class LongTermMemoryUpdate(BaseModel):
+    """Partial update of a long-term memory entry (at least one field)."""
+
+    key: Optional[str] = Field(default=None, max_length=MEMORY_KEY_MAX_LENGTH)
+    value: Optional[str] = Field(default=None, max_length=MEMORY_VALUE_MAX_LENGTH)
+
+    @field_validator("key")
+    @classmethod
+    def _strip_key(cls, value: str | None) -> str | None:
+        """Strip the key and reject a blank one."""
+        return _validate_mcp_text(value)
+
+    @field_validator("value")
+    @classmethod
+    def _check_value(cls, value: str | None) -> str | None:
+        """Reject a whitespace-only value but keep the text verbatim."""
+        if value is None:
+            return None
+        if not value.strip():
+            raise ValueError("must not be empty")
+        return value
+
+    @model_validator(mode="after")
+    def _require_a_field(self) -> "LongTermMemoryUpdate":
+        """Require at least one of key or value."""
+        if self.key is None and self.value is None:
+            raise ValueError("at least one of key or value is required")
+        return self
 
 
 class SaveWorkingMemoryArgs(BaseModel):

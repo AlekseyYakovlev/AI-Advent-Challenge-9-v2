@@ -11,6 +11,8 @@
 - test_scheduler_*.py: see "Scheduler (Day 18)" below
 - test_titles.py / test_titles_ws.py: see "Chat auto-titling (Day 21)" below
 - test_llm_complete_chat.py: see "Chat auto-titling (Day 21)" below
+- test_modal_close_policy.py: modals have no backdrop-click or Escape closer; every "*-modal" overlay has a bound "btn-close-*" button
+- test_memory.py / test_memory_api.py / test_context_engine_memory.py / test_memory_panel_ui.py: see "Long-term memory editing (Day 21)" below
 
 ## Fixtures
 - Use conftest.py for shared fixtures
@@ -196,3 +198,141 @@ first use).
 
 Title tests must create chats titled `New Chat` and classify mocked LLM requests by `stream` and the
 `<user_message>` tag instead of an ordered response queue.
+
+## LLM providers (Day 21)
+
+### test_llm_providers_config.py
+- Environment variable names are validated (valid and invalid forms).
+- A secret resolves from the `.env` file; a process variable wins for a declared name; an undeclared
+  process variable never resolves; `DEEPSEEK_API_KEY` is the builtin name; empty values give None.
+- Migration adds `ScheduledTask.provider_id` once; provider names are unique per user; deleting a user
+  cascades to providers.
+
+### test_llm_providers_service.py
+- Seeding: LM Studio always, DeepSeek only with a key (also when the key appears later); idempotent,
+  concurrency-safe and restart-safe; a deleted seed is not resurrected; a name collision does not
+  break seeding.
+- `get_provider_row` / `resolve_client`: None selects LM Studio; foreign, missing and disabled rows
+  raise `ProviderUnavailableError`.
+- Field validation messages (name, URL, env name) and URL normalization.
+- Connection check codes: ok, bad_key, unreachable, timeout, http, bad_response, env_missing (no
+  request made); redirects are not followed; no key means no `Authorization` header.
+- Model groups: ok, failing and disabled providers; cache reuse without refresh; update and delete
+  drop the cache.
+
+### test_llm_providers_api.py
+- List seeds LM Studio and DeepSeek without leaking the key value; create normalizes the URL and
+  rejects invalid input; duplicate names give 409.
+- Update keeps other fields, clears `api_key_env` on empty or null, conflicts on a taken name.
+- Another user's provider is always 404; delete does not resurrect a seed.
+- `check` reports failures as data; `models` groups work with `refresh`.
+- Foreign origin and non-JSON content type are rejected on mutations.
+- LM Studio routes honour `provider_id` (400 for another kind, 404 for foreign) and keep working
+  without it.
+
+### test_llm_providers_routing.py
+- A legacy payload streams from LM Studio without auth; a payload with `provider_id` streams from
+  the provider with the bearer key of its variable.
+- Deleted, disabled and foreign providers give a `PROVIDER_UNAVAILABLE` frame and store no message;
+  a foreign provider's name is never disclosed.
+- HTTP 401 during the stream or the tool follow-up names the provider, never the key.
+- The turn's provider reaches the title job, fact extraction and self-critique.
+
+### test_scheduler_providers.py
+- REST create stores its own `provider_id`, accepts none, rejects a foreign one; the
+  `schedule_task` tool inherits the chat's provider.
+- A headless turn calls the job's provider with its bearer key, falls back to LM Studio without one,
+  and fails for deleted or disabled providers (run recorded as failed).
+- A connect error on an OpenAI provider names the server; LM Studio keeps its legacy message.
+
+### test_live_deepseek_title.py (opt-in)
+- Skipped unless `RUN_LIVE_DEEPSEEK=1` and a real `DEEPSEEK_API_KEY` is in the repository `.env`.
+- Checks the seeded DeepSeek provider (status ok), picks `deepseek-chat` or the first model, and
+  requires a non-empty title of at most 50 characters that differs from the user text. Paid call;
+  the key is never printed.
+
+### scripts/e2e_llm_providers_playwright.py (browser UAT, not part of pytest)
+- Runs a temporary copy of the app at UI :18000 / Agent :18001 with a stub OpenAI-compatible provider
+  on :18766; never touches :8000/:8001. Exit 0 all passed, 1 a check failed, 2 ports busy, 4
+  Playwright missing.
+- Scenarios: provider section and seeded cards; URL validation message; save with automatic check;
+  wrong key variable gives the error badge; unreachable LM Studio badge; picker grouped by provider
+  as "Provider · model"; chat answered by the stub with its bearer key and title routed through it;
+  disabling the provider removes its entries and shows the fallback toast; delete with confirm; no
+  API response contains a key value; optional DeepSeek chat when a real key exists.
+
+
+## Knowledge bases (Day 21)
+
+- `test_kb_models.py`: table creation and cascade deletes of KB, document and chunk rows.
+- `test_kb_storage.py`: storage paths, FAISS byte-buffer round trip, in-memory state.
+- `test_kb_loaders.py`: golden cleaning of КоАП and ФЗ-196 excerpts, page offsets, de-hyphenation, scan detection, broken PDF, text decoding.
+- `test_kb_chunking.py`: fixed and structural chunking, breadcrumbs, 2000-char cap, parameter validation messages.
+- `test_kb_embeddings.py`: LM Studio embeddings client, model guard (D-24), batching, prefixes, error mapping.
+- `test_kb_indexer.py`: background job, progress, all-or-nothing failure.
+- `test_kb_lifecycle.py`: delete with cancel, orphan recovery, shutdown, lifespan wiring.
+- `test_kb_events.py`: `kb_progress` / `kb_deleted` frames and `/health` responsiveness during indexing.
+- `test_kb_search.py`: top-k search, not-ready and corrupt-index handling.
+- `test_kb_api.py`: create/validate/list/get/delete/search/embedding endpoints and Russian messages.
+- `test_kb_scoping.py`: authentication and per-user isolation (404 for foreign ids).
+- `test_kb_real_pdfs.py`: real ФЗ-196 and КоАП РФ PDFs from `C:\Projects\RAG`; skipped when the files are absent. Pins the unique article counts (КоАП 907, ФЗ-196 34), asserts both strategies keep every chunk within 2000 characters and that the pipeline finishes in under 30 s.
+
+### scripts/e2e_kb_playwright.py (browser UAT, not part of pytest)
+- Runs a temporary copy of the app at UI :18000 / Agent :18001 with a scratch database and KB storage
+  against the real LM Studio and both real PDFs; never touches :8000/:8001 and stops only processes it
+  started. Exit 0 all passed, 1 a check failed, 2 blocked (ports busy, LM Studio, embeddings model or
+  PDFs missing), 4 Playwright missing. Takes about 20-30 minutes.
+- Scenarios: empty panel, embeddings model hidden from the chat picker, embedding check (giga rejected,
+  nomic dim 768), inline validation, both PDFs with both strategies, live progress with `/health` polling,
+  test search cards, scan PDF and giga failures, Agent killed mid-job (restart message), delete during
+  and after indexing (directory removed), second-user isolation.
+
+## Chat RAG (Day 22)
+
+- `test_rag.py`: retrieval wrapper, budget formula, block rendering and delimiter neutralizing, payload versioning and parsing, failure-to-warning mapping.
+- `test_rag_turn.py`: `prepare_rag_turn` outcomes (off, no row, KB missing or foreign, not ready, context_full, retrieval failure) and that it never raises except on cancellation.
+- `test_rag_ws.py`: WS turn with RAG: fragments only in the outbound last user message, raw question stored, `done.rag` payload, `Message.rag_sources` persisted, RAG failure never deletes the user message or breaks the answer.
+- `test_rag_api.py`: GET/PUT `/chats/{id}/rag` (defaults, validation, 404 for foreign chat/KB, 422 for not-ready KB, `kb_id` null forces off) and the chunk snippet route (404 rules, `file` guard).
+- `test_rag_static.py`: frontend source guard: RAG controls, labels, sources block and warnings use `textContent`/DOM builders only, no `innerHTML` with server text.
+- `test_rag_fixture.py`: control question set of the evaluation (counts, expected sources, validity).
+- `test_rag_eval.py`: `scripts/rag_eval.py` scoring (hit@k), run directory outputs, preflight failures, scratch DB never `app.db`.
+- `test_rag_report.py`: Day 22 report generation from the evaluation outputs.
+
+### scripts/e2e_rag_playwright.py (browser UAT, not part of pytest)
+- Runs a temporary copy of the app at UI :18000 / Agent :18001 with a scratch database and KB storage
+  against the real LM Studio (nomic embedder and a chat model, `qwen/qwen3.5-9b` preferred) and the
+  real ФЗ-196 PDF; never touches :8000/:8001. Exit 0 all passed, 1 a check failed, 2 blocked, 4
+  Playwright missing. Takes a few minutes (reasoning-model answers dominate).
+- Scenarios: KB reaches «готово»; new chat has a disabled switch and «без RAG»; attach KB, «с RAG»,
+  K=5, badge, state survives reload; RAG answer with «с RAG · K=5», «Источники (N)», lazy snippet,
+  stored question equals the raw one with no fragments block in history; «без RAG» answer without
+  sources; KB deleted mid-chat: answer with the yellow warning, toast and «без RAG (сбой поиска)»,
+  warning persists after reload; no console errors.
+
+## Long-term memory editing (Day 21)
+
+### test_memory.py (CRUD helpers)
+- owner-only get; update keeps `created_at` and refreshes `updated_at`
+- rename keeps one row; the same key is not a conflict
+- rename conflict and the commit race both raise `MemoryKeyConflictError` and change nothing
+- another user gets None / False; delete removes only the own row
+
+### test_memory_api.py (REST)
+- 401 without a session
+- value-only and key+value updates; key stripped, value stored verbatim
+- 422 table: empty body, both null, blank key, whitespace-only value, over-long key / value; maximum lengths accepted
+- 409 on a duplicate key with both rows unchanged; own current key accepted
+- 404 for a foreign and an unknown id with the same detail; delete 204 then 404
+- working memory is never reachable through the long-term routes
+- 403 for a foreign Origin; 415 for a non-JSON PUT
+
+### test_context_engine_memory.py (prompt effect)
+- the prompt shows the edited key/value and not the old one
+- the long-term label disappears after the last entry is deleted
+
+### test_memory_panel_ui.py (frontend source guard)
+- button labels; no HTML insertion in the memory region; user-scoped routes
+- `confirm()` before the DELETE request; only the long-term list is editable
+- the form is seeded from the full value; no modal and no key handler
+
+Rows are seeded with `memory.save_long_term_memory`; cross-user cases use `second_authenticated_client`.

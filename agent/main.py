@@ -32,6 +32,7 @@ from agent.schemas import (
     HealthResponse,
     InvariantConflictResponse,
     LoginRequest,
+    LongTermMemoryUpdate,
     McpConnectionStatus,
     McpConnectResult,
     McpErrorCode,
@@ -50,13 +51,17 @@ from agent.schemas import (
     TaskTransitionResponse,
     UserResponse,
 )
-from agent.llm_client import LMStudioClient
+from agent.llm_client import LMStudioClient, get_lm_studio_client
 from agent.state import CORS_ORIGINS, chat_locks, cleanup_chat_caches
 from agent.context_engine import compute_chat_stats
-from agent import invariants, mcp_client, mcp_config, memory, profile, tasks
+from agent import invariants, kb_indexer, mcp_client, mcp_config, memory, profile, providers, tasks
 from agent import scheduler_tools  # noqa: F401  (registers the scheduler LLM tools)
 from agent.events import ws_events
 from agent.scheduler import scheduler
+from agent.kb_api import router as kb_router
+from agent.rag import parse_rag_payload
+from agent.rag_api import router as rag_router
+from agent.providers_api import router as providers_router
 from agent.scheduler_api import router as scheduler_router
 from agent.ws import ws_chat
 from shared.auth import (
@@ -92,7 +97,6 @@ check_python_version()
 
 logger = get_logger(__name__)
 
-lm_studio_client = LMStudioClient()
 
 
 async def _ensure_global_settings(session: AsyncSession, user_id: int | None) -> Settings:
@@ -357,6 +361,9 @@ def _chat_to_response(chat: Chat) -> ChatResponse:
 
 def _message_to_response(message: Message) -> MessageResponse:
     """Map a Message ORM row to the API response schema."""
+    rag_sources = parse_rag_payload(message.rag_sources)
+    if message.rag_sources and rag_sources is None:
+        logger.warning("rag_sources_parse_failed", message_id=message.id)
     return MessageResponse(
         id=message.id,
         chat_id=message.chat_id,
@@ -365,6 +372,7 @@ def _message_to_response(message: Message) -> MessageResponse:
         content=message.content,
         token_count=message.token_count,
         created_at=message.created_at,
+        rag_sources=rag_sources,
     )
 
 
@@ -394,11 +402,13 @@ async def lifespan(_app: FastAPI):
     # The supervisor hard-kills the Agent, so shutdown hooks may never have run: fail any
     # run left RUNNING before the loop can claim or block on it.
     await scheduler.recover_orphaned_runs()
+    await kb_indexer.recover_orphaned_kb_jobs()
     if app_config.SCHEDULER_ENABLED:
         await scheduler.start()
     yield
     logger.info("agent_shutting_down")
     await scheduler.stop()
+    await kb_indexer.shutdown_kb_jobs()
     await mcp_client.cleanup_all_sessions()
     await engine.dispose()
 
@@ -414,6 +424,9 @@ app.add_middleware(
 )
 
 app.include_router(scheduler_router)
+app.include_router(providers_router)
+app.include_router(kb_router)
+app.include_router(rag_router)
 
 
 @app.get("/debug/routes")
@@ -673,6 +686,58 @@ async def get_chat_memory(
             for row in long_term
         ],
     )
+
+
+@app.put(
+    "/api/v1/memory/long-term/{entry_id}",
+    response_model=MemoryEntryResponse,
+    dependencies=[Depends(require_allowed_origin), Depends(require_json_content_type)],
+)
+async def update_long_term_memory_entry(
+    entry_id: int,
+    body: LongTermMemoryUpdate,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> MemoryEntryResponse:
+    """Edit key and/or value of the caller's own long-term memory entry (user-scoped)."""
+    try:
+        row = await memory.update_long_term_memory(
+            session, current_user.id, entry_id, key=body.key, value=body.value,
+        )
+    except memory.MemoryKeyConflictError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Запись с таким ключом уже существует",
+        ) from None
+    if row is None:
+        logger.warning(
+            "long_term_memory_access_denied", user_id=current_user.id, entry_id=entry_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Запись памяти не найдена",
+        )
+    return MemoryEntryResponse(id=row.id, key=row.key, value=row.value, updated_at=row.updated_at)
+
+
+@app.delete(
+    "/api/v1/memory/long-term/{entry_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_allowed_origin)],
+)
+async def delete_long_term_memory_entry(
+    entry_id: int,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> None:
+    """Delete the caller's own long-term memory entry (user-scoped)."""
+    deleted = await memory.delete_long_term_memory(session, current_user.id, entry_id)
+    if not deleted:
+        logger.warning(
+            "long_term_memory_access_denied", user_id=current_user.id, entry_id=entry_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Запись памяти не найдена",
+        )
 
 
 @app.get("/api/v1/chats/{chat_id}/tasks", response_model=list[TaskResponse])
@@ -1192,13 +1257,35 @@ async def get_mcp_server_status(
     return _mcp_server_to_response(row, result)
 
 
+async def _lm_studio_for(
+    session: AsyncSession,
+    user_id: int,
+    provider_id: int | None,
+) -> LMStudioClient:
+    """Return the LM Studio client for a provider id (None keeps the configured legacy host)."""
+    if provider_id is None:
+        return get_lm_studio_client(app_config.LM_STUDIO_BASE_URL)
+    row = await providers.get_provider(session, user_id, provider_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Провайдер не найден")
+    if row.kind != providers.KIND_LM_STUDIO:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Провайдер не является LM Studio",
+        )
+    return get_lm_studio_client(row.base_url)
+
+
 @app.get("/api/v1/lm-studio/models")
 async def list_lm_studio_models(
+    provider_id: int | None = Query(default=None),
+    session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> list[dict[str, Any]]:
     """List models available in LM Studio."""
+    client = await _lm_studio_for(session, current_user.id, provider_id)
     try:
-        return await lm_studio_client.list_models()
+        return await client.list_models()
     except httpx.ConnectError:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1214,10 +1301,12 @@ async def list_lm_studio_models(
 @app.post("/api/v1/lm-studio/load-model", response_model=ModelLoadResult)
 async def load_lm_studio_model(
     body: ModelLoadRequest,
+    session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> ModelLoadResult:
     """Load a model in LM Studio."""
-    return await lm_studio_client.load_model(
+    client = await _lm_studio_for(session, current_user.id, body.provider_id)
+    return await client.load_model(
         body.model_id,
         body.gpu_offload,
         body.context_length,
@@ -1230,10 +1319,13 @@ async def load_lm_studio_model(
 )
 async def unload_lm_studio_model(
     model_id: str,
+    provider_id: int | None = Query(default=None),
+    session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> ModelLoadResult:
     """Unload a model from LM Studio."""
-    return await lm_studio_client.unload_model(model_id)
+    client = await _lm_studio_for(session, current_user.id, provider_id)
+    return await client.unload_model(model_id)
 
 
 @app.websocket("/ws/chat/{chat_id}")

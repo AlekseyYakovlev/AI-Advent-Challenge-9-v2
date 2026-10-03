@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Protocol
 
+import httpx
 from fastapi import WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 from sqlmodel import select
@@ -22,13 +23,16 @@ from agent.context_engine import (
 )
 from agent.dependencies import get_current_user_ws
 from agent import invariants, tasks
-from agent.llm_client import llm_client
+from agent.llm_client import LLMClient, count_tokens
 from agent.mcp_tools import McpToolset, build_mcp_toolset
+from agent.rag_turn import RagTurn, prepare_rag_turn
+from agent.providers import ProviderUnavailableError, resolve_client
 from agent.state import (
     CORS_ORIGINS,
     active_streams,
     chat_locks,
     current_chat_model,
+    current_chat_provider_id,
     ws_rate_limiter,
 )
 from agent.schemas import (
@@ -55,6 +59,7 @@ from agent.tool_guard import (
 )
 from agent.tools import TOOL_REGISTRY, build_tool_schemas, dispatch_tool_calls
 from shared.auth import SESSION_COOKIE_NAME
+from shared.config import settings
 from shared.database import async_session_factory
 from shared.logger import get_logger
 from shared.models import Chat, Message
@@ -189,7 +194,7 @@ async def _persist_user_message(
         parent_id=chat.current_leaf_message_id,
         role="user",
         content=content,
-        token_count=llm_client.count_tokens(content),
+        token_count=count_tokens(content),
     )
     session.add(user_msg)
     await session.flush()
@@ -207,6 +212,7 @@ async def _persist_assistant_message(
     content: str,
     *,
     tool_trace: str | None = None,
+    rag_sources: str | None = None,
 ) -> Message:
     """Insert an assistant message and advance the chat leaf."""
     assistant_msg = Message(
@@ -214,8 +220,9 @@ async def _persist_assistant_message(
         parent_id=parent_id,
         role="assistant",
         content=content,
-        token_count=llm_client.count_tokens(content),
+        token_count=count_tokens(content),
         tool_trace=tool_trace,
+        rag_sources=rag_sources,
     )
     session.add(assistant_msg)
     await session.flush()
@@ -288,6 +295,7 @@ def _recover_text_calls(
 
 async def _stream_action_claim_retry(
     websocket: WebSocket,
+    client: LLMClient,
     llm_messages: list[dict[str, Any]],
     payload: MessagePayload,
     temperature: float,
@@ -312,7 +320,7 @@ async def _stream_action_claim_retry(
         await websocket.send_json({"type": "token", "content": safe})
 
     try:
-        async for event in llm_client.stream_chat(
+        async for event in client.stream_chat(
             llm_messages,
             payload.model,
             temperature,
@@ -333,6 +341,21 @@ async def _stream_action_claim_retry(
     return retry_text, retry_tool_calls
 
 
+def _llm_error_detail(exc: BaseException, provider_row: Any | None) -> str:
+    """Build the LLM_ERROR text; an auth rejection names the provider and env variable, never the key."""
+    if (
+        provider_row is not None
+        and isinstance(exc, httpx.HTTPStatusError)
+        and exc.response.status_code in (401, 403)
+    ):
+        return (
+            f"LLM error: провайдер «{provider_row.name}» отклонил API-ключ "
+            f"(HTTP {exc.response.status_code}). "
+            f"Проверьте переменную {provider_row.api_key_env or '—'} в .env."
+        )
+    return f"LLM error: {str(exc)}"
+
+
 @dataclass
 class _ToolTurn:
     """Per-turn context shared by the tool-round helpers."""
@@ -347,7 +370,14 @@ class _ToolTurn:
     toolset: McpToolset
     temperature: float
     max_tokens: int
+    client: LLMClient | None = None
+    provider: Any | None = None
     allowed_tools: frozenset[str] | None = None
+
+    def __post_init__(self) -> None:
+        # Callers that build a turn without a resolved provider keep talking to LM Studio.
+        if self.client is None:
+            self.client = LLMClient(base_url=settings.LM_STUDIO_BASE_URL)
 
 
 @dataclass
@@ -389,7 +419,7 @@ async def _stream_follow_up(
         await turn.websocket.send_json({"type": "token", "content": safe})
         text += safe
 
-    async for event in llm_client.stream_chat(
+    async for event in turn.client.stream_chat(
         turn.llm_messages,
         turn.payload.model,
         turn.temperature,
@@ -634,7 +664,7 @@ async def _reprompt_rejected_transitions(
     text = ""
     trace_filter = TraceLeakFilter()
     try:
-        async for token in llm_client.stream_chat(
+        async for token in turn.client.stream_chat(
             turn.llm_messages,
             turn.payload.model,
             turn.temperature,
@@ -674,6 +704,7 @@ async def _handle_chat_message(
 ) -> None:
     """Process one inbound chat message under the per-chat lock."""
     current_chat_model.set(payload.model)
+    current_chat_provider_id.set(payload.provider_id)
     if chat_id not in chat_locks:
         chat_locks[chat_id] = asyncio.Lock()
     async with chat_locks[chat_id]:
@@ -682,6 +713,19 @@ async def _handle_chat_message(
             if chat is None:
                 await websocket.send_json(
                     {"type": "error", "detail": f"Chat {chat_id} not found"},
+                )
+                return
+
+            try:
+                client, provider_row = await resolve_client(chat.user_id, payload.provider_id)
+            except ProviderUnavailableError as exc:
+                logger.info(
+                    "chat_provider_unavailable",
+                    chat_id=chat_id,
+                    provider_id=payload.provider_id,
+                )
+                await websocket.send_json(
+                    {"type": "error", "code": "PROVIDER_UNAVAILABLE", "detail": exc.message},
                 )
                 return
 
@@ -744,6 +788,21 @@ async def _handle_chat_message(
                     "content": llm_messages[0]["content"] + suffix,
                 }
 
+            # Budgeted after the system prompt and tool schemas are final, and merged only
+            # into the outbound copy, so fragments never reach the compression strategy.
+            schema_tokens = (
+                count_tokens(json.dumps(tool_schemas, ensure_ascii=False)) if tool_schemas else 0
+            )
+            rag_turn: RagTurn = await prepare_rag_turn(
+                session,
+                chat,
+                payload.content,
+                llm_messages,
+                effective.context_length,
+                max_tokens,
+                schema_tokens,
+            )
+
             assistant_text = ""
             pending_tool_calls: list[dict[str, Any]] = []
             stream_task = asyncio.current_task()
@@ -752,7 +811,7 @@ async def _handle_chat_message(
             try:
                 if tool_schemas:
                     reply_filter = _ReplyFilter()
-                    async for event in llm_client.stream_chat(
+                    async for event in client.stream_chat(
                         llm_messages,
                         payload.model,
                         temperature,
@@ -772,7 +831,7 @@ async def _handle_chat_message(
                         )
                 else:
                     trace_filter = TraceLeakFilter()
-                    async for token in llm_client.stream_chat(
+                    async for token in client.stream_chat(
                         llm_messages,
                         payload.model,
                         temperature,
@@ -789,7 +848,7 @@ async def _handle_chat_message(
                 await websocket.send_json(
                     {
                         "type": "error",
-                        "detail": f"LLM error: {str(exc)}",
+                        "detail": _llm_error_detail(exc, provider_row),
                         "code": "LLM_ERROR",
                     },
                 )
@@ -817,6 +876,7 @@ async def _handle_chat_message(
                 )
                 retry_text, pending_tool_calls = await _stream_action_claim_retry(
                     websocket,
+                    client,
                     llm_messages,
                     payload,
                     temperature,
@@ -844,9 +904,12 @@ async def _handle_chat_message(
                     toolset=toolset,
                     temperature=temperature,
                     max_tokens=max_tokens,
+                    client=client,
+                    provider=provider_row,
                 )
                 rounds = await _run_tool_rounds(turn, pending_tool_calls, echo_text)
                 if rounds.error is not None:
+                    exc = rounds.error
                     logger.error(
                         "llm_stream_failed",
                         chat_id=chat_id,
@@ -855,7 +918,7 @@ async def _handle_chat_message(
                     await websocket.send_json(
                         {
                             "type": "error",
-                            "detail": f"LLM error: {str(rounds.error)}",
+                            "detail": _llm_error_detail(exc, turn.provider),
                             "code": "LLM_ERROR",
                         },
                     )
@@ -889,6 +952,7 @@ async def _handle_chat_message(
                     assistant_text,
                     pending_tool_calls,
                     payload.model,
+                    client,
                 )
                 flagged = invariants.match_flagged_invariant(active_invariants, critique)
 
@@ -901,7 +965,7 @@ async def _handle_chat_message(
                 )
                 trace_filter = TraceLeakFilter()
                 try:
-                    async for token in llm_client.stream_chat(
+                    async for token in client.stream_chat(
                         llm_messages,
                         payload.model,
                         temperature,
@@ -926,6 +990,7 @@ async def _handle_chat_message(
                 user_msg.id,
                 assistant_text,
                 tool_trace=tool_trace,
+                rag_sources=rag_turn.sources_json,
             )
 
             conflict_payload: dict[str, Any] | None = None
@@ -955,13 +1020,20 @@ async def _handle_chat_message(
                 chat_id,
                 payload.content,
                 payload.model,
+                user_id=chat.user_id,
+                provider_id=payload.provider_id,
             )
             stats = await compute_chat_stats(session, chat_id, payload.model)
             # Scheduled before the done frame so a client that already disconnected cannot
             # skip it; nothing is awaited before the send, so the title call never delays the turn.
             if chat.title == DEFAULT_CHAT_TITLE and user_msg.parent_id is None:
                 schedule_title_generation(
-                    chat_id, chat.user_id, payload.content, assistant_text, payload.model
+                    chat_id,
+                    chat.user_id,
+                    payload.content,
+                    assistant_text,
+                    payload.model,
+                    payload.provider_id,
                 )
             await websocket.send_json(
                 {
@@ -971,6 +1043,7 @@ async def _handle_chat_message(
                     "memory_writes": memory_writes,
                     "task_writes": task_writes,
                     "invariant_conflict": conflict_payload,
+                    "rag": rag_turn.done_payload,
                 },
             )
 

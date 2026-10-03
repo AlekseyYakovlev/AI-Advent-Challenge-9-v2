@@ -12,8 +12,9 @@ const state = {
     messages: [],
     childrenByParent: new Map(),
     activeChildByParent: new Map(),
-    models: [],
+    modelGroups: [],
     selectedModel: '',
+    selectedProviderId: null,
     isStreaming: false,
     ws: null,
     reconnectAttempt: 0,
@@ -27,6 +28,9 @@ const state = {
     isStatsLocal: false,
     statsAbortController: null,
     lastMemory: null,
+    editingMemory: null,
+    savingMemory: false,
+    deletingMemoryId: null,
     lastProfile: null,
     lastTasks: null,
     lastGlobalInvariants: null,
@@ -181,6 +185,9 @@ function renderMessages() {
             tokenInfo.textContent = `${msg.token_count} tokens`;
             bubble.appendChild(tokenInfo);
         }
+        if (!isUser && msg.rag_sources) {
+            bubble.appendChild(buildRagMeta(msg.rag_sources));
+        }
         const controls = document.createElement('div');
         controls.innerHTML = branchControlsHtml(msg);
         bubble.appendChild(controls);
@@ -191,6 +198,11 @@ function renderMessages() {
             });
         }
         container.appendChild(wrapper);
+        const rag = msg.rag_sources;
+        if (!isUser && rag && rag.mode === 'rag' && !rag.warning
+            && Array.isArray(rag.sources) && rag.sources.length > 0) {
+            container.appendChild(wrapToolCard(buildRagSourcesBlock(rag)));
+        }
         state.lastConflicts
             .filter((conflict) => conflict.message_id === msg.id)
             .forEach((conflict) => {
@@ -294,7 +306,223 @@ async function loadChatMemory(chatId) {
     }
 }
 
-function renderMemoryEntries(container, entries) {
+function memoryErrorText(err, fallback) {
+    const text = err && typeof err.message === 'string' ? err.message : '';
+    if (text && !text.startsWith('[') && !text.startsWith('{')) return text;
+    return fallback;
+}
+
+function patchLongTermMemoryLocally(entryId, updatedEntry) {
+    if (!state.lastMemory) return;
+    const current = state.lastMemory.long_term;
+    state.lastMemory.long_term = updatedEntry === null
+        ? current.filter((item) => item.id !== entryId)
+        : current.map((item) => (item.id === entryId ? updatedEntry : item));
+}
+
+async function refreshMemoryPanel() {
+    renderMemoryPanel();
+    if (state.currentChatId !== null) {
+        await loadChatMemory(state.currentChatId);
+    }
+}
+
+function startMemoryEdit(entry) {
+    state.editingMemory = { id: entry.id, key: entry.key, value: entry.value };
+    renderMemoryPanel();
+}
+
+function cancelMemoryEdit() {
+    state.editingMemory = null;
+    renderMemoryPanel();
+}
+
+async function saveLongTermMemory() {
+    const draft = state.editingMemory;
+    if (!draft || state.savingMemory) return;
+    const key = draft.key.trim();
+    const value = draft.value;
+    if (!key || !value.trim()) {
+        showToast('Заполните ключ и значение', 'error');
+        return;
+    }
+    state.savingMemory = true;
+    renderMemoryPanel();
+    try {
+        const updated = await apiFetch(`/api/v1/memory/long-term/${draft.id}`, {
+            method: 'PUT',
+            body: JSON.stringify({ key, value }),
+        });
+        if (updated !== undefined) {
+            if (state.editingMemory && state.editingMemory.id === draft.id) {
+                state.editingMemory = null;
+            }
+            patchLongTermMemoryLocally(draft.id, updated);
+            showToast('Запись памяти обновлена', 'success');
+        }
+    } catch (err) {
+        showToast(memoryErrorText(err, 'Не удалось сохранить запись памяти.'), 'error');
+    } finally {
+        state.savingMemory = false;
+    }
+    await refreshMemoryPanel();
+}
+
+async function deleteLongTermMemory(entry) {
+    if (state.deletingMemoryId !== null) return;
+    if (!confirm(`Удалить запись «${entry.key}» из долговременной памяти? Это действие нельзя отменить.`)) return;
+    state.deletingMemoryId = entry.id;
+    renderMemoryPanel();
+    try {
+        const result = await apiFetch(`/api/v1/memory/long-term/${entry.id}`, { method: 'DELETE' });
+        if (result !== undefined) {
+            patchLongTermMemoryLocally(entry.id, null);
+            if (state.editingMemory && state.editingMemory.id === entry.id) {
+                state.editingMemory = null;
+            }
+            showToast('Запись памяти удалена', 'success');
+        }
+    } catch (err) {
+        showToast(memoryErrorText(err, 'Не удалось удалить запись памяти.'), 'error');
+    } finally {
+        state.deletingMemoryId = null;
+    }
+    await refreshMemoryPanel();
+}
+
+function buildMemoryButton(label, className, action, handler) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = className;
+    button.textContent = label;
+    button.dataset.memoryAction = action;
+    button.addEventListener('click', handler);
+    return button;
+}
+
+function buildMemoryEntryRow(entry, editable) {
+    const row = document.createElement('div');
+    row.className = 'rounded-lg bg-slate-800 px-2 py-1';
+    row.dataset.memoryEntryId = String(entry.id);
+
+    const keyEl = document.createElement('div');
+    keyEl.className = 'text-slate-300 font-semibold';
+    keyEl.textContent = entry.key;
+
+    const valueEl = document.createElement('div');
+    valueEl.className = 'text-slate-400 truncate';
+    const truncated = entry.value.length > 160 ? `${entry.value.slice(0, 160)}…` : entry.value;
+    valueEl.textContent = truncated;
+    valueEl.title = entry.value;
+
+    row.appendChild(keyEl);
+    row.appendChild(valueEl);
+    if (!editable) return row;
+
+    const actions = document.createElement('div');
+    actions.className = 'flex items-center gap-2 mt-1';
+    actions.appendChild(buildMemoryButton(
+        'Редактировать',
+        'text-slate-400 hover:text-white',
+        'edit',
+        () => startMemoryEdit(entry),
+    ));
+    const deleteBtn = buildMemoryButton(
+        'Удалить',
+        'text-red-400 hover:text-red-300 disabled:opacity-50',
+        'delete',
+        () => {
+            deleteLongTermMemory(entry).catch((err) => showToast(err.message, 'error'));
+        },
+    );
+    deleteBtn.disabled = state.deletingMemoryId === entry.id;
+    actions.appendChild(deleteBtn);
+    row.appendChild(actions);
+    return row;
+}
+
+function buildMemoryEditForm(entry) {
+    const draft = state.editingMemory;
+    const fieldClass = 'w-full min-w-0 rounded bg-slate-900 border border-slate-700 px-2 py-1 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500';
+
+    const form = document.createElement('div');
+    form.className = 'rounded-lg bg-slate-800 px-2 py-2 space-y-1';
+    form.dataset.memoryEntryId = String(entry.id);
+
+    const keyInput = document.createElement('input');
+    keyInput.type = 'text';
+    keyInput.maxLength = 200;
+    keyInput.placeholder = 'Ключ';
+    keyInput.value = draft.key;
+    keyInput.dataset.memoryField = 'key';
+    keyInput.setAttribute('aria-label', 'Ключ записи памяти');
+    keyInput.className = fieldClass;
+    keyInput.addEventListener('input', () => {
+        if (state.editingMemory) state.editingMemory.key = keyInput.value;
+    });
+
+    const valueInput = document.createElement('textarea');
+    valueInput.rows = 4;
+    valueInput.maxLength = 50000;
+    valueInput.placeholder = 'Значение';
+    valueInput.value = draft.value;
+    valueInput.dataset.memoryField = 'value';
+    valueInput.setAttribute('aria-label', 'Значение записи памяти');
+    valueInput.className = `${fieldClass} resize-y`;
+    valueInput.addEventListener('input', () => {
+        if (state.editingMemory) state.editingMemory.value = valueInput.value;
+    });
+
+    const actions = document.createElement('div');
+    actions.className = 'flex items-center gap-2';
+    const saveBtn = buildMemoryButton(
+        'Сохранить',
+        'text-indigo-400 hover:text-indigo-300 disabled:opacity-50',
+        'save',
+        () => {
+            saveLongTermMemory().catch((err) => showToast(err.message, 'error'));
+        },
+    );
+    saveBtn.disabled = state.savingMemory;
+    const cancelBtn = buildMemoryButton(
+        'Отмена',
+        'text-slate-400 hover:text-white disabled:opacity-50',
+        'cancel',
+        cancelMemoryEdit,
+    );
+    cancelBtn.disabled = state.savingMemory;
+    actions.appendChild(saveBtn);
+    actions.appendChild(cancelBtn);
+
+    form.appendChild(keyInput);
+    form.appendChild(valueInput);
+    form.appendChild(actions);
+    return form;
+}
+
+function captureMemoryFocus(container) {
+    const active = document.activeElement;
+    if (!active || !container.contains(active) || !active.dataset.memoryField) return null;
+    return {
+        field: active.dataset.memoryField,
+        start: active.selectionStart,
+        end: active.selectionEnd,
+    };
+}
+
+function restoreMemoryFocus(container, snapshot) {
+    if (!snapshot) return;
+    const field = snapshot.field === 'key' ? 'key' : 'value';
+    const target = container.querySelector(`[data-memory-field="${field}"]`);
+    if (!target) return;
+    target.focus();
+    if (snapshot.start !== null && snapshot.end !== null) {
+        target.setSelectionRange(snapshot.start, snapshot.end);
+    }
+}
+
+function renderMemoryEntries(container, entries, { editable = false } = {}) {
+    const focus = editable ? captureMemoryFocus(container) : null;
     container.replaceChildren();
     if (!entries.length) {
         const empty = document.createElement('div');
@@ -304,23 +532,10 @@ function renderMemoryEntries(container, entries) {
         return;
     }
     entries.forEach((entry) => {
-        const row = document.createElement('div');
-        row.className = 'rounded-lg bg-slate-800 px-2 py-1';
-
-        const keyEl = document.createElement('div');
-        keyEl.className = 'text-slate-300 font-semibold';
-        keyEl.textContent = entry.key;
-
-        const valueEl = document.createElement('div');
-        valueEl.className = 'text-slate-400 truncate';
-        const truncated = entry.value.length > 160 ? `${entry.value.slice(0, 160)}…` : entry.value;
-        valueEl.textContent = truncated;
-        valueEl.title = entry.value;
-
-        row.appendChild(keyEl);
-        row.appendChild(valueEl);
-        container.appendChild(row);
+        const editing = editable && state.editingMemory !== null && state.editingMemory.id === entry.id;
+        container.appendChild(editing ? buildMemoryEditForm(entry) : buildMemoryEntryRow(entry, editable));
     });
+    restoreMemoryFocus(container, focus);
 }
 
 function renderMemoryPanel() {
@@ -331,12 +546,15 @@ function renderMemoryPanel() {
     const workingEl = $('memory-working');
     const longTermEl = $('memory-long-term');
     if (!data) return;
+    if (state.editingMemory && !data.long_term.some((item) => item.id === state.editingMemory.id)) {
+        state.editingMemory = null;
+    }
 
     if (shortTermEl) shortTermEl.textContent = String(data.short_term_message_count);
     if (workingCountEl) workingCountEl.textContent = String(data.working.length);
     if (longTermCountEl) longTermCountEl.textContent = String(data.long_term.length);
     if (workingEl) renderMemoryEntries(workingEl, data.working);
-    if (longTermEl) renderMemoryEntries(longTermEl, data.long_term);
+    if (longTermEl) renderMemoryEntries(longTermEl, data.long_term, { editable: true });
 }
 
 async function loadChatTasks(chatId) {
@@ -1060,6 +1278,7 @@ async function selectChat(chatId) {
     $('chat-title').textContent = chat?.title || 'Чат';
     renderChatList();
     await loadChatTree(chatId);
+    await loadChatRag(chatId);
     await loadChatStats(chatId);
     await loadChatMemory(chatId);
     await loadChatTasks(chatId);
@@ -1266,6 +1485,7 @@ function handleWsMessage(data) {
             if (data.invariant_conflict) {
                 showToast('⚠️ Обнаружен конфликт с инвариантом', 'warning');
             }
+            if (data.rag && data.rag.warning) showToast('Поиск по базе знаний не удался — ответ дан без RAG', 'warning');
             break;
         case 'error':
             if (data.code !== 'TOOL_ERROR') state.pendingToolCalls = [];
@@ -1281,6 +1501,13 @@ function handleWsMessage(data) {
                 const suggestedStrategy = data.suggested_strategy || 'sliding';
                 blockInputWithMessage(data.detail, suggestedStrategy);
                 showToast('⚠️ ' + data.detail, 'error');
+            } else if (data.code === 'PROVIDER_UNAVAILABLE') {
+                const input = $('message-input');
+                if (input && !input.value && state.lastFailedMessage) {
+                    input.value = state.lastFailedMessage;
+                }
+                showToast(data.detail || 'Провайдер недоступен', 'error');
+                refreshModelSelector();
             } else {
                 showToast(data.detail || 'Ошибка', 'error');
             }
@@ -1298,7 +1525,7 @@ function trySendPending() {
     if (!state.pendingMessage) return;
     if (!state.currentChatId) return;
     if (state.isStreaming) return;
-    if (!state.selectedModel) return;
+    if (!state.selectedModel || state.selectedProviderId === null) return;
     if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
 
     const queued = state.pendingMessage;
@@ -1309,7 +1536,7 @@ function trySendPending() {
 async function sendMessage(content) {
     if (!state.currentChatId || !content.trim() || state.isStreaming) return;
 
-    if (!state.selectedModel) {
+    if (!state.selectedModel || state.selectedProviderId === null) {
         state.pendingMessage = content.trim();
         showToast('Модель ещё загружается — сообщение будет отправлено автоматически', 'info');
         return;
@@ -1332,6 +1559,7 @@ async function sendMessage(content) {
     state.ws.send(JSON.stringify({
         content: trimmed,
         model: state.selectedModel,
+        provider_id: state.selectedProviderId,
     }));
 
     const input = $('message-input');
@@ -1369,85 +1597,185 @@ async function switchBranch(parentRef, direction) {
     loadChatStats(state.currentChatId);
 }
 
-async function loadModels() {
-    const select = $('model-select');
-    try {
-        state.models = await apiFetch('/api/v1/lm-studio/models');
-        populateModelSelect();
-    } catch (err) {
-        select.innerHTML = '<option value="">⚠️ LM Studio не запущен</option>';
-        showToast('⚠️ LM Studio не запущен. Запустите LM Studio и обновите страницу.', 'error');
+function encodeModelValue(providerId, modelId) {
+    return `${providerId}::${modelId}`;
+}
+
+function parseModelValue(value) {
+    if (!value) return null;
+    const sep = value.indexOf('::');
+    if (sep < 1) return null;
+    const providerId = Number(value.slice(0, sep));
+    const modelId = value.slice(sep + 2);
+    if (!Number.isInteger(providerId) || !modelId) return null;
+    return { providerId, modelId };
+}
+
+function findModelEntry(providerId, modelId) {
+    for (const group of state.modelGroups) {
+        if (group.provider_id !== providerId || group.error) continue;
+        const model = group.models.find((m) => m.id === modelId);
+        if (model) return { group, model };
     }
+    return null;
+}
+
+function usableModelGroups() {
+    return state.modelGroups
+        .filter((g) => !g.error)
+        .map((g) => ({ ...g, models: g.models.filter((m) => m.type !== 'embeddings') }))
+        .filter((g) => g.models.length > 0);
+}
+
+async function fetchModelGroups(refresh) {
+    return await apiFetch(`/api/v1/llm-providers/models?refresh=${refresh ? 'true' : 'false'}`) || [];
+}
+
+function setModelSelectPlaceholder(text) {
+    const select = $('model-select');
+    select.replaceChildren();
+    const opt = mcpEl('option', '', text);
+    opt.value = '';
+    opt.disabled = true;
+    opt.selected = true;
+    select.appendChild(opt);
+}
+
+async function loadModels() {
+    try {
+        state.modelGroups = await fetchModelGroups(true);
+    } catch (err) {
+        setModelSelectPlaceholder('⚠️ Модели недоступны');
+        showToast(err.message, 'error');
+        return;
+    }
+    state.modelGroups.forEach((group) => {
+        if (group.error) {
+            showToast(`Провайдер «${group.name}» недоступен: ${group.error}`, 'error');
+        }
+    });
+    populateModelSelect();
+}
+
+function pickDefaultModelEntry(groups) {
+    for (const group of groups) {
+        if (group.kind !== 'lm_studio') continue;
+        const loaded = group.models.find((m) => m.loaded);
+        if (loaded) return { group, model: loaded };
+    }
+    return { group: groups[0], model: groups[0].models[0] };
 }
 
 function populateModelSelect() {
     const select = $('model-select');
-    select.innerHTML = '';
-    if (!state.models.length) {
-        select.innerHTML = '<option value="">Нет моделей</option>';
+    const groups = usableModelGroups();
+    const hadSelection = Boolean(state.selectedModel) && state.selectedProviderId !== null;
+    const previousProvider = state.selectedProviderId;
+    const previousModel = state.selectedModel;
+
+    if (!groups.length) {
+        setModelSelectPlaceholder('Нет доступных моделей');
+        state.selectedModel = '';
+        state.selectedProviderId = null;
+        if (hadSelection) state.contextWindow = null;
+        populateSchedulerModelSelectIfPresent();
         return;
     }
-    state.models.forEach((model) => {
-        const opt = document.createElement('option');
-        opt.value = model.id;
-        const loaded = model.loaded ? ' ✓' : '';
-        opt.textContent = `${model.id}${loaded}`;
-        select.appendChild(opt);
+
+    select.replaceChildren();
+    groups.forEach((group) => {
+        const optgroup = document.createElement('optgroup');
+        optgroup.label = group.name;
+        group.models.forEach((model) => {
+            const opt = document.createElement('option');
+            opt.value = encodeModelValue(group.provider_id, model.id);
+            const loaded = group.kind === 'lm_studio' && model.loaded ? ' ✓' : '';
+            opt.textContent = `${group.name} · ${model.id}${loaded}`;
+            optgroup.appendChild(opt);
+        });
+        select.appendChild(optgroup);
     });
-    const loaded = state.models.find((m) => m.loaded);
-    if (loaded) {
-        select.value = loaded.id;
-        state.selectedModel = loaded.id;
-    } else if (state.models.length) {
-        select.value = state.models[0].id;
-        state.selectedModel = state.models[0].id;
+
+    const previousEntry = hadSelection ? findModelEntry(previousProvider, previousModel) : null;
+    const chosen = previousEntry || pickDefaultModelEntry(groups);
+    if (hadSelection && !previousEntry) {
+        showToast('Провайдер недоступен. Выбрана другая модель.', 'warning');
     }
+    const providerId = chosen.group.provider_id;
+    const modelId = chosen.model.id;
+    select.value = encodeModelValue(providerId, modelId);
+    if (providerId !== previousProvider || modelId !== previousModel) {
+        state.contextWindow = null;
+    }
+    state.selectedProviderId = providerId;
+    state.selectedModel = modelId;
+    populateSchedulerModelSelectIfPresent();
     trySendPending();
+}
+
+function populateSchedulerModelSelectIfPresent() {
+    if ($('scheduler-model')) populateSchedulerModelSelect();
 }
 
 async function refreshModelSelector() {
     try {
-        state.models = await apiFetch('/api/v1/lm-studio/models');
-        populateModelSelect();
-    } catch {
-        $('model-select').innerHTML = '<option value="">⚠️ LM Studio не запущен</option>';
+        state.modelGroups = await fetchModelGroups(true);
+    } catch (err) {
+        showToast(err.message, 'error');
+        return;
     }
+    populateModelSelect();
 }
 
-async function onModelSelect(modelId) {
-    if (!modelId) return;
+function selectModelEntry(providerId, modelId) {
+    state.selectedProviderId = providerId;
+    state.selectedModel = modelId;
     state.contextWindow = null;
+    populateSchedulerModelSelectIfPresent();
+}
+
+async function onModelSelect(value) {
+    const parsed = parseModelValue(value);
+    if (!parsed) return;
+    const { providerId, modelId } = parsed;
+    const current = findModelEntry(providerId, modelId);
+    if (current && current.group.kind !== 'lm_studio') {
+        selectModelEntry(providerId, modelId);
+        return;
+    }
     try {
-        state.models = await apiFetch('/api/v1/lm-studio/models');
-    } catch {
-        showToast('⚠️ LM Studio не запущен. Запустите LM Studio и попробуйте снова.', 'error');
+        state.modelGroups = await fetchModelGroups(true);
+    } catch (err) {
+        showToast(err.message, 'error');
+        populateModelSelect();
         return;
     }
-    const model = state.models.find((m) => m.id === modelId);
-    if (!model) {
+    const entry = findModelEntry(providerId, modelId);
+    if (!entry) {
         showToast('Модель не найдена', 'error');
+        populateModelSelect();
         return;
     }
-    if (model.loaded) {
-        state.selectedModel = modelId;
+    if (entry.model.loaded || entry.group.kind !== 'lm_studio') {
+        selectModelEntry(providerId, modelId);
         return;
     }
-    const confirmed = confirm(`Модель «${modelId}» не загружена. Загрузить?`);
-    if (!confirmed) {
+    if (!confirm(`Модель «${modelId}» не загружена. Загрузить?`)) {
         populateModelSelect();
         return;
     }
     try {
         const result = await apiFetch('/api/v1/lm-studio/load-model', {
             method: 'POST',
-            body: JSON.stringify({ model_id: modelId, gpu_offload: 0 }),
+            body: JSON.stringify({ model_id: modelId, gpu_offload: 0, provider_id: providerId }),
         });
         if (result.status === 'LOADED') {
-            state.selectedModel = modelId;
+            selectModelEntry(providerId, modelId);
             showToast(`Модель ${modelId} загружена`, 'success');
             await refreshModelSelector();
         } else if (result.status === 'UNREACHABLE') {
             showToast('⚠️ LM Studio не запущен. Запустите LM Studio и попробуйте снова.', 'error');
+            populateModelSelect();
         } else {
             showToast(result.message || 'Ошибка загрузки модели', 'error');
             populateModelSelect();
@@ -1843,6 +2171,193 @@ async function disconnectMcpServer(server) {
 }
 
 // ---- end MCP servers ----
+
+// ---- LLM providers ----
+
+const LLM_PROVIDER_STATUS_BADGE_CLASSES = {
+    not_checked: 'text-slate-400',
+    disabled: 'text-slate-400',
+    checking: 'text-sky-400',
+    ok: 'text-emerald-400',
+    error: 'text-red-400',
+};
+
+const LLM_PROVIDER_ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+state.llmProviders = [];
+state.llmProviderEditingId = null;
+state.llmProviderChecking = new Set();
+state.llmProviderSaving = false;
+
+function llmProviderStatus(provider) {
+    if (!provider.enabled) return 'disabled';
+    if (state.llmProviderChecking.has(provider.id)) return 'checking';
+    return provider.check.status;
+}
+
+function llmProviderStatusLabel(provider, status) {
+    switch (status) {
+        case 'disabled': return 'отключён';
+        case 'checking': return 'проверка…';
+        case 'ok': return `доступен · ${provider.check.model_count} моделей`;
+        case 'error': return 'ошибка';
+        default: return 'не проверен';
+    }
+}
+
+async function loadLlmProviders() {
+    state.llmProviders = await apiFetch('/api/v1/llm-providers') || [];
+    renderLlmProviderList();
+}
+
+function renderLlmProviderRow(provider) {
+    const status = llmProviderStatus(provider);
+    const busy = state.llmProviderChecking.has(provider.id);
+    const card = mcpEl('div', 'rounded-lg bg-slate-800 border border-slate-700 p-4 space-y-2');
+
+    const header = mcpEl('div', 'flex flex-wrap items-center justify-between gap-2');
+    const title = mcpEl('div', 'flex items-center gap-2 min-w-0');
+    title.appendChild(mcpEl('span', `text-sm font-semibold truncate${provider.enabled ? '' : ' opacity-60'}`, provider.name));
+    title.appendChild(mcpEl('span', `text-xs ${LLM_PROVIDER_STATUS_BADGE_CLASSES[status] || 'text-slate-400'}`, llmProviderStatusLabel(provider, status)));
+    header.appendChild(title);
+
+    const actions = mcpEl('div', 'flex items-center gap-2');
+    const checkBtn = mcpEl('button', MCP_NEUTRAL_BTN_CLASSES, 'Проверить');
+    checkBtn.type = 'button';
+    checkBtn.disabled = busy || !provider.enabled;
+    checkBtn.addEventListener('click', () => checkLlmProvider(provider.id));
+    const editBtn = mcpEl('button', MCP_NEUTRAL_BTN_CLASSES, 'Изменить');
+    editBtn.type = 'button';
+    editBtn.disabled = busy;
+    editBtn.addEventListener('click', () => openLlmProviderForm(provider));
+    const delBtn = mcpEl('button', 'text-xs text-red-400 hover:text-red-300 disabled:opacity-50 disabled:cursor-not-allowed', 'Удалить');
+    delBtn.type = 'button';
+    delBtn.disabled = busy;
+    delBtn.addEventListener('click', () => {
+        deleteLlmProvider(provider).catch((err) => showToast(err.message, 'error'));
+    });
+    actions.append(checkBtn, editBtn, delBtn);
+    header.appendChild(actions);
+    card.appendChild(header);
+
+    const keyPart = provider.api_key_env ? ` · ключ: ${provider.api_key_env}` : ' · без ключа';
+    card.appendChild(mcpEl('div', 'text-xs text-slate-500', `${provider.base_url}${keyPart}`));
+    if (status === 'error') {
+        card.appendChild(mcpEl('div', 'text-xs text-red-400', provider.check.message || ''));
+    } else if (status === 'ok') {
+        card.appendChild(mcpEl('div', 'text-xs text-slate-500', `${provider.check.model_count} моделей`));
+    }
+    return card;
+}
+
+function renderLlmProviderList() {
+    const list = $('llm-provider-list');
+    $('llm-provider-empty').classList.toggle('hidden', state.llmProviders.length > 0);
+    list.replaceChildren();
+    state.llmProviders.forEach((provider) => list.appendChild(renderLlmProviderRow(provider)));
+}
+
+function openLlmProviderForm(provider) {
+    state.llmProviderEditingId = provider ? provider.id : null;
+    $('llm-provider-name').value = provider ? provider.name : '';
+    $('llm-provider-base-url').value = provider ? provider.base_url : '';
+    $('llm-provider-key-env').value = provider && provider.api_key_env ? provider.api_key_env : '';
+    $('llm-provider-enabled').checked = provider ? provider.enabled : true;
+    $('llm-provider-form-error').textContent = '';
+    $('llm-provider-form').classList.remove('hidden');
+    $('llm-provider-name').focus();
+}
+
+function closeLlmProviderForm() {
+    state.llmProviderEditingId = null;
+    $('llm-provider-name').value = '';
+    $('llm-provider-base-url').value = '';
+    $('llm-provider-key-env').value = '';
+    $('llm-provider-enabled').checked = true;
+    $('llm-provider-form-error').textContent = '';
+    $('llm-provider-form').classList.add('hidden');
+}
+
+function validateLlmProviderForm() {
+    const name = $('llm-provider-name').value.trim();
+    const baseUrl = $('llm-provider-base-url').value.trim();
+    const keyEnv = $('llm-provider-key-env').value.trim();
+    if (!name) return { error: 'Укажите название.' };
+    if (!/^https?:\/\//i.test(baseUrl)) return { error: 'Base URL должен начинаться с http:// или https://.' };
+    if (keyEnv && !LLM_PROVIDER_ENV_NAME_RE.test(keyEnv)) return { error: 'Недопустимое имя переменной окружения.' };
+    return {
+        body: {
+            name,
+            base_url: baseUrl,
+            api_key_env: keyEnv || null,
+            enabled: $('llm-provider-enabled').checked,
+        },
+    };
+}
+
+async function saveLlmProvider() {
+    if (state.llmProviderSaving) return;
+    const errorEl = $('llm-provider-form-error');
+    errorEl.textContent = '';
+    const validated = validateLlmProviderForm();
+    if (validated.error) {
+        errorEl.textContent = validated.error;
+        return;
+    }
+    const saveBtn = $('btn-llm-provider-save');
+    state.llmProviderSaving = true;
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Сохранение…';
+    let saved;
+    try {
+        const editingId = state.llmProviderEditingId;
+        saved = await apiFetch(
+            editingId === null ? '/api/v1/llm-providers' : `/api/v1/llm-providers/${editingId}`,
+            { method: editingId === null ? 'POST' : 'PUT', body: JSON.stringify(validated.body) },
+        );
+    } catch (err) {
+        errorEl.textContent = err.message;
+        return;
+    } finally {
+        state.llmProviderSaving = false;
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'Сохранить провайдера';
+    }
+    if (!saved) return;
+    showToast('Провайдер сохранён', 'success');
+    closeLlmProviderForm();
+    await loadLlmProviders();
+    await checkLlmProvider(saved.id);
+}
+
+async function checkLlmProvider(id) {
+    state.llmProviderChecking.add(id);
+    renderLlmProviderList();
+    try {
+        const updated = await apiFetch(`/api/v1/llm-providers/${id}/check`, { method: 'POST' });
+        if (updated) {
+            state.llmProviders = state.llmProviders.map((p) => (p.id === updated.id ? updated : p));
+        }
+    } catch (err) {
+        showToast(err.message, 'error');
+    } finally {
+        state.llmProviderChecking.delete(id);
+        renderLlmProviderList();
+    }
+    await refreshModelSelector();
+}
+
+async function deleteLlmProvider(provider) {
+    const message = `Удалить провайдера «${provider.name}»? Чаты и задачи, использующие его модели, перестанут работать, пока вы не выберете другую модель.`;
+    if (!confirm(message)) return;
+    await apiFetch(`/api/v1/llm-providers/${provider.id}`, { method: 'DELETE' });
+    if (state.llmProviderEditingId === provider.id) closeLlmProviderForm();
+    showToast('Провайдер удалён', 'success');
+    await loadLlmProviders();
+    await refreshModelSelector();
+}
+
+// ---- end LLM providers ----
 
 // ---- Scheduler ----
 
@@ -2250,7 +2765,8 @@ function closeSchedulerRunModal() {
 function populateSchedulerModelSelect() {
     const select = $('scheduler-model');
     select.replaceChildren();
-    if (!state.models.length) {
+    const groups = usableModelGroups();
+    if (!groups.length) {
         const empty = mcpEl('option', '', 'Нет моделей');
         empty.value = '';
         empty.disabled = true;
@@ -2258,15 +2774,21 @@ function populateSchedulerModelSelect() {
         select.appendChild(empty);
         return;
     }
-    state.models.forEach((model) => {
-        const option = mcpEl('option', '', model.id);
-        option.value = model.id;
-        select.appendChild(option);
+    groups.forEach((group) => {
+        const optgroup = document.createElement('optgroup');
+        optgroup.label = group.name;
+        group.models.forEach((model) => {
+            const option = mcpEl('option', '', `${group.name} · ${model.id}`);
+            option.value = encodeModelValue(group.provider_id, model.id);
+            optgroup.appendChild(option);
+        });
+        select.appendChild(optgroup);
     });
-    const preselected = state.models.some((m) => m.id === state.selectedModel)
-        ? state.selectedModel
-        : state.models[0].id;
-    select.value = preselected;
+    const hasHeaderSelection = state.selectedProviderId !== null && state.selectedModel
+        && findModelEntry(state.selectedProviderId, state.selectedModel);
+    select.value = hasHeaderSelection
+        ? encodeModelValue(state.selectedProviderId, state.selectedModel)
+        : encodeModelValue(groups[0].provider_id, groups[0].models[0].id);
 }
 
 function updateSchedulerTypeFields() {
@@ -2324,9 +2846,9 @@ function buildSchedulerCreateBody() {
     const prompt = $('scheduler-prompt').value.trim();
     if (!title || !prompt) throw new Error('Заполните название и промпт');
     const type = $('scheduler-type').value;
-    const model = $('scheduler-model').value;
-    if (!model) throw new Error('Выберите модель');
-    const body = { title, prompt, model, schedule_type: type, ...buildSchedulerScheduleFields(type) };
+    const parsed = parseModelValue($('scheduler-model').value);
+    if (!parsed) throw new Error('Выберите модель');
+    const body = { title, prompt, model: parsed.modelId, provider_id: parsed.providerId, schedule_type: type, ...buildSchedulerScheduleFields(type) };
     const maxRuns = parseInt($('scheduler-max-runs').value, 10);
     if (type !== 'once' && maxRuns >= 1) body.max_runs = maxRuns;
     return body;
@@ -2494,12 +3016,6 @@ function bindSchedulerModals() {
     $('btn-close-scheduler-create').addEventListener('click', closeSchedulerCreateModal);
     $('btn-cancel-scheduler-create').addEventListener('click', closeSchedulerCreateModal);
     $('btn-close-scheduler-run').addEventListener('click', closeSchedulerRunModal);
-    $('scheduler-create-modal').addEventListener('click', (e) => {
-        if (e.target === $('scheduler-create-modal')) closeSchedulerCreateModal();
-    });
-    $('scheduler-run-modal').addEventListener('click', (e) => {
-        if (e.target === $('scheduler-run-modal')) closeSchedulerRunModal();
-    });
 }
 
 const SCHEDULER_POLL_INTERVAL_MS = 10000;
@@ -2583,6 +3099,20 @@ function handleEventFrame(frame) {
         applyChatTitleUpdate(frame);
         return;
     }
+    if (frame && frame.type === 'kb_progress' && frame.kb) {
+        upsertKb(frame.kb);
+        renderKbPanel();
+        renderRagControls();
+        return;
+    }
+    if (frame && frame.type === 'kb_deleted') {
+        const wasAttached = state.rag && state.rag.kb_id === frame.kb_id;
+        removeKb(frame.kb_id);
+        renderKbPanel();
+        renderRagControls();
+        if (wasAttached && state.currentChatId) loadChatRag(state.currentChatId);
+        return;
+    }
     applySchedulerEvent(frame);
 }
 
@@ -2641,6 +3171,7 @@ function connectEventsWs() {
         state.eventsReconnectAttempt = 0;
         stopSchedulerPolling();
         loadSchedulerTasks(true);
+        loadKbList(true);
         clearEventsPing();
         state.eventsPingTimer = setInterval(() => {
             if (ws.readyState === WebSocket.OPEN) ws.send('ping');
@@ -2704,6 +3235,7 @@ async function openSettingsModal() {
     $('settings-system-prompt').value = settings.system_prompt;
     $('settings-modal').classList.remove('hidden');
     loadMcpServers().catch((err) => showToast(err.message, 'error'));
+    loadLlmProviders().catch((err) => showToast(err.message, 'error'));
 }
 
 function closeSettingsModal() {
@@ -2797,9 +3329,6 @@ function bindEvents() {
     $('add-user-form').addEventListener('submit', (e) => {
         createUser(e).catch((err) => showToast(err.message, 'error'));
     });
-    $('add-user-modal').addEventListener('click', (e) => {
-        if (e.target === $('add-user-modal')) closeAddUserModal();
-    });
     $('settings-temperature').addEventListener('input', (e) => {
         $('temperature-value').textContent = e.target.value;
     });
@@ -2814,6 +3343,18 @@ function bindEvents() {
     });
     $('model-select').addEventListener('change', (e) => {
         onModelSelect(e.target.value).catch((err) => showToast(err.message, 'error'));
+    });
+    $('rag-toggle').addEventListener('click', () => {
+        if (!state.rag) return;
+        saveChatRag({ mode: state.rag.mode === 'rag' ? 'off' : 'rag' });
+    });
+    $('rag-kb-select').addEventListener('change', (e) => {
+        saveChatRag({ kb_id: e.target.value ? Number(e.target.value) : null });
+    });
+    $('rag-k-input').addEventListener('change', (e) => {
+        const clamped = Math.min(20, Math.max(1, parseInt(e.target.value, 10) || 5));
+        e.target.value = String(clamped);
+        saveChatRag({ top_k: clamped });
     });
     $('messages').addEventListener('click', (e) => {
         const fromBtn = e.target.closest('[data-branch-from]');
@@ -2831,17 +3372,8 @@ function bindEvents() {
             switchBranch(next.dataset.branchNext, 'next').catch((err) => showToast(err.message, 'error'));
         }
     });
-    $('settings-modal').addEventListener('click', (e) => {
-        if (e.target === $('settings-modal')) closeSettingsModal();
-    });
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') {
-            closeSettingsModal();
-            closeAddUserModal();
-            closeSchedulerCreateModal();
-            closeSchedulerRunModal();
-        }
-    });
+    // Modals close only via their x / Cancel buttons or after a successful submit;
+    // no backdrop-click or Escape closers (guarded by tests/test_modal_close_policy.py).
     $('chat-list').addEventListener('contextmenu', (e) => {
         const btn = e.target.closest('[data-chat-id]');
         if (!btn) return;
@@ -2865,12 +3397,704 @@ function bindEvents() {
     $('btn-mcp-save').addEventListener('click', () => {
         saveMcpServer().catch((err) => showToast(err.message, 'error'));
     });
+    $('btn-llm-provider-add').addEventListener('click', () => openLlmProviderForm(null));
+    $('btn-llm-provider-cancel').addEventListener('click', closeLlmProviderForm);
+    $('btn-llm-provider-save').addEventListener('click', () => {
+        saveLlmProvider().catch((err) => showToast(err.message, 'error'));
+    });
+    ['llm-provider-name', 'llm-provider-base-url', 'llm-provider-key-env'].forEach((id) => {
+        $(id).addEventListener('keydown', (e) => {
+            if (e.key !== 'Enter') return;
+            e.preventDefault();
+            saveLlmProvider().catch((err) => showToast(err.message, 'error'));
+        });
+    });
     setupFoldablePanels();
     bindSchedulerModals();
+    bindKbUi();
     const schedulerFold = document.querySelector('[data-fold-toggle="scheduler-panel-body"]');
     if (schedulerFold) {
         schedulerFold.addEventListener('click', () => {
             if (!$('scheduler-panel-body').classList.contains('hidden')) loadSchedulerTasks();
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Knowledge bases
+// ---------------------------------------------------------------------------
+
+state.lastKbs = null;
+state.kbExpanded = new Set();
+state.kbConfirmDelete = new Map();
+state.kbSelectedFiles = [];
+state.kbModalOpener = null;
+state.kbSearchId = null;
+state.kbEmbeddingModels = [];
+
+const KB_EMBED_NAME_RE = /embed|giga|nomic|bge|e5/i;
+
+function ruPlural(n, forms) {
+    const mod10 = n % 10;
+    const mod100 = n % 100;
+    if (mod10 === 1 && mod100 !== 11) return forms[0];
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return forms[1];
+    return forms[2];
+}
+
+async function loadKbList(silent = false) {
+    try {
+        state.lastKbs = await apiFetch('/api/v1/kb') || [];
+    } catch (err) {
+        if (!silent) showToast('Не удалось загрузить базы знаний', 'error');
+        return;
+    }
+    renderKbPanel();
+}
+
+function upsertKb(kb) {
+    if (state.lastKbs === null) {
+        loadKbList(true);
+        return;
+    }
+    const idx = state.lastKbs.findIndex((item) => item.id === kb.id);
+    if (idx >= 0) state.lastKbs[idx] = kb;
+    else state.lastKbs.unshift(kb);
+}
+
+function removeKb(kbId) {
+    if (state.lastKbs === null) return;
+    state.lastKbs = state.lastKbs.filter((item) => item.id !== kbId);
+    state.kbExpanded.delete(kbId);
+    clearKbDeleteConfirm(kbId);
+}
+
+function clearKbDeleteConfirm(kbId) {
+    const timer = state.kbConfirmDelete.get(kbId);
+    if (timer !== undefined) clearTimeout(timer);
+    state.kbConfirmDelete.delete(kbId);
+}
+
+function kbStatusChip(kb) {
+    const chip = mcpEl('span', 'text-xs flex-shrink-0 flex items-center gap-1');
+    let cls = 'text-slate-400';
+    let text = 'в очереди';
+    if (kb.status === 'indexing') {
+        cls = 'text-sky-400';
+        if (kb.phase === 'loading_model') text = 'загрузка модели…';
+        else if (kb.phase === 'parsing') text = 'разбор файлов…';
+        else text = `индексация ${kb.done} из ${kb.total}`;
+        chip.appendChild(mcpEl('span', 'inline-block w-1.5 h-1.5 rounded-full bg-sky-400 animate-pulse motion-reduce:animate-none'));
+    } else if (kb.status === 'ready') {
+        cls = 'text-emerald-400';
+        text = 'готово';
+    } else if (kb.status === 'failed') {
+        cls = 'text-red-400';
+        text = 'ошибка';
+        if (kb.error) chip.title = kb.error;
+    }
+    chip.classList.add(cls);
+    chip.appendChild(mcpEl('span', '', text));
+    return chip;
+}
+
+function kbProgressBar(kb) {
+    const total = kb.total || 0;
+    const done = kb.done || 0;
+    const bar = mcpEl('div', 'h-1 rounded bg-slate-700 overflow-hidden');
+    bar.setAttribute('role', 'progressbar');
+    bar.setAttribute('aria-valuemin', '0');
+    bar.setAttribute('aria-valuemax', String(total));
+    bar.setAttribute('aria-valuenow', String(done));
+    const fill = mcpEl('div', 'h-1 bg-sky-400');
+    fill.style.width = total > 0 ? `${Math.min(100, Math.round((done / total) * 100))}%` : '0%';
+    bar.appendChild(fill);
+    return bar;
+}
+
+function kbDeleteControls(kb) {
+    const wrap = mcpEl('span', 'flex gap-2');
+    if (state.kbConfirmDelete.has(kb.id)) {
+        const confirmBtn = mcpEl('button', 'text-xs text-red-400 hover:text-red-300 font-semibold', 'Точно удалить?');
+        confirmBtn.type = 'button';
+        confirmBtn.addEventListener('click', () => deleteKb(kb.id));
+        const cancelBtn = mcpEl('button', 'text-xs text-slate-400 hover:text-white', 'Отмена');
+        cancelBtn.type = 'button';
+        cancelBtn.addEventListener('click', () => {
+            clearKbDeleteConfirm(kb.id);
+            renderKbPanel();
+        });
+        wrap.append(confirmBtn, cancelBtn);
+        return wrap;
+    }
+    const delBtn = mcpEl('button', 'text-xs text-red-400 hover:text-red-300', 'Удалить');
+    delBtn.type = 'button';
+    if (kb.status === 'queued' || kb.status === 'indexing') delBtn.title = 'Индексация будет прервана';
+    delBtn.addEventListener('click', () => {
+        clearKbDeleteConfirm(kb.id);
+        state.kbConfirmDelete.set(kb.id, setTimeout(() => {
+            state.kbConfirmDelete.delete(kb.id);
+            renderKbPanel();
+        }, 4000));
+        renderKbPanel();
+    });
+    wrap.appendChild(delBtn);
+    return wrap;
+}
+
+function buildKbCard(kb) {
+    const card = mcpEl('div', 'rounded-lg bg-slate-800 border border-slate-700 p-2 space-y-1');
+    const head = mcpEl('div', 'flex items-center justify-between gap-2');
+    const name = mcpEl('span', 'text-sm font-semibold truncate', kb.name);
+    name.title = kb.name;
+    head.append(name, kbStatusChip(kb));
+    card.appendChild(head);
+
+    const shortModel = String(kb.embedding_model || '').split('/').pop();
+    const meta = mcpEl('div', 'text-xs text-slate-500 flex items-center justify-between gap-2');
+    const counts = `${kb.file_count} ${ruPlural(kb.file_count, ['файл', 'файла', 'файлов'])} · ${kb.chunk_count} ${ruPlural(kb.chunk_count, ['чанк', 'чанка', 'чанков'])}`;
+    meta.appendChild(mcpEl('span', '', counts));
+    const model = mcpEl('span', 'truncate', shortModel);
+    model.title = kb.embedding_model || '';
+    meta.appendChild(model);
+    card.appendChild(meta);
+
+    if (kb.status === 'queued' || kb.status === 'indexing') card.appendChild(kbProgressBar(kb));
+
+    if (kb.status === 'failed' && kb.error) {
+        const expanded = state.kbExpanded.has(kb.id);
+        const err = mcpEl('button', `text-xs text-red-400 text-left w-full ${expanded ? '' : 'line-clamp-2'}`, kb.error);
+        err.type = 'button';
+        err.setAttribute('aria-expanded', String(expanded));
+        err.addEventListener('click', () => {
+            if (state.kbExpanded.has(kb.id)) state.kbExpanded.delete(kb.id);
+            else state.kbExpanded.add(kb.id);
+            renderKbPanel();
+        });
+        card.appendChild(err);
+    }
+
+    const actions = mcpEl('div', 'flex items-center justify-between gap-2 pt-1');
+    const searchBtn = mcpEl('button', 'rounded bg-slate-700 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed px-2 py-1 text-xs text-slate-200', 'Тест поиска');
+    searchBtn.type = 'button';
+    if (kb.status === 'ready') {
+        searchBtn.addEventListener('click', () => openKbSearchModal(kb, searchBtn));
+    } else {
+        searchBtn.disabled = true;
+        searchBtn.title = 'Поиск доступен после завершения индексации';
+    }
+    actions.append(searchBtn, kbDeleteControls(kb));
+    card.appendChild(actions);
+    return card;
+}
+
+function renderKbPanel() {
+    const list = $('kb-list');
+    const kbs = state.lastKbs || [];
+    $('kb-count').textContent = String(kbs.length);
+    list.replaceChildren();
+    if (!kbs.length) {
+        const empty = mcpEl('div', 'text-center py-2');
+        empty.appendChild(mcpEl('div', 'text-slate-300 font-semibold', 'Баз знаний пока нет'));
+        empty.appendChild(mcpEl('div', 'text-slate-500 mt-1', 'Нажмите «+ Новая база знаний», загрузите PDF, TXT или MD и запустите индексацию.'));
+        list.appendChild(empty);
+        return;
+    }
+    kbs.forEach((kb) => list.appendChild(buildKbCard(kb)));
+}
+
+async function deleteKb(kbId) {
+    clearKbDeleteConfirm(kbId);
+    try {
+        await apiFetch(`/api/v1/kb/${kbId}`, { method: 'DELETE' });
+    } catch (err) {
+        showToast(err.message, 'error');
+        renderKbPanel();
+        return;
+    }
+    removeKb(kbId);
+    renderKbPanel();
+    showToast('База знаний удалена', 'success');
+}
+
+function closeKbModal(modalId) {
+    const modal = $(modalId);
+    if (!modal || modal.classList.contains('hidden')) return;
+    modal.classList.add('hidden');
+    if (modalId === 'kb-search-modal') state.kbSearchId = null;
+    const opener = state.kbModalOpener;
+    state.kbModalOpener = null;
+    if (opener && opener.isConnected) opener.focus();
+}
+
+function formatKbFileSize(bytes) {
+    if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`;
+    return `${Math.max(1, Math.round(bytes / 1024))} КБ`;
+}
+
+function renderKbFileList() {
+    const list = $('kb-file-list');
+    list.replaceChildren();
+    state.kbSelectedFiles.forEach((file, idx) => {
+        const li = mcpEl('li', 'flex items-center justify-between gap-2 rounded bg-slate-800 px-2 py-1');
+        const label = mcpEl('span', 'truncate', `${file.name} · ${formatKbFileSize(file.size)}`);
+        label.title = file.name;
+        const remove = mcpEl('button', 'text-slate-400 hover:text-white text-base leading-none', '×');
+        remove.type = 'button';
+        remove.setAttribute('aria-label', `Убрать файл ${file.name}`);
+        remove.addEventListener('click', () => {
+            state.kbSelectedFiles.splice(idx, 1);
+            renderKbFileList();
+        });
+        li.append(label, remove);
+        list.appendChild(li);
+    });
+}
+
+function applyKbStrategyVisibility() {
+    const structural = $('kb-strategy').value === 'structural';
+    $('kb-fixed-fields').classList.toggle('hidden', structural);
+    $('kb-structural-hint').classList.toggle('hidden', !structural);
+}
+
+function renderKbEmbeddingSelect(preferred) {
+    const select = $('kb-embedding-model');
+    const showAll = $('kb-show-all-models').checked;
+    const models = state.kbEmbeddingModels.filter(
+        (m) => showAll || m.type === 'embeddings' || KB_EMBED_NAME_RE.test(m.id),
+    );
+    select.replaceChildren();
+    if (!models.length) {
+        const opt = mcpEl('option', '', 'Нет доступных моделей');
+        opt.value = '';
+        opt.disabled = true;
+        opt.selected = true;
+        select.appendChild(opt);
+        return;
+    }
+    const group = document.createElement('optgroup');
+    group.label = 'LM Studio';
+    models.forEach((m) => {
+        const opt = mcpEl('option', '', `${m.id}${m.loaded ? ' ✓' : ''}`);
+        opt.value = m.id;
+        group.appendChild(opt);
+    });
+    select.appendChild(group);
+    let chosen = preferred ? models.find((m) => m.id === preferred) : null;
+    if (!chosen) {
+        chosen = models.find((m) => m.eligible && m.loaded)
+            || models.find((m) => m.eligible)
+            || models[0];
+    }
+    select.value = chosen.id;
+}
+
+async function populateKbEmbeddingSelect() {
+    const result = $('kb-embed-check-result');
+    try {
+        state.kbEmbeddingModels = await apiFetch('/api/v1/kb/embedding-models') || [];
+    } catch (err) {
+        state.kbEmbeddingModels = [];
+        result.className = 'text-xs text-red-400';
+        result.textContent = err.message;
+    }
+    renderKbEmbeddingSelect(null);
+}
+
+function openKbCreateModal(opener) {
+    $('kb-create-form').reset();
+    $('kb-create-error').textContent = '';
+    const result = $('kb-embed-check-result');
+    result.textContent = '';
+    result.className = 'text-xs';
+    state.kbSelectedFiles = [];
+    renderKbFileList();
+    applyKbStrategyVisibility();
+    state.kbModalOpener = opener || null;
+    $('kb-create-modal').classList.remove('hidden');
+    $('kb-name').focus();
+    populateKbEmbeddingSelect();
+}
+
+async function checkKbEmbedding() {
+    const model = $('kb-embedding-model').value;
+    const result = $('kb-embed-check-result');
+    if (!model) return;
+    const btn = $('btn-kb-embed-check');
+    btn.disabled = true;
+    try {
+        const data = await apiFetch('/api/v1/kb/embedding-check', {
+            method: 'POST',
+            body: JSON.stringify({ model }),
+        });
+        result.className = 'text-xs text-emerald-400';
+        result.textContent = `Размерность: ${data.dim}`;
+    } catch (err) {
+        result.className = 'text-xs text-red-400';
+        result.textContent = err.message;
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+async function submitKbCreate(event) {
+    event.preventDefault();
+    const errorEl = $('kb-create-error');
+    errorEl.textContent = '';
+    const name = $('kb-name').value.trim();
+    if (!name) {
+        errorEl.textContent = 'Введите название базы знаний.';
+        return;
+    }
+    if (!state.kbSelectedFiles.length) {
+        errorEl.textContent = 'Выберите хотя бы один файл.';
+        return;
+    }
+    const formData = new FormData();
+    formData.append('name', name);
+    formData.append('strategy', $('kb-strategy').value);
+    formData.append('chunk_size', $('kb-chunk-size').value);
+    formData.append('chunk_overlap', $('kb-chunk-overlap').value);
+    formData.append('embedding_model', $('kb-embedding-model').value);
+    state.kbSelectedFiles.forEach((file) => formData.append('files', file));
+
+    const btn = $('btn-kb-submit');
+    btn.disabled = true;
+    btn.textContent = 'Загрузка…';
+    try {
+        const resp = await fetch(`${AGENT_BASE}/api/v1/kb`, {
+            method: 'POST',
+            body: formData,
+            credentials: 'include',
+        });
+        if (resp.status === 401) {
+            window.location.href = '/static/login.html?expired=1';
+            return;
+        }
+        const body = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+            const detail = body.detail;
+            errorEl.textContent = typeof detail === 'string' && detail
+                ? detail
+                : 'Не удалось выполнить запрос. Проверьте соединение и попробуйте снова.';
+            return;
+        }
+        upsertKb(body);
+        renderKbPanel();
+        const fold = document.querySelector('[data-fold-toggle="kb-panel-body"]');
+        if (fold && $('kb-panel-body').classList.contains('hidden')) fold.click();
+        closeKbModal('kb-create-modal');
+    } catch (err) {
+        errorEl.textContent = 'Не удалось выполнить запрос. Проверьте соединение и попробуйте снова.';
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Индексировать';
+    }
+}
+
+function openKbSearchModal(kb, opener) {
+    state.kbSearchId = kb.id;
+    state.kbModalOpener = opener || null;
+    $('kb-search-title').textContent = `Тест поиска: ${kb.name}`;
+    $('kb-search-query').value = '';
+    $('kb-search-results').replaceChildren();
+    const status = $('kb-search-status');
+    status.className = 'text-xs text-slate-400';
+    status.textContent = 'Введите вопрос и нажмите «Найти».';
+    $('kb-search-modal').classList.remove('hidden');
+    $('kb-search-query').focus();
+}
+
+function buildKbResultCard(item) {
+    const card = mcpEl('div', 'bg-slate-800 border border-slate-700 rounded-lg p-3 space-y-1');
+    const head = mcpEl('div', 'text-xs flex flex-wrap items-center gap-2 text-slate-400');
+    head.appendChild(mcpEl('span', '', `#${item.rank}`));
+    head.appendChild(mcpEl('span', 'text-slate-200', Number(item.score).toFixed(3)));
+    head.appendChild(mcpEl('span', '', item.source || ''));
+    if (item.section) head.appendChild(mcpEl('span', 'truncate', item.section));
+    head.appendChild(mcpEl('span', 'font-mono text-slate-500', String(item.chunk_id)));
+    card.appendChild(head);
+    const body = mcpEl('p', 'text-sm text-slate-200 line-clamp-4 whitespace-pre-wrap', item.text || '');
+    card.appendChild(body);
+    const toggle = mcpEl('button', 'text-xs text-indigo-400 hover:text-indigo-300', 'показать полностью');
+    toggle.type = 'button';
+    toggle.setAttribute('aria-expanded', 'false');
+    toggle.addEventListener('click', () => {
+        const expanded = !body.classList.toggle('line-clamp-4');
+        toggle.textContent = expanded ? 'свернуть' : 'показать полностью';
+        toggle.setAttribute('aria-expanded', String(expanded));
+    });
+    card.appendChild(toggle);
+    return card;
+}
+
+state.rag = null;
+
+function readyKbs() {
+    return (state.lastKbs || []).filter((kb) => kb.status === 'ready');
+}
+
+async function loadChatRag(chatId) {
+    try {
+        if (state.lastKbs === null) await loadKbList(true);
+        const cfg = await apiFetch(`/api/v1/chats/${chatId}/rag`);
+        if (state.currentChatId !== chatId) return;
+        state.rag = cfg;
+    } catch (err) {
+        if (state.currentChatId !== chatId) return;
+        state.rag = null;
+    }
+    renderRagControls();
+}
+
+function renderRagControls() {
+    const toggle = $('rag-toggle');
+    const select = $('rag-kb-select');
+    const kWrap = $('rag-k-wrap');
+    const kInput = $('rag-k-input');
+    const badge = $('rag-badge');
+    if (!toggle || !select || !kWrap || !kInput || !badge) return;
+    const cfg = state.rag;
+    const kbs = readyKbs();
+
+    select.replaceChildren();
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = '— без базы знаний —';
+    select.appendChild(placeholder);
+    kbs.forEach((kb) => {
+        const opt = document.createElement('option');
+        opt.value = String(kb.id);
+        opt.textContent = kb.name;
+        select.appendChild(opt);
+    });
+    select.title = kbs.length ? '' : 'Нет готовых баз знаний. Создайте базу в боковой панели.';
+
+    if (!cfg) {
+        select.disabled = true;
+        toggle.disabled = true;
+        kWrap.classList.add('hidden');
+        kWrap.classList.remove('flex');
+        badge.textContent = 'без RAG';
+        badge.title = 'без RAG';
+        badge.classList.remove('text-yellow-400');
+        return;
+    }
+
+    const isOn = cfg.mode === 'rag';
+    select.disabled = false;
+    select.value = cfg.kb_id !== null && cfg.kb_id !== undefined ? String(cfg.kb_id) : '';
+    toggle.disabled = cfg.kb_id === null || cfg.kb_id === undefined;
+    toggle.title = toggle.disabled ? 'Выберите базу знаний' : '';
+    toggle.textContent = isOn ? 'с RAG' : 'без RAG';
+    toggle.setAttribute('aria-checked', String(isOn));
+    const onCls = ['bg-indigo-600', 'border-indigo-500', 'text-white'];
+    const offCls = ['bg-slate-800', 'border-slate-700', 'text-slate-300', 'hover:bg-slate-700'];
+    onCls.forEach((c) => toggle.classList.toggle(c, isOn));
+    offCls.forEach((c) => toggle.classList.toggle(c, !isOn));
+
+    kWrap.classList.toggle('hidden', !isOn);
+    kWrap.classList.toggle('flex', isOn);
+    kInput.value = String(cfg.top_k || 5);
+
+    const kbReady = kbs.some((kb) => kb.id === cfg.kb_id);
+    let text = 'без RAG';
+    let unavailable = false;
+    if (isOn) {
+        if (kbReady) {
+            text = `RAG: ${cfg.kb_name || kbs.find((kb) => kb.id === cfg.kb_id).name}`;
+        } else {
+            text = 'RAG: база недоступна';
+            unavailable = true;
+        }
+    }
+    badge.textContent = text;
+    badge.title = text;
+    badge.classList.toggle('text-yellow-400', unavailable);
+    badge.classList.toggle('text-slate-300', !unavailable);
+}
+
+async function saveChatRag(patch) {
+    if (!state.currentChatId || !state.rag) return;
+    const chatId = state.currentChatId;
+    const prev = state.rag;
+    const body = {
+        mode: prev.mode,
+        kb_id: prev.kb_id,
+        top_k: prev.top_k,
+        ...patch,
+    };
+    try {
+        const cfg = await apiFetch(`/api/v1/chats/${chatId}/rag`, {
+            method: 'PUT',
+            body: JSON.stringify(body),
+        });
+        if (state.currentChatId !== chatId) return;
+        state.rag = cfg;
+    } catch (err) {
+        if (state.currentChatId !== chatId) return;
+        state.rag = prev;
+        showToast('Не удалось сохранить настройки RAG. Проверьте соединение и попробуйте снова.', 'error');
+    }
+    renderRagControls();
+}
+
+function buildRagMeta(rag) {
+    const frag = document.createDocumentFragment();
+    const sources = Array.isArray(rag.sources) ? rag.sources : [];
+    if (rag.warning) {
+        const warn = mcpEl(
+            'div',
+            'mt-2 rounded-lg border border-yellow-700 bg-yellow-900/30 px-3 py-2 text-xs text-yellow-400',
+            `⚠ ${rag.warning.text}`,
+        );
+        warn.setAttribute('role', 'status');
+        frag.appendChild(warn);
+    }
+    let label = 'без RAG';
+    if (rag.warning) label = rag.warning.code === 'context_full' ? 'без RAG (нет места в контексте)' : 'без RAG (сбой поиска)';
+    else if (rag.mode === 'rag') label = `с RAG · K=${rag.top_k}`;
+    frag.appendChild(mcpEl('div', 'mt-1 text-xs text-slate-500', label));
+    if (rag.mode === 'rag' && !rag.warning && sources.length === 0) {
+        const empty = mcpEl('div', 'text-xs text-slate-500', 'Подходящих фрагментов не найдено');
+        empty.title = 'Ответ дан без фрагментов базы знаний. Переформулируйте вопрос или проверьте, что в базе есть нужный документ.';
+        frag.appendChild(empty);
+    }
+    return frag;
+}
+
+function buildRagSourcesBlock(rag) {
+    const details = mcpEl(
+        'details',
+        'rag-sources rounded-lg border border-slate-700 bg-slate-900 text-xs text-slate-300 px-3 py-2 mt-2 max-w-[75%]',
+    );
+    details.appendChild(mcpEl(
+        'summary',
+        'cursor-pointer select-none font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500',
+        `Источники (${rag.sources.length})`,
+    ));
+    const body = mcpEl('div', 'mt-2 space-y-2');
+    rag.sources.forEach((src) => body.appendChild(buildRagSourceRow(rag.kb_id, src)));
+    details.appendChild(body);
+    details.addEventListener('toggle', () => {
+        if (!details.open || details.dataset.loaded === '1') return;
+        details.dataset.loaded = '1';
+        loadRagSnippets(details);
+    });
+    return details;
+}
+
+function buildRagSourceRow(kbId, src) {
+    const card = mcpEl('div', 'rag-source-row bg-slate-800 border border-slate-700 rounded-lg p-3 space-y-1');
+    card.dataset.kbId = kbId === null || kbId === undefined ? '' : String(kbId);
+    card.dataset.chunkId = String(src.chunk_id);
+    card.dataset.file = src.file || '';
+    const head = mcpEl('div', 'text-xs flex flex-wrap gap-x-2 text-slate-400');
+    head.appendChild(mcpEl('span', '', `#${src.rank}`));
+    head.appendChild(mcpEl('span', 'text-slate-200', Number(src.score).toFixed(3)));
+    const file = mcpEl('span', 'truncate', src.file || '');
+    file.title = src.file || '';
+    head.appendChild(file);
+    if (src.section) head.appendChild(mcpEl('span', 'truncate', src.section));
+    head.appendChild(mcpEl('span', 'font-mono text-slate-500', String(src.chunk_id)));
+    card.appendChild(head);
+    const snippet = mcpEl('p', 'rag-snippet text-sm text-slate-200 line-clamp-4 whitespace-pre-wrap', 'Загрузка фрагмента…');
+    card.appendChild(snippet);
+    const toggle = mcpEl('button', 'rag-snippet-toggle hidden text-xs text-indigo-400 hover:text-indigo-300', 'показать полностью');
+    toggle.type = 'button';
+    toggle.setAttribute('aria-expanded', 'false');
+    toggle.addEventListener('click', () => {
+        const expanded = !snippet.classList.toggle('line-clamp-4');
+        toggle.textContent = expanded ? 'свернуть' : 'показать полностью';
+        toggle.setAttribute('aria-expanded', String(expanded));
+    });
+    card.appendChild(toggle);
+    return card;
+}
+
+async function loadRagSnippets(details) {
+    const rows = details.querySelectorAll('.rag-source-row');
+    await Promise.all(Array.from(rows).map(async (row) => {
+        const snippet = row.querySelector('.rag-snippet');
+        const toggle = row.querySelector('.rag-snippet-toggle');
+        const kbId = row.dataset.kbId;
+        const chunkId = row.dataset.chunkId;
+        const file = row.dataset.file;
+        const unavailable = () => {
+            snippet.textContent = 'Текст фрагмента недоступен: база знаний удалена';
+            snippet.classList.remove('text-slate-200', 'line-clamp-4');
+            snippet.classList.add('text-slate-500');
+        };
+        if (!kbId) {
+            unavailable();
+            return;
+        }
+        try {
+            const data = await apiFetch(
+                `/api/v1/kb/${kbId}/chunks/${encodeURIComponent(chunkId)}?file=${encodeURIComponent(file)}`,
+            );
+            snippet.textContent = data.text;
+            toggle.classList.remove('hidden');
+        } catch (err) {
+            unavailable();
+        }
+    }));
+}
+
+async function runKbSearch(event) {
+    event.preventDefault();
+    const query = $('kb-search-query').value.trim();
+    if (!query || state.kbSearchId === null) return;
+    const status = $('kb-search-status');
+    const results = $('kb-search-results');
+    const btn = $('btn-kb-search');
+    btn.disabled = true;
+    btn.textContent = 'Поиск…';
+    status.className = 'text-xs text-slate-400';
+    status.textContent = 'Поиск…';
+    results.replaceChildren();
+    try {
+        const data = await apiFetch(`/api/v1/kb/${state.kbSearchId}/search`, {
+            method: 'POST',
+            body: JSON.stringify({ query, top_k: 5 }),
+        });
+        const items = (data && data.results) || [];
+        if (!items.length) {
+            status.textContent = 'Ничего не найдено. Попробуйте переформулировать вопрос.';
+        } else {
+            status.textContent = '';
+            items.slice(0, 5).forEach((item) => results.appendChild(buildKbResultCard(item)));
+        }
+    } catch (err) {
+        status.className = 'text-xs text-red-400';
+        status.textContent = err.message;
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Найти';
+    }
+}
+
+function bindKbUi() {
+    $('btn-kb-new').addEventListener('click', (e) => openKbCreateModal(e.currentTarget));
+    $('btn-close-kb-create').addEventListener('click', () => closeKbModal('kb-create-modal'));
+    $('btn-close-kb-search').addEventListener('click', () => closeKbModal('kb-search-modal'));
+    $('kb-files').addEventListener('change', (e) => {
+        Array.from(e.target.files).forEach((file) => {
+            const dup = state.kbSelectedFiles.some((f) => f.name === file.name && f.size === file.size);
+            if (!dup) state.kbSelectedFiles.push(file);
+        });
+        e.target.value = '';
+        renderKbFileList();
+    });
+    $('kb-strategy').addEventListener('change', applyKbStrategyVisibility);
+    $('kb-show-all-models').addEventListener('change', () => renderKbEmbeddingSelect($('kb-embedding-model').value));
+    $('btn-kb-embed-check').addEventListener('click', checkKbEmbedding);
+    $('kb-create-form').addEventListener('submit', submitKbCreate);
+    $('kb-search-form').addEventListener('submit', runKbSearch);
+    const fold = document.querySelector('[data-fold-toggle="kb-panel-body"]');
+    if (fold) {
+        fold.addEventListener('click', () => {
+            if (!$('kb-panel-body').classList.contains('hidden')) loadKbList(true);
         });
     }
 }
@@ -2883,6 +4107,7 @@ async function init() {
     await loadProfile();
     await loadInvariants();
     await loadSchedulerTasks();
+    loadKbList(true);
     connectEventsWs();
     try {
         await loadChats();

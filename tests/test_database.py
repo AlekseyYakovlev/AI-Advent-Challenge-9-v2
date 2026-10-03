@@ -12,6 +12,7 @@ from shared.database import (
     async_session_factory,
     engine,
     init_db,
+    migrate_add_message_rag_sources,
     migrate_add_task_transition_rejection_columns,
     retry_on_locked_db,
 )
@@ -79,6 +80,12 @@ async def test_init_db_creates_all_tables() -> None:
         "mcpserverconfig",
         "scheduledtask",
         "taskrun",
+        "llmprovider",
+        "llmproviderseed",
+        "knowledgebase",
+        "kbdocument",
+        "kbchunk",
+        "chatragconfig",
     }
 
 
@@ -189,3 +196,23 @@ async def test_cascade_delete_removes_messages_and_token_usage() -> None:
     assert remaining_messages is None
     assert remaining_usage is None
     assert remaining_chat is None
+
+
+@pytest.mark.asyncio
+async def test_migrate_add_message_rag_sources_is_idempotent(tmp_path) -> None:
+    """The rag_sources migration adds the column once to a legacy message table."""
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    legacy = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'legacy.db'}")
+    async with legacy.begin() as conn:
+        await conn.execute(text("CREATE TABLE message (id INTEGER PRIMARY KEY, content TEXT)"))
+        await conn.execute(text("INSERT INTO message (content) VALUES ('old')"))
+        await migrate_add_message_rag_sources(conn)
+        await migrate_add_message_rag_sources(conn)
+    async with legacy.connect() as conn:
+        columns = [row[1] for row in (await conn.execute(text("PRAGMA table_info(message)"))).fetchall()]
+        legacy_value = (await conn.execute(text("SELECT rag_sources FROM message"))).scalar()
+    await legacy.dispose()
+
+    assert columns.count("rag_sources") == 1
+    assert legacy_value is None

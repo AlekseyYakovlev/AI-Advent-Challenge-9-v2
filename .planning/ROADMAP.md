@@ -3,7 +3,8 @@
 ## Milestones
 
 - ✅ **v1.0 Week 3: Agent Memory & Task State** — Phases 1-6 (shipped 2026-09-23)
-- 🚧 **v2.0 Week 4: MCP Integration** — Phase 7+ (in progress)
+- ✅ **v2.0 Week 4: MCP Integration** — Phases 7-9, 12 (shipped 2026-10-02)
+- 🚧 **v3.0 Week 5: RAG** — Phases 10-11 (carried over), 13-17 (in progress)
 
 ## Phases
 
@@ -21,178 +22,250 @@ Full details: [milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
 
 </details>
 
-### 🚧 v2.0 Week 4: MCP Integration (In Progress)
+<details>
+<summary>✅ v2.0 Week 4: MCP Integration (Phases 7-9, 12) — SHIPPED 2026-10-02</summary>
 
-- [x] **Phase 7: MCP Connection (Day 16)** — The agent connects to an MCP server configured in Settings and shows the server's tool list (completed 2026-09-23)
-- [x] **Phase 8: Scheduler (Day 18)** — Delayed and periodic jobs with persisted status/results, run by the agent and shown in the UI
- (completed 2026-09-26)
-- [x] **Phase 9: Auto-rename chats with LLM (Day 21)** — The LLM generates a short chat title after the first Q&A turn instead of 'New Chat' (completed 2026-10-02)
-- [ ] **Phase 10: Modals close only via x button (Day 21)** — A modal closes only on its 'x'; a backdrop click no longer closes it
-- [ ] **Phase 11: Edit and delete long-term memory entries via UI (Day 21)** — "Редактировать" / "Удалить" buttons per long-term memory entry
-- [ ] **Phase 12: LLM providers section in Settings (Day 21)** — 'Провайдеры LLM' section with connection check; provider models appear in the LLM picker
+- [x] Phase 7: MCP Connection (Day 16) (6/6 plans) — completed 2026-09-23
+- [x] Phase 8: Scheduler (Day 18) (9/9 plans) — completed 2026-09-26
+- [x] Phase 9: Auto-rename chats with LLM (Day 21) (6/6 plans) — completed 2026-10-02
+- [x] Phase 12: LLM providers section in Settings (Day 21) (6/6 plans) — completed 2026-10-02
+
+Full details: [milestones/v2.0-ROADMAP.md](milestones/v2.0-ROADMAP.md)
+
+</details>
+
+### 🚧 v3.0 Week 5: RAG (In Progress)
+
+- [x] **Phase 10: Modals close only via x button (Day 21)** — carried over from v2.0; a modal closes only on its 'x'; a backdrop click no longer closes it
+ (completed 2026-10-02)
+
+- [x] **Phase 11: Edit and delete long-term memory entries via UI (Day 21)** — carried over from v2.0; "Редактировать" / "Удалить" buttons per long-term memory entry (completed 2026-10-03)
+- [x] **Phase 13: Knowledge base indexing (Day 21)** — upload PDF/TXT/MD, chunk (fixed or structural), embed via LM Studio, persist FAISS + SQLite, background indexing with live progress (completed 2026-10-03)
+- [x] **Phase 14: First RAG query (Day 22)** — attach a KB to a chat, toggle RAG, retrieve top-K chunks into the LLM request, show sources, frozen 10-question eval and Day22 report (completed 2026-10-03)
+- [ ] **Phase 15: Reranking and filtering (Day 23)** — two-stage retrieval with threshold, lexical/LLM rerank, hybrid FTS5, query rewrite, "Детали поиска", Day23 report
+- [ ] **Phase 16: Citations and anti-hallucination (Day 24)** — sources and verified quotes on every answer, code-enforced "не знаю" with a clarifying question
+- [ ] **Phase 17: Mini-chat with RAG and task memory (Day 25)** — the existing chat as RAG mini-chat with per-chat task memory, two long scripted scenarios, Day25 report
 
 ## Phase Details
-
-### Phase 7: MCP Connection (Day 16)
-
-**Goal**: A user can configure an MCP server in the Settings UI, connect to it, and see the list of tools the server exposes — proven against the locally installed Go filesystem MCP server
-**Branch**: `Day16`
-**Depends on**: Phase 1 (Auth) — server configs are scoped by `user_id`
-**Requirements**: MCP-01, MCP-02, MCP-03, MCP-04, MCP-05, MCP-06
-**Success Criteria** (what must be TRUE):
-
-1. User adds a server in Settings with command `C:\Users\Aleksey\go\bin\filesystem.exe` and an allowed-directory arg; the config survives an app restart and is invisible to other users
-2. Pressing "Connect" shows status "connected" with serverInfo `filesystem-mcp-server` / version / protocol, and lists all 17 tools with descriptions and parameters
-3. A bad command path or a server that exits immediately yields a readable error in the UI, and the Agent's `/health` stays OK
-4. `python scripts/mcp_list_tools.py C:\Users\Aleksey\go\bin\filesystem.exe <dir>` prints serverInfo and the tool list
-5. `pytest tests/ -v` passes, including new MCP connect/list_tools tests (success + failure)
-
-**Plans**: 6 plans
-**UI hint**: yes
-
-Plans:
-**Wave 1**
-
-- [x] 07-01-PLAN.md — MCP stdio client core: pin mcp, timeout config, result schemas, fixture server, owner-task registry + error classification (wave 1)
-- [x] 07-02-PLAN.md — McpServerConfig table + user-scoped CRUD service with env masking/merge (wave 1)
-
-**Wave 2** *(blocked on Wave 1 completion)*
-
-- [x] 07-03-PLAN.md — REST endpoints /api/v1/mcp/servers (CRUD, connect/disconnect/status) + lifespan cleanup + API tests (wave 2)
-- [x] 07-04-PLAN.md — CLI scripts/mcp_list_tools.py reusing connect_once_and_list + tests (wave 2)
-
-**Wave 3** *(blocked on Wave 2 completion)*
-
-- [x] 07-05-PLAN.md — "MCP серверы" section in the Settings modal (wave 3)
-
-**Wave 4** *(blocked on Wave 3 completion)*
-
-- [x] 07-06-PLAN.md — End-to-end acceptance vs filesystem.exe + human UI walkthrough (wave 4, checkpoint)
-
-### Phase 8: Scheduler (Day 18)
-**Goal**: A user (or the LLM via chat tools) can schedule delayed (one-shot) and periodic (interval/cron) jobs; the agent runs them in the background, stores each job's status and every run's result, and the UI shows scheduled and completed jobs
-**Depends on**: Phase 7
-**Requirements**: SCHED-01, SCHED-02, SCHED-03, SCHED-04, SCHED-05, SCHED-06, SCHED-07, SCHED-08, SCHED-09, SCHED-10, SCHED-11, SCHED-12, SCHED-13, SCHED-14
-**Branch**: `Day18`
-**Decision**: Written from scratch in Python inside the Agent process (not a fork of `C:\Projects\mcp-cron`: Go, cron-only, in-memory status, no REST, no user scoping, duplicate agent loop, AGPL)
-**Scope sketch** (to be refined in discuss/plan):
-- `ScheduledTask` + `TaskRun` SQLModel tables, scoped by `user_id`
-- asyncio poll loop started in the agent lifespan; optimistic claim (`UPDATE ... WHERE next_run_at = old`); tasks survive Agent restarts
-- Executor reuses `mcp_client` / `llm_client` under `tool_guard`
-- REST `/api/v1/scheduler/*`; LLM tools `schedule_task` / `list_scheduled_tasks` / `cancel_scheduled_task`
-- UI panel (vanilla JS): scheduled and completed tasks with status and run result
-**Success Criteria** (what must be TRUE):
-
-1. From chat ("через минуту прочитай файл X через MCP и перескажи") the LLM creates a job; it appears in the sidebar panel and goes `выполняется` -> `успешно` live, with the result opening in a Markdown modal
-2. Once / interval / cron jobs (cron in machine-local time) fire exactly once per slot; overlapping slots are recorded as `skipped`; `max_runs` and one-shot jobs auto-complete
-3. After an Agent restart a missed job runs once flagged late, and runs interrupted by the restart are marked failed
-4. REST `/api/v1/scheduler/*` and `/ws/events` are user-scoped (404 / owner-only events); the LLM cannot cancel a job unless the user asked
-5. `pytest tests/ -q` passes, including the new scheduler tests
-
-**Plans**: 8 plans
-**UI hint**: yes
-
-Plans:
-**Wave 1**
-
-- [x] 08-01-PLAN.md — ScheduledTask/TaskRun models (partial unique index, CASCADE/SET NULL), SCHEDULER_* settings, cronsim pin, pure schedule math (wave 1)
-- [x] 08-02-PLAN.md — Per-user EventHub + WS /ws/events (origin + cookie auth), conftest guards (wave 1)
-- [x] 08-03-PLAN.md — Headless LLM+MCP runner reusing the ws tool loop via RecordingSink + dispatcher allowlist (wave 1)
-
-**Wave 2** *(blocked on Wave 1 completion)*
-
-- [x] 08-04-PLAN.md — Scheduler engine: atomic claim, poll loop, catch-up/overlap/max_runs, startup recovery, executor with timeout, lifespan wiring (wave 2)
-
-**Wave 3** *(blocked on Wave 2 completion)*
-
-- [x] 08-05-PLAN.md — User-scoped scheduler ops + REST /api/v1/scheduler/* + scoping tests (wave 3)
-
-**Wave 4** *(blocked on Wave 3 completion)*
-
-- [x] 08-06-PLAN.md — LLM tools schedule_task / list_scheduled_tasks / cancel_scheduled_task with cancel gate (wave 4)
-- [x] 08-07-PLAN.md — "Расписание" sidebar panel, create/result modals, /ws/events live client (wave 4)
-
-**Wave 5** *(blocked on Wave 4 completion)*
-
-- [x] 08-08-PLAN.md — Docs sync (API_SPEC, ARCHITECTURE, TESTING_GUIDE), full suite, human demo walkthrough (wave 5, checkpoint)
-
-### Phase 9: Auto-rename chats with LLM (Day 21)
-
-**Goal**: every chat is currently titled 'New Chat'; the LLM should generate a short title per chat
-**Branch**: `Day21`
-**Depends on**: Phase 8
-**Promoted from**: backlog 999.4 (2026-10-02)
-**Chosen approach (2026-09-26): title after first Q&A turn.** Trigger once when the chat has 2 messages and the title is still the default 'New Chat' (never overwrite a user-edited title); input = first user message + short summary of the first answer; 3–8 words / ~50 chars, temperature 0, max_tokens ~30, plain text (not JSON, for small LM Studio models), user text wrapped in tags against prompt injection; title in the user's language; fallback = truncated first user message if the LLM call fails; run after the `done` event as a non-blocking extra call and push a WebSocket event so the sidebar updates.
-**Decided (2026-10-02)**: the title is generated by the chat's current model (same provider/model that answered the turn) — no separate title-model setting, no new Settings field. Planned without CONTEXT.md, AI-SPEC.md or UI-SPEC.md (user decision: the roadmap approach is sufficient; UI change is limited to the existing sidebar chat title).
-**Refs**: ChatOllama blog (2025-09-09), OpenSearch-Dashboards PR #12786, NodeSpace issue #1698, LibreChat PR #13395, open-webui discussion #9567
-**Requirements**: TITLE-01, TITLE-02, TITLE-03, TITLE-04, TITLE-05, TITLE-06
-**Plans**: 4 plans
-**UI hint**: yes
-
-Plans:
-**Wave 1**
-
-- [x] 09-01-PLAN.md — Title service `agent/titles.py`: tag-wrapped prompt, output sanitizer, fallback, conditional UPDATE, owner-only `chat_title_updated` publish, `title_tasks` registry + unit tests (wave 1)
-- [x] 09-02-PLAN.md — Frontend: `/ws/events` frame dispatcher, sidebar + header title update, chat-list reload on events reconnect (wave 1)
-
-**Wave 2** *(blocked on Wave 1 completion)*
-
-- [x] 09-03-PLAN.md — Hook in `agent/ws.py::_handle_chat_message` (first turn, default title, before `done`) + WebSocket end-to-end tests (wave 2)
-
-**Wave 3** *(blocked on Wave 2 completion)*
-
-- [x] 09-04-PLAN.md — Docs sync (API_SPEC, ARCHITECTURE, TESTING_GUIDE, USER_GUIDE), full suite, Playwright UAT on the isolated copy at 18000/18001 (wave 3)
 
 ### Phase 10: Modals close only via x button (Day 21)
 
 **Goal**: change modal behavior: a modal closes only when its 'x' is clicked; clicking outside the modal (on the backdrop) must not close it
 **Branch**: `Day21`
 **Depends on**: Phase 8
+**Milestone**: v3.0 (carried over from v2.0)
 **Promoted from**: backlog 999.5 (2026-10-02)
-**Requirements**: TBD
+**Requirements**: MODAL-01
 **Plans**: 1 plan
 **UI hint**: yes
 
 Plans:
-- [ ] 10-01-PLAN.md — Remove backdrop-click and Escape modal closers in app.js, add a source guard test, browser UAT on an isolated copy
+
+- [x] 10-01-PLAN.md — Remove backdrop-click and Escape modal closers in app.js, add a source guard test, browser UAT on an isolated copy
 
 ### Phase 11: Edit and delete long-term memory entries via UI (Day 21)
 
 **Goal**: the user must be able to edit long-term memory fields through the UI ("Редактировать" and "Удалить" buttons per entry)
 **Branch**: `Day21`
 **Depends on**: Phase 8
+**Milestone**: v3.0 (carried over from v2.0)
 **Promoted from**: backlog 999.6 (2026-10-02)
-**Requirements**: TBD
+**Assumptions (2026-10-02, adopted from 11-RESEARCH.md; planned without CONTEXT.md, UI-SPEC.md or AI-SPEC.md)**: both `key` and `value` are editable; editing is inline in the sidebar memory panel (no modal); delete is confirmed with the native `confirm()`; no live cross-tab sync; the new PUT/DELETE routes check Origin and JSON content type.
+**Requirements**: MEMUI-01, MEMUI-02, MEMUI-03, MEMUI-04, MEMUI-05, MEMUI-06
 **Plans**: 4 plans
 **UI hint**: yes
 
 Plans:
 **Wave 1**
 
-- [ ] 11-01-PLAN.md — MEMUI requirement IDs, user-scoped update/delete helpers in `agent/memory.py`, `LongTermMemoryUpdate` schema, `PUT`/`DELETE /api/v1/memory/long-term/{entry_id}` (404/409/422, Origin + JSON checks) + pytest (wave 1)
-- [ ] 11-02-PLAN.md — Frontend: "Редактировать" / "Удалить" buttons per long-term entry, inline edit form with draft state, confirmed delete, source guard test (wave 1)
+- [x] 11-01-PLAN.md — MEMUI requirement IDs, user-scoped update/delete helpers in `agent/memory.py`, `LongTermMemoryUpdate` schema, `PUT`/`DELETE /api/v1/memory/long-term/{entry_id}` (404/409/422, Origin + JSON checks) + pytest (wave 1)
+- [x] 11-02-PLAN.md — Frontend: "Редактировать" / "Удалить" buttons per long-term entry, inline edit form with draft state, confirmed delete, source guard test (wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 11-03-PLAN.md — Docs sync (API_SPEC, ARCHITECTURE, TESTING_GUIDE, USER_GUIDE) + full-suite regression gate (wave 2)
+- [x] 11-03-PLAN.md — Docs sync (API_SPEC, ARCHITECTURE, TESTING_GUIDE, USER_GUIDE) + full-suite regression gate (wave 2)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 11-04-PLAN.md — Playwright browser UAT (S1-S11) on the isolated copy at 18000/18001 with an exit-code / result-file gate and a capped fix-and-rerun loop (wave 3)
+- [x] 11-04-PLAN.md — Playwright browser UAT (S1-S11) on the isolated copy at 18000/18001 with an exit-code / result-file gate and a capped fix-and-rerun loop (wave 3)
 
-### Phase 12: LLM providers section in Settings (Day 21)
+### Phase 13: Knowledge base indexing (Day 21)
 
-**Goal**: add a 'Провайдеры LLM' section to Settings, styled like the 'MCP серверы' section: a '+ Добавить провайдера' button, with already-added providers listed below it
-**Behavior**: after a new provider is saved, run a connection check and show a success or error indicator; the LLMs the provider exposes appear in the LLM picker, and each picker entry is prefixed with the provider name
+**Goal**: users can build a knowledge base from PDF/TXT/MD files, choosing a chunking strategy and embedding model, and get a persisted, searchable FAISS + SQLite index with live indexing progress
 **Branch**: `Day21`
-**Depends on**: Phase 8
-**Promoted from**: backlog 999.11 (2026-10-02)
-**Requirements**: TBD
-**Plans**: 0 plans
+**Depends on**: Phase 10 (the KB modal holds a file selection and must close only via ×)
+**Requirements**: KB-01, KB-02, KB-03, KB-04, KB-05, KB-06, KB-07, KB-08, KB-09, KB-10, KB-11
+**Success Criteria** (what must be TRUE):
+
+  1. User opens "Добавить" in the sidebar "База знаний" block, fills the modal (name, files, chunking strategy, size/overlap, embedding model) and clicks "Индексировать"; the KB appears in the list with name, status and file/chunk counts
+  2. Both PDFs from `C:\Projects\RAG` (ФЗ-196, КоАП РФ) index successfully with each chunking strategy; a scanned PDF without a text layer fails with a readable message and invalid size/overlap is rejected in Russian
+  3. While indexing runs, the UI shows live status and progress (queued / x of y / ready / failed) and the Agent keeps passing health checks; a job interrupted by an Agent restart shows as failed
+  4. A "тест поиска" query against a ready KB returns top chunks with scores and metadata (source, section, chunk_id)
+  5. Deleting a KB removes its rows, on-disk index and uploaded files; another user's KB is never visible (404)
+
+**Plans**: 8 plans
 **UI hint**: yes
+**Research flag**: needs deeper research (embedding round trip and per-model prefixes, КоАП header/footer patterns, VRAM co-loading with the chat model); start with a short spike
 
 Plans:
-- [ ] TBD (run /bm:plan-phase 12 to break down)
+
+**Wave 1**
+
+- [x] 13-01-PLAN.md — Foundation: pinned RAG deps, KB config keys, KnowledgeBase/KbDocument/KbChunk tables, FAISS bytes storage helper, KB state, test isolation
+- [x] 13-02-PLAN.md — KB limits module + pure chunkers (fixed with validation, structural cascade with breadcrumbs and 2000-char sub-split)
+- [x] 13-03-PLAN.md — PyMuPDF/TXT/MD loaders with header/footer/annotation cleaning, scan detection, golden tests on real КоАП/ФЗ-196 pages
+- [x] 13-07-PLAN.md — Sidebar «База знаний» block, create modal, test-search modal, live progress, chat picker hides embeddings
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [x] 13-04-PLAN.md — Embeddings client with D-24 identity guard, explicit load, batching, prefixes; additive `type` on provider models
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [x] 13-05-PLAN.md — Background indexing job (all-or-nothing), delete with cancel, orphan recovery, kb_progress events, lifespan wiring
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [x] 13-06-PLAN.md — KB REST API (multipart 202 create with caps/dedupe, list/get/delete, search, embedding models/check) + search service
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [x] 13-08-PLAN.md — Real-PDF golden tests, Playwright E2E on isolated copy (18000/18001) with both PDFs and strategies, docs sync
+
+### Phase 14: First RAG query (Day 22)
+
+**Goal**: users can attach a knowledge base to a chat and get answers grounded in retrieved chunks, with the sources visible, and compare answers with and without RAG on a frozen control set
+**Branch**: `Day22`
+**Depends on**: Phase 13
+**Requirements**: RAG-01, RAG-02, RAG-03, RAG-04, RAG-05, RAG-06, RAG-07, RAG-08
+**Success Criteria** (what must be TRUE):
+
+  1. User attaches a KB to a chat and switches between "без RAG" and "с RAG"; the current mode and KB are visibly indicated in the chat
+  2. With RAG on, an answer is based on the top-K retrieved chunks and shows its sources (file, section, chunk_id, score) under the message; the stored user message remains the raw question
+  3. If the embedding model is unavailable or the KB was deleted, the turn still answers without RAG and shows a visible warning; a large RAG block never deletes the user message
+  4. `scripts/rag_eval.py` runs the frozen 10-question control set (including out-of-corpus questions) and `Day22_report.md` compares no-RAG vs RAG answers and nomic vs bge-m3 embeddings on hit@k (giga is not available as an embedder — see Phase 13 spike / D-15)
+
+**Plans**: 8 plans
+**UI hint**: yes
+**Research flag**: standard patterns; decide the retrieval result shape, `rag_sources` storage and eval fixture here
+
+Plans:
+
+**Wave 1**
+
+- [x] 14-01-PLAN.md — ChatRagConfig + Message.rag_sources migration, dim-mismatch error, agent/rag.py (retrieve, failure mapping, budget, block, merge, payload)
+- [x] 14-02-PLAN.md — Draft, user-approve and freeze the 10-question control set fixture (checkpoint)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [x] 14-03-PLAN.md — REST: GET/PUT /chats/{id}/rag, chunk snippet route, rag_sources in the chat tree
+- [x] 14-04-PLAN.md — WS turn: fail-soft prepare_rag_turn, outbound-only merge, rag_sources persistence, done.rag
+- [x] 14-05-PLAN.md — scripts/rag_eval.py (build-kbs, run, hit@k, tables) with fake-backed tests
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [x] 14-06-PLAN.md — UI: header toggle/KB select/K/badge, per-answer mode label, warning line, Источники block
+- [x] 14-07-PLAN.md — Live eval (nomic vs bge-m3, no-RAG vs RAG), verdicts, Day22_report.md (checkpoint)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [x] 14-08-PLAN.md — Playwright E2E on the isolated copy (18000/18001) and docs sync
+
+### Phase 15: Reranking and filtering (Day 23)
+
+**Goal**: retrieval quality improves through two-stage candidate selection, a calibrated relevance cut-off, optional rerankers and query rewrite, with every step inspectable
+**Branch**: `Day23`
+**Depends on**: Phase 14
+**Requirements**: RANK-01, RANK-02, RANK-03, RANK-04, RANK-05, RANK-06, RANK-07, RANK-08, RANK-09
+**Success Criteria** (what must be TRUE):
+
+  1. User can configure candidate top-K, final top-K and the similarity threshold per chat, and low-scoring chunks are cut before reaching the LLM
+  2. User can enable the lexical reranker, the LLM reranker, hybrid FTS5 retrieval and query rewrite independently; rewrite falls back to the original question on bad output
+  3. A collapsible "Детали поиска" block under each RAG answer shows the (rewritten) query, candidates with scores, what was cut and why, and the final chunks
+  4. The threshold is calibrated per embedding model on the control set, and `Day23_report.md` compares no filter vs filter, each reranker and rewrite (optional LLM-judge column, manual verdict primary)
+
+**Plans**: 13 plans
+**UI hint**: yes
+**Research flag**: needs deeper research (empirical threshold calibration, rewrite drift on a 9B local model)
+
+Plans:
+
+**Wave 1**
+
+- [ ] 15-01-PLAN.md — pure ranking helpers: lexical score, fusion, RRF, FTS query builder, rewrite validator, rerank parser, calibration rule
+- [ ] 15-02-PLAN.md — ChatRagConfig search columns, FTS5 mirror with triggers/backfill, calibrated-threshold lookup, partial-update settings API
+- [ ] 15-13-PLAN.md — DeepSeek LLM-judge script with key/model `--check` (wave 1; split out of 15-06)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 15-03-PLAN.md — retrieval primitives: vector search with query vector, FTS5 search, non-streaming rewrite and rerank calls
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 15-04-PLAN.md — shared two-stage retrieval pipeline with optional stages and metadata-only trace
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 15-05-PLAN.md — chat-turn integration: payload v2, below-threshold path, client/model wiring in ws
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [ ] 15-06-PLAN.md — eval tooling: draft calibration fixture, calibrate and ablate subcommands (ablate at the Day 22 max_tokens 4096)
+- [ ] 15-07-PLAN.md — UI: "Поиск ⚙" popover, "Детали поиска" block, grey below-threshold line (requires Phase 14 plan 14-06)
+
+**Wave 6** *(blocked on Wave 5 completion)*
+
+- [ ] 15-08-PLAN.md — calibration set approval and freeze, live calibration for nomic and bge-m3 (checkpoint)
+
+**Wave 7** *(blocked on Wave 6 completion)*
+
+- [ ] 15-09-PLAN.md — user decisions on thresholds and FTS exemption, calibrated constants written (checkpoints)
+
+**Wave 8** *(blocked on Wave 7 completion)*
+
+- [ ] 15-10-PLAN.md — live 7-run ablation on the Day 22 winner and manual verdicts (requires Phase 14 plan 14-07)
+
+**Wave 9** *(blocked on Wave 8 completion)*
+
+- [ ] 15-11-PLAN.md — DeepSeek key + model check, judge column, Day23_report.md, user review (checkpoints)
+
+**Wave 10** *(blocked on Wave 9 completion)*
+
+- [ ] 15-12-PLAN.md — Playwright E2E on the isolated copy and docs sync
+
+### Phase 16: Citations and anti-hallucination (Day 24)
+
+**Goal**: every RAG answer carries verifiable sources and quotes, and the assistant says "не знаю" instead of guessing when retrieval is not relevant enough
+**Branch**: `Day24`
+**Depends on**: Phase 15
+**Requirements**: CITE-01, CITE-02, CITE-03, CITE-04
+**Success Criteria** (what must be TRUE):
+
+  1. Each RAG answer shows the answer text, a list of sources (source + section / chunk_id) and quotes taken from the retrieved chunks
+  2. Each quote is marked verified or unverified by a server-side substring check against the cited chunk, and sources are rendered from chunk metadata, not from model text
+  3. An out-of-corpus question gets "не знаю" plus a clarifying question, enforced in code when best relevance is below the threshold
+  4. The Day 24 report section records, per control question, sources present, quotes present, meaning matches quotes, and correct "не знаю" on out-of-corpus questions
+
+**Plans**: TBD
+**UI hint**: yes
+**Research flag**: needs deeper research (local-model compliance with `[n]` citations and verbatim quotes)
+
+### Phase 17: Mini-chat with RAG and task memory (Day 25)
+
+**Goal**: the existing chat works as a RAG mini-chat that keeps the dialog goal, clarifications and constraints in task memory and answers every turn with sources
+**Branch**: `Day25`
+**Depends on**: Phase 16
+**Requirements**: RCHAT-01, RCHAT-02, RCHAT-03, RCHAT-04, RCHAT-05
+**Success Criteria** (what must be TRUE):
+
+  1. In a RAG chat, history is kept, retrieval runs on every new question and every answer shows its sources
+  2. Task memory (goal, clarified points, constraints/terms) updates after each turn and is visible in the UI
+  3. A follow-up question that depends on earlier turns retrieves correctly because task memory and recent history feed the query rewrite and the system prompt
+  4. Two scripted 10-15 message scenarios run end to end with the goal kept and sources on every turn, documented in `Day25_report.md`
+
+**Plans**: TBD
+**UI hint**: yes
+**Research flag**: standard patterns; confirm `dialog_state` rendering in the memory panel during planning
 
 ## Progress
 
@@ -207,9 +280,14 @@ Plans:
 | 7. MCP Connection (Day 16) | v2.0 | 6/6 | Complete   | 2026-09-23 |
 | 8. Scheduler (Day 18) | v2.0 | 9/9 | Complete   | 2026-09-26 |
 | 9. Auto-rename chats with LLM (Day 21) | v2.0 | 6/6 | Complete   | 2026-10-02 |
-| 10. Modals close only via x button (Day 21) | v2.0 | 0/0 | Not started | - |
-| 11. Edit and delete long-term memory entries via UI (Day 21) | v2.0 | 0/0 | Not started | - |
-| 12. LLM providers section in Settings (Day 21) | v2.0 | 0/0 | Not started | - |
+| 12. LLM providers section in Settings (Day 21) | v2.0 | 6/6 | Complete   | 2026-10-02 |
+| 10. Modals close only via x button (Day 21) | v3.0 | 1/1 | Complete   | 2026-10-02 |
+| 11. Edit and delete long-term memory entries via UI (Day 21) | v3.0 | 4/4 | Complete    | 2026-10-03 |
+| 13. Knowledge base indexing (Day 21) | v3.0 | 8/8 | Complete   | 2026-10-03 |
+| 14. First RAG query (Day 22) | v3.0 | 8/8 | Complete    | 2026-10-03 |
+| 15. Reranking and filtering (Day 23) | v3.0 | 0/TBD | Not started | - |
+| 16. Citations and anti-hallucination (Day 24) | v3.0 | 0/TBD | Not started | - |
+| 17. Mini-chat with RAG and task memory (Day 25) | v3.0 | 0/TBD | Not started | - |
 
 ## Backlog
 
@@ -223,6 +301,7 @@ Plans:
 **Plans:** 0 plans
 
 Plans:
+
 - [ ] TBD (promote with /bm:review-backlog when ready)
 
 ### Phase 999.2: Descriptive LLM timeout error instead of empty 'LLM error:' (BACKLOG)
@@ -233,6 +312,7 @@ Plans:
 **Plans:** 0 plans
 
 Plans:
+
 - [ ] TBD (promote with /bm:review-backlog when ready)
 
 ### Phase 999.3: Trim wasted tool rounds and stray second answer after MCP error nudge (BACKLOG)
@@ -243,6 +323,7 @@ Plans:
 **Plans:** 0 plans
 
 Plans:
+
 - [ ] TBD (promote with /bm:review-backlog when ready)
 
 ### Phase 999.7: Harden scheduler LLM tools: gate schedule_task and bind cancel to the task (BACKLOG)
@@ -253,6 +334,7 @@ Plans:
 **Plans:** 0 plans
 
 Plans:
+
 - [ ] TBD (promote with /bm:review-backlog when ready)
 
 ### Phase 999.8: Fix DST fall-back fold in cron next-run math (BACKLOG)
@@ -263,6 +345,7 @@ Plans:
 **Plans:** 0 plans
 
 Plans:
+
 - [ ] TBD (promote with /bm:review-backlog when ready)
 
 ### Phase 999.9: Re-validate the session on the /ws/events socket (BACKLOG)
@@ -273,6 +356,7 @@ Plans:
 **Plans:** 0 plans
 
 Plans:
+
 - [ ] TBD (promote with /bm:review-backlog when ready)
 
 ### Phase 999.10: Scheduler code review INFO cleanup (BACKLOG)
@@ -283,17 +367,31 @@ Plans:
 **Plans:** 0 plans
 
 Plans:
+
 - [ ] TBD (promote with /bm:review-backlog when ready)
 
 ### Phase 999.11: DeepSeek backend check for auto-title requests (Phase 09 UAT #1) (BACKLOG)
 
 **Goal:** one POST to `https://api.deepseek.com/v1/chat/completions` (model `deepseek-chat`, messages from `agent.titles.build_title_messages`, temperature 0, max_tokens 30, stream false, `reasoning_effort` none; on 400/422 repeat without `reasoning_effort`). Expect HTTP 200, finish_reason `stop`, non-empty short title. Needs `DEEPSEEK_API_KEY` from the environment (paid call). Procedure and command: `.planning/phases/09-auto-rename-chats-with-llm-day-21/09-HUMAN-UAT.md` (test 1). Can be closed together with Phase 12 (DeepSeek model picker).
+**Status:** code path delivered in Phase 12; live check blocked: no real DEEPSEEK_API_KEY in `.env` (placeholder only); run `RUN_LIVE_DEEPSEEK=1 pytest tests/test_live_deepseek_title.py -q -rs` once a key is set
 **Requirements:** TBD
 **Plans:** 0 plans
 
 Plans:
+
+- [ ] TBD (promote with /bm:review-backlog when ready)
+
+### Phase 999.12: MCP server disable toggle has no effect — servers auto-reconnect on request (BACKLOG)
+
+**Goal:** In Settings → MCP серверы, «Отключить» does not stick: on the next chat request the MCP servers are connected again automatically, so their tool schemas (~11k tokens for filesystem 17 + GitLab 20 + builtin) are still sent to the LLM. This eats the context window and starves RAG fragments (see 14-UAT.md gap, debug session `.planning/debug/rag-k15-context-full.md`). Investigate where the agent re-connects servers (ws.py tool collection / MCP manager) and make the disabled state persistent and respected; consider also excluding tool schemas from RAG turns or showing their tokens in the usage meter.
+**Refs:** .planning/debug/rag-k15-context-full.md; 14-UAT.md test 3
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+
 - [ ] TBD (promote with /bm:review-backlog when ready)
 
 ---
 *Roadmap created: 2026-09-19*
-*Last updated: 2026-10-02 — Phase 9 planned (4 plans, TITLE-01..06); backlog 999.4/999.5/999.6/999.11 promoted to Phases 9-12 (Day 21)*
+*Last updated: 2026-10-03 — v3.0 roadmap: Phases 13-17 (RAG, Days 21-25) added; earlier: 2026-10-02 — Phase 9 planned (4 plans, TITLE-01..06); backlog 999.4/999.5/999.6/999.11 promoted to Phases 9-12 (Day 21)*

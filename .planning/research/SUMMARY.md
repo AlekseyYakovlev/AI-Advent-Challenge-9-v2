@@ -1,177 +1,156 @@
 # Project Research Summary
 
-**Project:** AiAdventAgentV2 -- Week 3: Agent Memory & Task State
-**Domain:** Retrofitting multi-user auth + explicit agent memory (MemGPT-style tiered storage) + a task FSM with invariant enforcement onto an existing two-process FastAPI/SQLModel/SQLite chat app
-**Researched:** 2026-09-19
-**Confidence:** MEDIUM-HIGH
+**Project:** AiAdventAgentV2 — milestone v3.0 Week 5: RAG (Days 21-25)
+**Domain:** Local-first RAG (FAISS + SQLite, LM Studio embeddings, Russian legal PDFs) added to an existing two-process FastAPI chat app with small local LLMs
+**Researched:** 2026-10-03
+**Confidence:** MEDIUM-HIGH (stack and integration points verified on this machine or read from code; embedding-model quality and local-LLM compliance are the soft spots)
 
 ## Executive Summary
 
-This is a coursework retrofit, not a greenfield build: the app already has a working two-process (UI:8000 / Agent:8001) chat system with a message-tree data model, global/per-chat Settings fallback, and dual LLM backends (DeepSeek cloud + LM Studio local). Week 3 adds four layers on top -- user authentication, three-tier explicit memory (short-term/working/long-term), per-user personalization, and a formal task state machine with invariant enforcement -- all of which the research is unanimous should live entirely inside the existing Agent process, extending established codebase patterns (new SQLModel tables FK'd through `user_id`, the `Settings` global/per-chat NULL-fallback pattern reused for Invariants, `context_engine.py` as the single context-assembly chokepoint) rather than introducing new frameworks or a second architecture.
+This milestone adds a deterministic RAG pipeline to the existing chat. Ingest: PDF/TXT/MD upload → structure-aware chunking → LM Studio `/v1/embeddings` → one FAISS flat index per knowledge base, with chunk text and metadata in SQLite. Query: pre-retrieval in `agent/ws.py` (not an LLM tool) → threshold / rerank / rewrite → numbered context block → server-rendered sources and verified quotes → code-level "не знаю" gate. Day 25 reuses the existing chat plus working memory as the mini-chat. The corpus is small (~5-10k chunks), so exact search is sub-millisecond. The hard parts are Russian legal PDF cleanup, "Статья N.M" chunking, embedding-model quirks, small-LLM non-compliance, and honest evaluation.
 
-The recommended approach is deliberately minimal: `pwdlib[argon2]` for password hashing (not the unmaintained `passlib`), a hand-rolled dict-based task transition table (not a workflow-engine library), two dedicated memory tables written exclusively through a new LLM tool-call dispatcher (`agent/tools.py`) built once in the Memory phase and reused by every later phase, and -- critically -- auth must land first as its own foundation phase, since every new table in every subsequent phase needs `user_id` scoping from creation, not retrofitted later. One open question the research surfaces but does not resolve: STACK.md recommends a server-side `Session` SQLModel table for revocable sessions, while ARCHITECTURE.md recommends Starlette's built-in `SessionMiddleware` (signed cookie, no server-side revocation) for zero-dependency simplicity -- this must be explicitly decided during Auth phase planning, not left ambiguous (see Gaps below).
+Add only four packages (`faiss-cpu`, `numpy`, `pymupdf`, `python-multipart`) and hand-write the rest (chunker, lexical rerank, retrieval, eval runner). Retrieval is a deterministic pre-step. Retrieved text is never persisted into the message tree, only injected into the outbound request; per-message provenance goes in `Message.rag_sources`, mirroring `tool_trace`. Indexing runs as a background `asyncio` task with progress over the existing `/ws/events` hub; a DB status row is the source of truth. One `ChatRagConfig` mode ladder (`off → plain → filtered → strict`) puts each day's behavior behind one switch, so the Day 22/23/24 report comparisons are one dropdown.
 
-The dominant risk category is not "will this work" but "will the explicit/inspectable guarantee actually hold" -- the codebase already has an implicit, debounced fact-extraction pattern (`extract_and_update_facts`) that is structurally tempting to relabel as the new "explicit" memory feature, and a debounced-background-task precedent that will silently drop concurrent tool-call writes if copied verbatim for memory/task mutations. Both are documented, well-understood pitfalls with concrete prevention strategies (synchronous, per-chat-locked, tool-call-only writes), not open research questions -- the roadmap should treat them as binding architectural constraints from day one rather than something to catch in review.
+Main risks:
+1. Blocking the event loop (PDF parse, FAISS) makes the Supervisor restart the Agent → `to_thread` + background job.
+2. The giga embedder is odd: typed `llm`, needs explicit load, returns 768 dims, was worse than nomic in a mini-test → per-model prefixes, no type-only dropdown filter, giga vs nomic A/B in reports.
+3. Small local LLMs ignore "cite" and "не знаю" → deterministic score gate, server-built sources, substring-verified quotes.
+4. Uncalibrated thresholds and eval theater → freeze the 10 questions first, calibrate on score distributions, report negative results.
+5. Context budget → the RAG block is ephemeral and budgeted so it does not fight the compression strategies.
+
+## Conflicts Between Research Files and Resolutions
+
+| # | Conflict | Resolution |
+|---|----------|------------|
+| 1 | PDF library: ARCHITECTURE assumed pypdf; STACK measured it | **Use `pymupdf` 1.28.2.** On the real corpus pypdf glues words ("Статья2.Основныетермины"), takes 90.6 s on КоАП vs 2.8 s, and misses headings (20 vs 34 Статья, 0 vs 8 Глава on ФЗ-196). AGPL is fine for undistributed coursework. Fallback `pypdfium2` (BSD/Apache). `to_thread` suffices; no subprocess escalation needed. |
+| 2 | Embedding dropdown: ARCHITECTURE filters `type == "embeddings"`; giga is typed `llm` | **Do not filter on type alone.** Show `type == "embeddings"` plus name match (`embed`, `giga`, `nomic`, `bge`, `e5`), with a "show all" escape hatch and a "Проверить эмбеддинг" button (reports dim). Extend `providers._parse_models` additively to keep `type`. Chat model dropdown excludes `type == "embeddings"`. |
+| 3 | Dims/prefixes: giga via LM Studio returns 768 (card says 1024); Instruct prefix made giga worse; nomic won the mini-test | **Per-model prefix config** keyed by model id: giga = no prefix by default (Instruct option selectable); nomic = `search_query: ` / `search_document: `; unknown = none. Giga stays default (assignment). `Embedder.embed_passages` / `embed_query`. Store `embedding_model`, `dim`, prefixes on the KB row; dim from first response. giga vs nomic A/B on the 10 control questions in the reports. |
+| 4 | Day 25 task memory: FEATURES = working-memory rows + task goal + invariants; ARCHITECTURE = one `dialog_state` JSON row | **Single `WorkingMemory` row `dialog_state`** per chat, JSON `{goal, facts[], constraints[]}`, rendered as labelled lines in the system prompt and memory panel, updated by a deterministic post-turn extraction call (not LLM tool choice). Mirror goal into `Task.goal` only if an open task exists. No new FSM states. Store user-stated facts and chunk references, never law text. |
+| 5 | KB per chat: multi-KB vs exactly one | **One KB per chat** (`ChatRagConfig.kb_id`); scores across models aren't comparable. A KB holds several files, so both PDFs go into one KB. |
+| 6 | RAG settings storage: `Settings` columns vs new table | **New `ChatRagConfig` table** (PK = `chat_id`, cascade, absent row = off); keeps the `_resolve_settings` fallback contract untouched. |
+| 7 | Index persistence layout | **DB_PATH-derived** `<stem>_kb/<user_id>/<kb_id>/` (tests and the 18000/18001 E2E copy isolate automatically). `faiss.serialize_index` → `.tmp` → `os.replace`. `IndexIDMap2(IndexFlatIP)` with `KbChunk.id` as FAISS id, L2-normalized float32. Optional float32 BLOB on `KbChunk` for rebuild without re-embedding. Startup check `ntotal == chunk_count` and dim. |
+| 8 | Embedding load vs `model_switch_lock` | Explicit load via the existing control API, lock held only for the load call; don't touch chat `_current_loaded_model` bookkeeping; never emergency-unload the embedder in the chat path. Separate longer `KB_EMBED_TIMEOUT`. Document VRAM contention with the 9B chat model. |
+| 9 | Chunk unit: characters vs ~400 tokens | **Characters in the UI** (default ~1000-1200, within giga's 512-token cap). Validate `size >= 100`, `0 <= overlap < size`, `overlap <= size/2`. |
 
 ## Key Findings
 
 ### Recommended Stack
 
-The stack additions are deliberately small: one new pinned dependency (`pwdlib[argon2]==0.3.1`, replacing the unmaintained/broken `passlib`), and everything else built on already-present dependencies (stdlib `secrets`/`hashlib` for tokens, SQLModel `Column(JSON)` for memory payloads, Pydantic `model_json_schema()` for tool schemas). No workflow engine, no vector DB, no LLM orchestration framework (LangChain/instructor/pydantic-ai) is warranted at this scope -- all were explicitly evaluated and rejected as overkill relative to the actual requirements.
+Four packages, all verified installable on Python 3.13.15 / Windows: `faiss-cpu` 1.15.1, `numpy>=2.0`, `pymupdf` 1.28.2, `python-multipart` 0.0.32 (pin explicitly — only transitive today; FastAPI will not boot an upload route without it). Embeddings via existing `httpx` (new `embed()`, no `openai` SDK). Reranking is pure-Python lexical fusion plus optional LLM scorer — LM Studio has no `/v1/rerank` (probed), cross-encoders would pull torch.
 
-**Core technologies:**
-- `pwdlib[argon2]` 0.3.1 -- password hashing for Auth-01/02 -- actively maintained passlib successor; `argon2-cffi` backend follows OWASP's 2026 minimum profile (`m=19456, t=2, p=1`)
-- Session mechanism (server-side `Session` table **or** Starlette `SessionMiddleware`, unresolved -- see Gaps) -- Auth-03's REST+WS session -- must be decided before Auth phase planning begins
-- SQLModel `Column(JSON)` on two new dedicated tables (`WorkingMemoryItem`, `LongTermMemoryItem`) -- MEM-01/02 storage -- mirrors the existing `Settings.facts_json` JSON-column convention already in the codebase
-- Pydantic `model_json_schema()` + hand-rolled `tools=[...]` payload extension to `agent/llm_client.py` -- MEM-03/TASK-03 tool-call schemas -- both DeepSeek and LM Studio confirm OpenAI-compatible tool-calling support (MEDIUM confidence, docs-verified not hands-on tested)
-- Hand-rolled `dict[str, set[str]]` transition table + guard function -- TASK-01/TRANS-01/02 -- 4 states is too small to justify `python-statemachine`; revisit only if pause/resume needs history pseudo-states later
+- `faiss-cpu` `IndexIDMap2(IndexFlatIP)`: exact cosine, per-KB index file, ~0.8 ms at 5000x768.
+- `pymupdf`: per-page text (2.8 s for the 875-page КоАП), in `asyncio.to_thread`.
+- `numpy`: float32 C-contiguous; always `faiss.normalize_L2`.
+- `httpx` (existing): `POST /v1/embeddings`, batches 16-32, concurrency 1; КоАП ≈ 4-6 min → background job with progress.
+- Plain `re`: `^Статья\s+(\d+(?:\.\d+)*)\.` and `^Глава\s+...`, line-anchored.
+- **Do not add:** torch, sentence-transformers, langchain, llama-index, any vector DB, `openai`, `rank-bm25`, `pymorphy3`, Celery.
 
 ### Expected Features
 
-FEATURES.md maps every Active requirement in PROJECT.md (Auth-01..04, MEM-01..05, PERS-01..04, TASK-01..05, TRANS-01..03) directly onto patterns already proven in production agent-memory systems (Anthropic's memory tool, Letta/MemGPT, LangGraph, ChatGPT Memory) -- there is no feature gap between "what graders will expect" and "what's already scoped in PROJECT.md." The single biggest anti-feature risk is implicit/automatic memory classification, which is both the easiest thing to accidentally build (given the existing `extract_and_update_facts` precedent) and explicitly disqualifying per MEM-03.
+**Table stakes by day:**
+- **Day 21:** KB entity with per-KB model/dim/chunk params; document + chunk tables with metadata (source, section, chunk_id, page, char range); PDF/TXT/MD loading with scanned-PDF failure message; fixed and structural chunking; batched embeddings; FAISS + SQLite; sidebar "База знаний" block, "Добавить" modal, per-entry delete; background indexing with status, progress, readable errors.
+- **Day 22:** retrieval with the KB's own model, numbered context block, chat↔KB attachment, per-chat RAG toggle with visible badge, frozen 10-question fixture (2-3 out-of-corpus), eval runner, `Day22_report.md`.
+- **Day 23:** wide top-K → threshold → top-N, calibrated cut-off, toggleable query rewrite, visible "Детали поиска", `Day23_report.md` (plain vs filtered vs filtered+rewrite).
+- **Day 24:** sources (file, section, chunk_id) and quotes on every answer, programmatic quote verification, deterministic "не знаю" + clarification gate, sources persisted on the assistant message, 10-question check table.
+- **Day 25:** existing chat is the mini-chat; history-aware rewrite, `dialog_state` injected every turn and shown in a panel, two scripted 10-15-message scenarios, `Day25_report.md`.
 
-**Must have (table stakes):**
-- Explicit, tool-call-gated memory writes (never implicit/inferred) -- MEM-03
-- Three separately-queryable memory tiers, working/long-term as dedicated tables -- MEM-01/02
-- Inspection endpoint + UI panel per memory layer -- MEM-04/05
-- Per-user profile injected into every request with observable behavioral difference -- PERS-01..04
-- Explicit state enum + transition table + guard function with clear rejection -- TASK-01, TRANS-01/02
-- LLM-driven task creation via tool call, with an open/unused delegation field for future subagent work -- TASK-03
-- Durable (DB-persisted, not in-process) pause/resume -- TASK-04/TRANS-03
-- Task history/transition log visible in UI -- TASK-05
+**Should have (pick 1-2):** article-number/lexical boost fused with cosine (RRF); batched LLM reranker; shared `scripts/rag_eval.py`; `POST /kb/{id}/search` debug endpoint; optional FTS5 hybrid.
 
-**Should have (competitive, only if time allows):**
-- Lightweight memory pruning once a tier is hard to read in the UI (reactive, not preemptive)
-- Interactive pause-time editing of task state before resume
-
-**Defer (v2+, explicitly out of scope per PROJECT.md):**
-- Automatic memory summarization/decay scoring
-- Cross-session implicit profile inference
-- Real subagent dispatch executing created tasks (schema hook only, no execution)
-- Vector/semantic search over long-term memory
-- Cross-user memory sharing, fine-grained RBAC
+**Defer:** cross-encoder, LLM-judge UI, per-message RAG override, re-index action, neighbour-chunk click-through, multi-KB search, incremental add, OCR, DOCX/HTML, RAGAS/TruLens.
 
 ### Architecture Approach
 
-All new complexity lives inside the Agent process (port 8001) -- the UI process is untouched. The design adds five new modules (`agent/auth.py`, `agent/tools.py`, `agent/memory.py`, `agent/tasks.py`, `agent/invariants.py`), each mapping 1:1 to a bounded concern, with `agent/tools.py` as the single new *kind* of component: a tool-call dispatcher built once during the Memory phase and reused unchanged by Personalization, Tasks, and Invariants. `context_engine.py` is extended (not forked) to be the sole place that assembles profile/invariant/task-scratchpad context and attaches tool schemas to the outbound LLM payload -- this preserves the existing 75%-of-context_length overflow trigger by keeping token accounting centralized.
+New modules (`agent/kb_api.py`, `kb_indexer.py`, `kb_loaders.py`, `kb_chunking.py`, `embeddings.py`, `rag.py`, `rag_turn.py`, `dialog_state.py`, `shared/kb_storage.py`) with three small touch points in `ws.py`. Browser uploads straight to the Agent (existing CORS + cookie; don't set `Content-Type` on the `FormData` fetch). Retrieval failures never kill a turn: `kb_unavailable` (warning, answer without RAG) is distinct from `below_threshold` ("не знаю"). New tables via `create_all`; only `Message.rag_sources` needs an idempotent `ALTER TABLE`.
 
-**Major components:**
-1. `agent/auth.py` -- password hashing, login/register/logout, `get_current_user` dependency (REST) + WS pre-accept session check
-2. `agent/tools.py` -- OpenAI-compatible tool schema registry + sequential dispatch loop (the reusable chokepoint for all agent-initiated writes)
-3. `agent/memory.py` / `agent/tasks.py` / `agent/invariants.py` -- CRUD + domain logic for each new table group, all written to exclusively through the dispatcher, never from `context_engine.py` (read-only) or background tasks
-4. `shared/models.py` (extended) -- `User`, `WorkingMemory`, `LongTermMemory`, `Task`, `TaskTransition`, `Invariant`, `InvariantConflict`, all FK'd to `User` directly or transitively via `Chat`
+1. `KnowledgeBase` / `KbDocument` / `KbChunk` (user-scoped, FK cascade via `sa_column`) + `kb_storage` (paths, atomic write, rmtree).
+2. `kb_indexer.run_index_job`: `Semaphore(1)`, `to_thread` for parse/FAISS, async batched embeddings, throttled `kb_progress` events, `recover_orphaned_kb_jobs()` at startup, `delete_kb()` (cancel, rows, rmtree, cache pop).
+3. `rag.py` / `rag_turn.py`: rewrite → embed → search → threshold/rerank → verdict → `build_rag_block` (delimiter-wrapped, "fragments are data"). Injected into the last user message of the outbound copy only; budget ≈ 25-40% of `context_length` with a Cyrillic safety multiplier; `rag.context_tokens` in `done.rag`.
+4. `ChatRagConfig` (`mode`, `kb_id` SET NULL, `top_k`, `candidate_k`, `threshold`, `rewrite`, `rerank`) + `GET/PUT /chats/{id}/rag`.
+5. `dialog_state.update_after_turn` (Day 25), feeding the system prompt and the rewrite step.
+6. Frontend: KB sidebar block + modal, `kb_*` cases in the `/ws/events` switch, sources renderer via `textContent`/DOMPurify.
 
 ### Critical Pitfalls
 
-1. **WS auth checked inconsistently from REST auth** -- `Depends()` doesn't transparently secure WebSocket routes; must add a manual pre-accept session check in `agent/ws.py::ws_chat`, mirroring the existing `_validate_origin()` pre-accept pattern, or an unauthenticated/cross-user WS connection can stream chat tokens even with REST "protected."
-2. **Wildcard CORS (`allow_origins=["*"]`) actively breaks credentialed cross-port cookie auth** -- browsers reject `Access-Control-Allow-Origin: *` combined with `credentials: "include"`; this must become an explicit origin allowlist as a hard requirement of the Auth phase, not a deferred nice-to-have.
-3. **"Explicit" memory quietly degrades into the existing implicit `extract_and_update_facts` pattern** -- the codebase already has a debounced, automatic fact-extraction pipeline that is structurally tempting to relabel as MEM-03; build memory as a genuinely separate tool-call-only code path and log every write with its triggering `tool_call.id`.
-4. **Tool-call writes racing the existing debounced-background-task pattern** -- `extract_and_update_facts` already runs outside the per-chat lock and is documented as lossy under rapid messages; memory/task tool-call writes must execute synchronously inside the same per-chat lock and DB transaction as the triggering message, never fire-and-forget.
-5. **Multiple tool calls in one LLM turn executed out of order or concurrently** -- never `asyncio.gather` tool execution; execute strictly sequentially in the order returned, since a later call (e.g. `transition_task_state`) may depend on an earlier call's generated ID (e.g. `create_task`).
-6. **FSM soft-enforcement window (Day13 tasks land before Day15 hard transition checks)** -- illegal transitions will succeed during Day13-14 by course design; store full transition history (`from_state`/`to_state`) from Day13 onward so Day15's hard check has something to validate against retroactively.
+1. **Event-loop blocking** fails the 3 s `/health` → Supervisor kills the Agent mid-index. `to_thread`, async httpx, background task, 202.
+2. **Instruct-embedder asymmetry, uncalibrated scores.** Per-model prefixes behind one `Embedder`; normalize; calibrate on the frozen set; relative cut (`top1 - delta`); never a tutorial 0.75.
+3. **FAISS id / SQLite drift, model/dim mixing.** `IndexIDMap2` with `chunk.id`, immutable KBs, dim checks, all-or-nothing indexing with status.
+4. **Small-LLM non-compliance, fabricated citations.** Code-level "не знаю" gate; sources from metadata; `[n]` labels not DB ids; normalized-substring quote verification (mark unverified, never fail the turn); strip `<think>`; temperature 0-0.2.
+5. **PDF / chunking noise.** Strip КонсультантПлюс headers/footers and page numbers by frequency, de-hyphenate, NFKC/NBSP/soft hyphen, fail loudly on near-empty pages; structure-first split (Глава > Статья), sub-split long articles, breadcrumb prefix, handle "Утратила силу" stubs.
+6. **Evaluation theater.** Freeze the 10 questions (6 direct, 2 synthesis, 2 unanswerable) before running; hit@k + quote validity; fixed temperature; raw outputs stored; report where RAG hurt.
+7. **Context budget.** RAG text ephemeral, never persisted; shrink the RAG block before ever deleting the user message.
 
 ## Implications for Roadmap
 
-Based on combined research, the suggested phase structure closely tracks PROJECT.md's own Day11-15 sequencing, with Auth pulled out as an explicit prerequisite phase (already anticipated in PROJECT.md's Key Decisions).
+Phases 10 and 11 are carried over from v2.0; Phase 12 is done. New phases are 13-17, one per day, branches `Day21`…`Day25`.
 
-### Phase 1: Auth Foundation
-**Rationale:** Every subsequent table (Memory, Task, Invariant) needs `user_id` scoping from creation -- retrofitting it later means re-touching every table's FK design and every query's fallback logic. ARCHITECTURE.md and PITFALLS.md both independently converge on "Auth first, no exceptions."
-**Delivers:** `User` table, login/register/logout REST endpoints + login UI, session mechanism (decide `Session` table vs `SessionMiddleware` -- see Gaps), `get_current_user` REST dependency + WS pre-accept check, CORS fixed to explicit origin allowlist, `Chat.user_id`/`Settings.user_id` migration with backfill to a bootstrap admin user, centralized (not triply-duplicated) global/per-chat settings fallback resolver.
-**Addresses:** Auth-01..04
-**Avoids:** Pitfalls 1-4 (WS auth inconsistency, CORS wildcard breaking credentialed requests, cookie host/port scoping mistakes, settings-fallback duplication leaking data across users)
+### Phase 10 (carried over): Modals close only via ×
+Touches the shared modal helper in `app.js`; the KB "Добавить" modal holds a file selection and must close only via ×. Avoids losing an upload form on a stray backdrop click.
 
-### Phase 2: Memory (Day 11)
-**Rationale:** MEM-03 requires the tool-call dispatcher, and every later phase (Personalization, Tasks, Invariants) reuses it rather than rebuilding it -- building it generically here is the highest-leverage architectural decision in the milestone, per ARCHITECTURE.md's explicit build-order analysis.
-**Delivers:** `WorkingMemoryItem`/`LongTermMemoryItem` tables, `agent/memory.py`, `agent/tools.py` (the reusable dispatcher), memory inspection endpoint + UI panel.
-**Addresses:** MEM-01..05
-**Avoids:** Pitfalls 5-9 (implicit-classification relabeling, hallucinated-compliance/narrated-but-not-saved writes, background-task write races, out-of-order parallel tool calls, orphaned writes on turn rollback/context overflow)
+### Phase 11 (carried over): Edit/delete long-term memory in UI
+Independent of RAG but edits `app.js` (memory panel); landing it before KB UI work avoids conflicts. KB backend (Phase 13 plan A) has no `app.js` overlap and can overlap 10-11.
 
-### Phase 3: Personalization (Day 12)
-**Rationale:** Depends only on Memory's storage + dispatcher (profile modeled as `LongTermMemory` rows with `category="profile"`), independent of Tasks/Invariants -- can proceed immediately after Phase 2 without waiting on the state machine.
-**Delivers:** Profile schema/injection point in `context_engine.py::build_llm_context()`, profile edit UI, verified observable behavioral difference across profiles.
-**Addresses:** PERS-01..04
-**Uses:** Memory phase's dispatcher and storage pattern; extends `context_engine.py` in place (not a second context-assembly path, per Anti-Pattern 4)
+### Phase 13: Day 21 — Knowledge-base indexing
+Plan A backend: deps, KB tables + config, `kb_storage`, PyMuPDF loader with header/footer stripping, fixed + structural chunkers, `Embedder` with per-model prefixes, explicit embedding-model load, indexer job with progress and orphan recovery, KB REST (202 upload, caps, SHA-256 dedupe, user scoping), embedding-models endpoint, `delete_kb`, conftest isolation. Plan B UI: sidebar block, modal, progress via `/ws/events`, delete with confirm, Playwright E2E on 18000/18001 with the real PDFs. Start with a short spike (giga/nomic round trip, PDF golden file, retrieval smoke A/B).
 
-### Phase 4: Task State Machine (Day 13)
-**Rationale:** Depends on Memory's dispatcher (for `create_task`/`transition_task` tool registration) but not on Invariants; TRANS-01 cannot precede this phase since the state enum must exist before a transition graph can validate against it.
-**Delivers:** `Task`/`TaskTransition` tables, `agent/tasks.py` (dict-based transition table + guard function), task panel UI, `paused_at` field modeled orthogonally to the state enum (not a 5th state).
-**Addresses:** TASK-01..05 (soft/prompt-level transition guidance only -- hard enforcement is deferred to Phase 6)
-**Avoids:** Pitfall 8 (out-of-order parallel tool calls), Pitfall 10's schema half (store full transition history now even though hard checks land later)
+### Phase 14: Day 22 — First RAG query + report
+`ChatRagConfig` + REST, `rag.retrieve`, `build_rag_block`, `rag_turn`, the three `ws.py` touch points, `rag_sources` migration, per-chat toggle + badge, basic sources view, `POST /kb/{id}/search`, frozen 10-question fixture, `scripts/rag_eval.py`, `Day22_report.md` (no-RAG vs RAG, giga vs nomic).
 
-### Phase 5: Invariants (Day 14)
-**Rationale:** Depends on Memory's dispatcher (for a potential `add_invariant` tool) and benefits from, but is not hard-blocked by, Tasks existing.
-**Delivers:** `Invariant`/`InvariantConflict` tables, `agent/invariants.py` reusing the Settings global/per-chat NULL-fallback pattern verbatim, injection with an explicit precedence rule for global-vs-per-chat conflicts, post-response async conflict check (same debounce shape as existing fact extraction, but read-only/advisory -- never a write path).
-**Addresses:** INV-01..05
-**Avoids:** Moderate Pitfalls 1-2 (prose-based violations missed by tool-call-only checks; undefined global/per-chat precedence causing non-deterministic behavior) -- both require an explicit, documented scope decision before implementation, not after a demo reveals the gap
+### Phase 15: Day 23 — Filtering, rerank, query rewrite
+`candidate_k` + threshold + top-N, lexical-fusion rerank (optional batched LLM scoring), toggleable `rewrite_query` (temp 0, fallback to original, retrieve with both), "Детали поиска" before/after view, calibration helper, `Day23_report.md`.
 
-### Phase 6: Controlled Transitions (Day 15)
-**Rationale:** Hardening/integration phase over Phases 4-5 rather than new components -- the `is_valid_transition()` gate from Phase 4 gets its explainable-rejection WS error path, and invariant conflict checks get wired into transition attempts specifically.
-**Delivers:** Hard TRANS-01/02/03 enforcement, tested illegal-transition rejection (retroactively validated against Phase 4's transition history), verified pause/resume correctness end-to-end using working memory (not compressed chat history) as source of truth.
-**Addresses:** TRANS-01..03
-**Avoids:** Pitfall 10 (soft-enforcement gap reconciliation), Moderate Pitfall 3 (resume must read working memory directly, not rely on whatever the active compression strategy happens to still contain)
+### Phase 16: Day 24 — Citations and "не знаю"
+`strict` mode, deterministic `below_threshold` gate with clarifying question, `[n]` citations, quote verification in `done.rag.quotes`, code-rendered sources persisted per assistant message (snapshotted), 10-question check table incl. out-of-corpus (abstention / false-refusal rates).
+
+### Phase 17: Day 25 — Mini-chat with RAG + task memory
+`dialog_state` row with deterministic post-turn update, labelled prompt injection, history-aware rewrite (last 2-4 turns + state), RAG default-on, state display, eval multi-turn mode with two scripted 10-15-message scenarios, `Day25_report.md` with per-turn assertions.
 
 ### Phase Ordering Rationale
-
-- **Auth is a strict dependency root**, confirmed independently by all three of STACK.md, ARCHITECTURE.md, and PITFALLS.md -- not just a convention choice but a structural requirement, since every new table's FK design depends on `User` existing first.
-- **The tool-call dispatcher (`agent/tools.py`) is built once, in Memory, and never rebuilt** -- this is the single highest-leverage sequencing decision; every later phase only adds tool schemas to an existing registry.
-- **TRANS-01 cannot precede TASK-01** (need the state enum before a transition graph can reference it), and **TRANS-03 cannot be meaningfully hardened before TASK-04's pause/resume persistence exists** -- this is why Controlled Transitions is sequenced last, as a hardening pass over Tasks rather than a parallel-buildable phase.
-- **Personalization and Invariants are each independently orderable relative to Tasks** (both only hard-depend on Memory's dispatcher) -- the Day11-15 sequence in PROJECT.md is a reasonable default, but if schedule pressure hits, Personalization could be reordered before or after Tasks without rework, per ARCHITECTURE.md's dependency analysis.
+- Carried-over UI phases first (both touch `app.js`; KB modal depends on "× only"); backend can overlap.
+- Days map 1:1 onto the dependency chain: KB → retrieval → filter/threshold → citations/gate (reuses threshold) → history/task state (reuses rewrite and sources).
+- Retrieval result shape, `rag_sources` storage and eval fixture/runner are decided on Day 22.
 
 ### Research Flags
-
-Needs research during planning:
-- **Phase 1 (Auth):** session-mechanism choice (`Session` table vs `SessionMiddleware`) must be resolved explicitly -- STACK.md and ARCHITECTURE.md disagree; recommend `/bm:plan-phase --research-phase 1` or an explicit ADR-style decision before implementation starts.
-- **Phase 2 (Memory):** LM Studio tool-calling reliability is model-dependent and untested in this session (MEDIUM confidence, docs-only verification) -- verify the actual configured local model emits well-formed `tool_calls` before committing a graded demo to it; default to DeepSeek if unreliable.
-- **Phase 6 (Controlled Transitions):** scope decision for INV-04 (tool-call-args-only vs. also-scanning-prose conflict detection) needs to be made explicitly and documented, not discovered during implementation.
-
-Phases with standard, well-documented patterns (skip deep research):
-- **Phase 3 (Personalization):** directly mirrors the existing `_resolve_settings` injection pattern; low implementation risk.
-- **Phase 4 (Task State Machine):** dict-based transition table + guard function is a standard, well-established DB-design pattern (whitelist + append-only history table), confirmed via general FSM/DB-design research, not a novel design.
-- **Phase 5 (Invariants):** reuses the Settings global/per-chat NULL-fallback pattern verbatim -- an established in-codebase pattern, not new territory.
+- **Needs deeper research:** Phase 13 (embedding round trip and prefixes, КоАП header/footer patterns, VRAM co-loading), Phase 15 (empirical threshold calibration, rewrite drift on a 9B model), Phase 16 (local-model compliance with `[n]` + verbatim quotes).
+- **Standard patterns:** Phases 10, 11, 14, 17.
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH (auth/hashing, OWASP-verified); MEDIUM (memory JSON-column pattern, community-verified); HIGH (state machine choice, driven by existing codebase convention) | pwdlib/argon2-cffi verified via PyPI + OWASP Cheat Sheet; tool-calling support verified via DeepSeek/LM Studio official docs but not hands-on tested |
-| Features | MEDIUM-HIGH | Verified against multiple independent production systems (Anthropic memory tool, Letta/MemGPT, LangGraph, ChatGPT Memory); no Context7 library applies directly since this is an architectural pattern question, not an SDK API question |
-| Architecture | MEDIUM-HIGH | Component boundaries and DB design are HIGH confidence (direct extensions of patterns already proven in this codebase, verified by direct source inspection); tool-calling support is MEDIUM (docs-verified, not implemented/tested); FSM/invariant runtime behavior is a design recommendation, not an industry-standardized pattern |
-| Pitfalls | MEDIUM-HIGH | WS-auth and CORS-credentials pitfalls are HIGH confidence (standards-based: Fetch/CORS spec, RFC 6265); memory-poisoning and parallel-tool-call-race pitfalls are MEDIUM confidence (recent arXiv preprints, community forum reports); several pitfalls are directly grounded in this codebase's own already-documented `CONCERNS.md` issues (settings-fallback duplication, debounced-extraction message loss, CORS wildcard, unbounded `facts_json`) -- HIGH confidence where cross-referenced against existing docs |
+| Stack | HIGH (FAISS, PyMuPDF, upload); MEDIUM (embedding model) | Installed and run here; PDF benchmark on the real corpus; LM Studio endpoints probed live; giga quality from 3-4 queries only |
+| Features | MEDIUM | Established RAG practice + app constraints; no library-level web verification |
+| Architecture | MEDIUM-HIGH | Integration points read from code; pypdf and type-filter assumptions corrected by STACK |
+| Pitfalls | MEDIUM | Domain knowledge + project code; several LOW items partly resolved by STACK's live checks |
 
-**Overall confidence:** MEDIUM-HIGH -- the architectural and pitfall research is unusually strong because it's grounded directly in this specific codebase's existing patterns and documented tech debt (`CONCERNS.md`), not generic best practices. The main uncertainty is forward-looking: actual tool-calling reliability on the configured LM Studio model, and one unresolved session-mechanism disagreement between two research files.
+**Overall confidence:** MEDIUM-HIGH
 
 ### Gaps to Address
-
-- **Session mechanism conflict (STACK.md vs ARCHITECTURE.md):** STACK.md recommends a server-side `Session` SQLModel table for revocability; ARCHITECTURE.md recommends Starlette's built-in `SessionMiddleware` for zero-new-dependency simplicity (explicitly accepting "no server-side revocation" as a documented trade-off). Resolve explicitly in Phase 1 planning -- both are legitimate, differ on revocability-vs-simplicity, and the roadmap should not proceed with both assumed simultaneously.
-- **LM Studio tool-calling reliability on the actual configured model:** unverified in this research session (docs confirm API shape, not empirical reliability). Handle during Phase 2 planning/execution: test the configured local model's tool-call emission before committing a demo to it; fall back to DeepSeek as default if unreliable.
-- **Python version floor conflict:** `.planning/codebase/STACK.md` documents "Python 3.8+" but `argon2-cffi` 25.1.0 (pulled transitively via `pwdlib[argon2]`) requires 3.9+. Confirm the project's actual floor in `run.py`/CI during Phase 1; either bump the documented floor or pin `argon2-cffi<25`.
-- **INV-04 conflict-check scope (tool-call-args-only vs. prose-scanning too):** not resolved by research -- this is a project-specific scope decision to make explicitly before Phase 5/6 implementation, per Moderate Pitfall 1.
-- **Global-vs-per-chat invariant precedence rule:** research confirms this must be explicit (documented pitfall) but does not prescribe which precedence direction is correct for this project -- decide during Phase 5 planning and state it in the injected system prompt itself.
+- giga vs nomic quality and prefix — run the 10-question A/B in Phases 13/14; nomic is the documented fallback.
+- giga max input and dims (card 512 tokens / 1024 dims vs GGUF 768) — measure in the spike; set chunk ceiling from it.
+- Threshold values — calibrate in Phase 15, per KB/model; consider ~5 held-out questions.
+- Embedder + chat model VRAM co-loading — document; show "загрузка модели…" in progress.
+- КонсультантПлюс noise and "(в ред. …)" annotations — regexes against real КоАП text with a golden-file test.
+- Local-LLM citation/JSON compliance — unmeasured; design tolerates failure.
+- `dialog_state` rendering in the existing memory panel — confirm during Phase 17 planning.
+- CSRF on multipart POST with cookie — apply the existing Origin allow-list to KB write routes.
+- Windows non-ASCII FAISS paths — serialize to bytes as a precaution.
 
 ## Sources
 
-### Primary (HIGH confidence)
-- [OWASP Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html) -- Argon2id minimum profile
-- [pwdlib PyPI](https://pypi.org/project/pwdlib), [argon2-cffi PyPI](https://pypi.org/project/argon2-cffi/) -- versions, Python compatibility
-- [DeepSeek API -- Function Calling / Tool Calls guides](https://api-docs.deepseek.com/guides/function_calling) -- official docs
-- [LM Studio -- Tool Use docs](https://lmstudio.ai/docs/developer/openai-compat/tools) -- official docs
-- [Memory tool - Claude Platform Docs](https://platform.claude.com/docs/en/agents-and-tools/tool-use/memory-tool), [claude-cookbooks memory_cookbook.ipynb](https://github.com/anthropics/claude-cookbooks/blob/main/tool_use/memory_cookbook.ipynb) -- official reference implementation for explicit tool-call memory
-- [Human-in-the-loop - Docs by LangChain](https://docs.langchain.com/oss/python/langchain/human-in-the-loop) -- checkpointer-based pause/resume
-- [Memory and new controls for ChatGPT (OpenAI)](https://openai.com/index/memory-and-new-controls-for-chatgpt/) -- personalization/profile pattern
-- MDN/Fetch spec behavior for `Access-Control-Allow-Origin: *` with credentials; RFC 6265 cookie scoping -- standards-based
-- Direct codebase inspection: `agent/main.py`, `agent/ws.py`, `agent/state.py`, `ui/static/app.js`, `shared/models.py`, `.planning/codebase/ARCHITECTURE.md`, `.planning/codebase/CONCERNS.md`, `.planning/PROJECT.md`
+### Primary (HIGH)
+- Local verification on Python 3.13.15 / Windows 11: faiss-cpu 1.15.1, numpy 2.5.3, pymupdf 1.28.2, pypdf 6.19.0, pypdfium2 5.13.0, python-multipart 0.0.32; extraction benchmark on `C:\Projects\RAG\*.pdf`; FAISS add/remove/search/serialize; LM Studio `/v1/embeddings`, `/api/v0/models`, `/api/v1/models/load`, `/v1/rerank` probed live (STACK.md).
+- Project code and docs: `agent/ws.py`, `agent/providers.py`, `agent/events.py`, `agent/state.py`, `agent/main.py`, `agent/context_engine.py`, `ui/supervisor.py`, `shared/*`, `tests/conftest.py`, `.planning/PROJECT.md`, `CLAUDE.md`.
 
-### Secondary (MEDIUM confidence)
-- [Introducing pwdlib -- Francois Voron](https://www.fvoron.com/blog/introducing-pwdlib-a-modern-password-hash-helper-for-python/); [fastapi/fastapi Discussion #11773](https://github.com/fastapi/fastapi/discussions/11773) -- passlib staleness
-- [Agent Memory: How to Build Agents That Learn and Remember (Letta)](https://www.letta.com/blog/agent-memory/) -- tiered memory model, vendor blog but consistent with MemGPT paper
-- [Design Patterns for Long-Term Memory in LLM-Powered Architectures -- Serokell](https://serokell.io/blog/design-patterns-for-long-term-memory-in-llm-powered-architectures); [Redis long-term memory architectures](https://redis.io/blog/long-term-memory-architectures-ai-agents/)
-- [How I Solved WebSocket Authentication in FastAPI -- DEV Community](https://dev.to/hamurda/how-i-solved-websocket-authentication-in-fastapi-and-why-depends-wasnt-enough-1b68) -- WS auth gap corroboration
-- [Race Condition with Parallel Tool Calls (LangChain Forum)](https://forum.langchain.com/t/race-condition-with-parallel-tool-calls-tool-responses-out-of-order/1112); [Parallel Tool Calls in LLM Agents: The Coupling Test](https://tianpan.co/blog/2026/04/10/parallel-tool-calls-hidden-coupling) -- sequential-execution pitfall corroboration
+### Secondary (MEDIUM)
+- Giga-Embeddings-instruct-480M-0826 model card: https://huggingface.co/ai-sage/Giga-Embeddings-instruct-480M-0826
+- LM Studio rerank feature requests: lmstudio-ai/lms#521, lmstudio-ai/docs#162, lmstudio-ai/lmstudio-js#231
+- Established RAG practice (condense-question rewrite, retrieve-then-rerank, retrieval-gated abstention, hit@k, RRF).
 
-### Tertiary (LOW-MEDIUM confidence)
-- [Memory-Induced Tool-Drift in LLM Agents (arXiv 2605.24941)](https://arxiv.org/pdf/2605.24941); [MemoryGraft (arXiv 2512.16962)](https://arxiv.org/pdf/2512.16962); [From Untrusted Input to Trusted Memory (arXiv 2606.04329)](https://arxiv.org/pdf/2606.04329) -- memory-poisoning attack patterns, recent preprints, used to justify design-time provenance considerations only
-- [Your Agent Isn't Losing Memory. It's Rotting. (DEV Community)](https://dev.to/danilgaleev/your-agent-isnt-losing-memory-its-rotting-2edd) -- used only to justify deferring summarization/decay as a v2+ concern
+### Tertiary (LOW)
+- Non-ASCII path problem in FAISS file I/O on Windows (not reproduced).
+- Torch install size on Windows (not measured).
+- Why LM Studio types the giga GGUF as `llm`; behavior when embedder and chat model are co-loaded.
 
 ---
-*Research completed: 2026-09-19*
+*Research completed: 2026-10-03*
 *Ready for roadmap: yes*

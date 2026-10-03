@@ -7,7 +7,8 @@ from typing import Any
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from agent.llm_client import llm_client
+from agent.llm_client import LLMClient, count_tokens
+from agent.providers import ProviderUnavailableError, resolve_client
 from agent import invariants, memory, profile, tasks
 from agent.tool_guard import TOOL_TRACE_HEADER  # noqa: F401  re-exported for compatibility
 from shared.database import async_session_factory
@@ -43,7 +44,7 @@ def _dict_texts(msg: dict[str, Any]) -> list[str]:
 
 def _dict_tokens(msg: dict[str, Any]) -> int:
     """Count tokens in a message dict: content plus any tool_calls name and arguments."""
-    return sum(llm_client.count_tokens(text) or 0 for text in _dict_texts(msg))
+    return sum(count_tokens(text) or 0 for text in _dict_texts(msg))
 
 
 def _message_tokens(messages: list[dict[str, Any]]) -> int:
@@ -128,9 +129,9 @@ def _parse_trace_entries(raw: str | None) -> list[dict[str, Any]]:
 def _trace_extra_tokens(entries: list[dict[str, Any]]) -> int:
     """Tokens the expanded tool_calls and tool messages add on top of the stored reply."""
     return sum(
-        (llm_client.count_tokens(entry["name"]) or 0)
-        + (llm_client.count_tokens(_replay_arguments(entry.get("arguments"))) or 0)
-        + (llm_client.count_tokens(str(entry.get("result", ""))) or 0)
+        (count_tokens(entry["name"]) or 0)
+        + (count_tokens(_replay_arguments(entry.get("arguments"))) or 0)
+        + (count_tokens(str(entry.get("result", ""))) or 0)
         for entry in entries
     )
 
@@ -160,8 +161,8 @@ def _expand_trace_message(
         for call_id, entry in zip(call_ids, entries)
     ]
     calls_tokens = sum(
-        (llm_client.count_tokens(call["function"]["name"]) or 0)
-        + (llm_client.count_tokens(call["function"]["arguments"]) or 0)
+        (count_tokens(call["function"]["name"]) or 0)
+        + (count_tokens(call["function"]["arguments"]) or 0)
         for call in tool_calls
     )
     expanded: list[dict[str, Any]] = [
@@ -170,7 +171,7 @@ def _expand_trace_message(
     tools_tokens = 0
     for call_id, entry in zip(call_ids, entries):
         content = str(entry.get("result", ""))
-        tokens = llm_client.count_tokens(content) or 0
+        tokens = count_tokens(content) or 0
         tools_tokens += tokens
         expanded.append(
             {"role": "tool", "tool_call_id": call_id, "content": content, "token_count": tokens},
@@ -179,7 +180,7 @@ def _expand_trace_message(
     if isinstance(text, str) and text.strip():
         stored = msg.get("token_count")
         if not isinstance(stored, int):
-            stored = calls_tokens + tools_tokens + (llm_client.count_tokens(text) or 0)
+            stored = calls_tokens + tools_tokens + (count_tokens(text) or 0)
         expanded.append(
             {
                 "role": "assistant",
@@ -618,15 +619,22 @@ async def compute_chat_stats(
         return {**default_stats, "error": str(exc)}
 
 
-async def _run_debounced_facts(chat_id: int, model: str) -> None:
+async def _run_debounced_facts(
+    chat_id: int, model: str, user_id: int | None = None, provider_id: int | None = None
+) -> None:
     """Wait for debounce, then extract and merge facts into settings."""
     try:
         await asyncio.sleep(FACTS_DEBOUNCE_SECONDS)
         user_message = _pending_messages.pop(chat_id, "")
         if not user_message:
             return
+        try:
+            client, _ = await resolve_client(user_id, provider_id)
+        except ProviderUnavailableError:
+            logger.info("facts_extraction_skipped", chat_id=chat_id, reason="provider_unavailable")
+            return
         async with async_session_factory() as session:
-            await _extract_facts(session, chat_id, user_message, model)
+            await _extract_facts(session, chat_id, user_message, model, client)
     except asyncio.CancelledError:
         return
     finally:
@@ -638,11 +646,12 @@ async def _extract_facts(
     chat_id: int,
     user_message: str,
     model: str,
+    client: LLMClient,
 ) -> None:
     """Call the LLM to extract facts and merge them into settings."""
     prompt = f"Extract key facts as JSON: {user_message}"
     try:
-        raw = await llm_client.complete_chat(
+        raw = await client.complete_chat(
             messages=[{"role": "user", "content": prompt}],
             model=model,
             temperature=0.0,
@@ -679,10 +688,12 @@ def extract_and_update_facts(
     chat_id: int,
     user_message: str,
     model: str,
+    user_id: int | None = None,
+    provider_id: int | None = None,
 ) -> None:
     """Schedule debounced facts extraction."""
     _pending_messages[chat_id] = user_message
     if chat_id in _debounce_tasks:
         _debounce_tasks[chat_id].cancel()
-    task = asyncio.create_task(_run_debounced_facts(chat_id, model))
+    task = asyncio.create_task(_run_debounced_facts(chat_id, model, user_id, provider_id))
     _debounce_tasks[chat_id] = task

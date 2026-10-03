@@ -1,5 +1,26 @@
 # Milestones
 
+## v2.0 Week 4: MCP Integration (Shipped: 2026-10-02)
+
+**Phases completed:** 4 phases (7, 8, 9, 12), 27 plans
+
+**Key accomplishments:**
+
+- Owner-task MCP stdio client (mcp 1.30.0) with in-memory (user_id, server_id) session registry, single handshake timeout, four fixed error codes with Russian messages, stderr tail capture and lazy liveness.
+- User-scoped `McpServerConfig` table plus a thin CRUD service with JSON args round-tripping and masked-env merge semantics, proven by 10 tests including cascade delete and engine-restart survival.
+- User-scoped MCP server REST API (CRUD, connect, disconnect, status) with 404-only ownership checks, env values never returned, auto-disconnect on edit/disable/delete, lazy liveness on list/status, and shutdown cleanup.
+- `python scripts/mcp_list_tools.py <command> [args...]` connects through the shared `connect_once_and_list`, prints serverInfo and all tools with typed/required parameters, and on failure prints code, Russian message, detail and stderr tail to stderr with exit code 1.
+- "MCP серверы" section in the Settings modal: server list with status badges, inline add/edit form with masked env, connect/disconnect, serverInfo, collapsible tool list with params and raw inputSchema JSON, and Russian error plus stderr display, all built via textContent.
+- Socket-free `run_headless_turn` that drives the existing chat tool loop through a RecordingSink, with a dispatcher allowlist limiting built-in tools to `save_long_term_memory` plus the user's MCP tools.
+- Foldable sidebar scheduler panel with create/result modals and a live /ws/events client (REST re-sync, backoff reconnect, single guarded poll timer), plus a Node-free Python JS balance check.
+- Scheduler documented in API_SPEC / ARCHITECTURE / TESTING_GUIDE; the Day 18 demo was run by Claude through Playwright (real LM Studio model + real filesystem MCP) with 28/30 first-pass checks green, both remaining FAILs being script artifacts that pass on re-check; one model-behaviour limitation accepted by the user.
+- Chats are auto-titled by the chat's own model after the first Q&A turn (non-blocking, sanitized, fallback to the first user message, race-safe conditional UPDATE, live `chat_title_updated` over `/ws/events`) — Phase 9 (Day 21).
+- "Провайдеры LLM" Settings section: user-scoped OpenAI-compatible providers with `.env`-named keys, connection check badges, provider-grouped model picker, and every LLM call (chat, self-critique, facts, titles, scheduler) routed by `provider_id` — Phase 12 (Day 21).
+
+**Carried over to v3.0:** Phase 10 (modals close only via ×) and Phase 11 (edit/delete long-term memory in UI) — planned, not executed.
+
+---
+
 ## v1.0 Week 3: Agent Memory & Task State (Shipped: 2026-09-23)
 
 **Phases completed:** 6 phases, 25 plans, 37 tasks

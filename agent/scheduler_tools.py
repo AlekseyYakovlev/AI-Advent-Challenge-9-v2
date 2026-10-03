@@ -8,7 +8,7 @@ from agent import scheduler_ops
 from agent.schedule import ScheduleValidationError, as_aware_utc
 from agent.schemas import CancelScheduledTaskArgs, ListScheduledTasksArgs, ScheduleTaskArgs
 from agent.scheduler import build_task_out
-from agent.state import current_chat_model
+from agent.state import current_chat_model, current_chat_provider_id
 from agent.tool_guard import user_asked_to_cancel
 from agent.tools import register_tool
 from shared.logger import get_logger
@@ -72,6 +72,7 @@ async def _schedule_task(
             title=args["title"],
             prompt=args["prompt"],
             model=model,
+            provider_id=current_chat_provider_id.get(),
             schedule_type=args["schedule_type"],
             delay_seconds=args.get("delay_seconds"),
             run_at=args.get("run_at"),

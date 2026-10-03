@@ -1,110 +1,182 @@
-# Stack Research
+# Technology Stack: RAG Knowledge Base (milestone v3.0, Week 5)
 
-**Domain:** Multi-user auth + tool-call-driven agent memory + task state machine, added to an existing FastAPI/SQLModel/SQLite two-process app
-**Researched:** 2026-09-19
-**Confidence:** HIGH (auth/hashing — verified via PyPI + OWASP), MEDIUM (memory storage pattern — verified via SQLModel docs + DeepSeek/LM Studio tool-calling docs), HIGH (state machine choice — verified via python-statemachine docs, decision driven by existing codebase convention)
+**Project:** AiAdventAgentV2
+**Researched:** 2026-10-03
+**Scope:** only NEW additions for RAG (indexing, retrieval, rerank/filter, upload). The existing stack is unchanged.
+**Overall confidence:** HIGH for FAISS, PDF and upload (installed and run on this machine, Python 3.13.15 / Windows 11). MEDIUM for the embedding model. See the warning below.
 
-## Recommended Stack
+## Headline findings
 
-### Core Technologies
+1. **Add only 4 packages:** `faiss-cpu`, `numpy`, `pymupdf`, `python-multipart`. Nothing else is needed. Do NOT add torch, sentence-transformers, langchain, llama-index or a vector DB.
+2. **Use PyMuPDF for PDFs, not pypdf.** Measured on the real test corpus (below), pypdf drops spaces between words, is about 30x slower on the КоАП, and misses headings.
+3. **`giga-embeddings-instruct-480m-0826` works through `/v1/embeddings`, but only after an explicit load.** LM Studio's `type: "llm"` classification breaks JIT auto-load on the embeddings endpoint. The call returns "No models loaded" until the model is loaded via `POST /api/v1/models/load`. The app already has this load path in `LMStudioClient`.
+4. **Embedding quality caveat (important for Day 22-24 reports):** in a small test on ФЗ-196, this GGUF performed worse than `text-embedding-nomic-embed-text-v1.5`, and the "Instruct:" prefix made it worse. Details and mitigation are in the Embeddings section.
+5. **LM Studio has no `/v1/rerank` endpoint.** Verified locally: it returns "Unexpected endpoint". Rerank must be done with an LLM or a heuristic, not a cross-encoder service.
 
-| Technology | Version | Purpose | Why Recommended |
-|------------|---------|---------|-----------------|
-| `pwdlib[argon2]` | 0.3.1 (PyPI, Aug 2026) | Password hashing for Auth-01/Auth-02 | Passlib (the historically "default" choice, including in FastAPI's own tutorials) is unmaintained — no active releases, and it breaks under newer `bcrypt` (4.x) releases because it probes a removed `__about__.__version__` attribute. `pwdlib` is the modern, actively maintained successor built by the FastAPI-Users author specifically to replace passlib, with a near-identical `CryptContext`-style API (`PasswordHash.recommended()` / custom hasher list) but no legacy baggage. |
-| `argon2-cffi` | 25.1.0 (transitive via `pwdlib[argon2]`) | Argon2id hashing backend | OWASP's primary recommendation in the Password Storage Cheat Sheet (2026 revision) for new applications: memory-hard, resists GPU/ASIC cracking far better than bcrypt. Use OWASP's minimum profile — `m=19456 KiB (19 MiB), t=2, p=1` — via `Argon2Hasher(memory_cost=19456, time_cost=2, parallelism=1)`; `pwdlib`'s `recommended()` preset already tracks OWASP guidance so the explicit params are only needed if you want to pin them. |
-| Stdlib `secrets` + `hashlib` | Python stdlib | Session token generation and storage | `secrets.token_urlsafe(32)` for the cookie value, `hashlib.sha256(token).hexdigest()` for the value stored in the DB (never store the raw token — treat it like a password). Zero new dependencies; the existing code style (`shared/database.py`, `agent/state.py`) already favors stdlib over frameworks wherever stdlib suffices. |
-| Server-side `Session` table (new SQLModel model) | — | Backing store for Auth-03 | Do **not** use Starlette's built-in `SessionMiddleware` (see "What NOT to Use"). Instead add a `Session` SQLModel table (`token_hash`, `user_id` FK, `created_at`, `expires_at`, `last_seen_at`) in `shared/models.py`, following the exact same pattern as `Chat`/`Message`/`Settings` — async SQLAlchemy queries, cascade delete on user removal. A dependency (`get_current_user`) looks up the hashed cookie value on every request; missing/expired → 401. This single pattern serves **both** REST (FastAPI `Depends`) and WebSocket (manual cookie read in `agent/ws.py::ws_chat`, since WS handshakes don't run through normal `Depends` the same way) — satisfying Auth-03's "valid for both REST and WebSocket" requirement without inventing a second auth mechanism. |
+## Recommended Stack (additions)
 
-### Supporting Libraries
+### Vector search
+| Technology | Version | Purpose | Why |
+|------------|---------|---------|-----|
+| faiss-cpu | 1.15.1 (`pip download` succeeded: `faiss_cpu-1.15.1-cp313-cp313-win_amd64.whl`, 16 MB) | Vector index | cp313 win_amd64 wheel exists. Verified in this environment: IndexIDMap2, remove_ids, serialize, write_index all work. Required by the course assignment. |
+| numpy | >=2.0 (2.5.3 resolved; faiss-cpu pulls it in) | float32 arrays for FAISS | Required by the FAISS Python API. Pin it explicitly as `numpy>=2.0`. |
 
-| Library | Version | Purpose | When to Use |
-|---------|---------|---------|-------------|
-| SQLModel `Column(JSON)` (already a dependency — SQLModel 0.0.22+/SQLAlchemy 2.x) | existing | Structured payload storage for MEM-01–MEM-04 memory layers | Add two new tables, not one polymorphic "memory" table: `WorkingMemoryItem` (scoped to `chat_id` + optional `task_id`, cleared/superseded as a task completes) and `LongTermMemoryItem` (scoped to `user_id`, persists across chats). Each row: typed columns for what you need to query/index (`key: str`, `category: str`, `chat_id`/`user_id`, `created_at`, `source="tool_call"`), plus one `value: dict = Field(sa_column=Column(JSON))` for the actual tool-call payload. This mirrors the existing `Settings.facts_json` pattern already in the codebase (`agent/context_engine.py`) — don't invent a new persistence style. |
-| Pydantic 2.9+ `model_json_schema()` (already a dependency) | existing | Generating OpenAI-style tool/function schemas for MEM-03, TASK-03 | Define one Pydantic model per tool (e.g. `SaveLongTermMemory(key: str, category: str, value: dict)`, `CreateTask(title: str, description: str)`), then derive the JSON schema FastAPI already validates with, via `.model_json_schema()`, and hand it to the `tools` array in the chat-completion request body in `agent/llm_client.py`. Both backends confirm OpenAI-compatible tool calling: DeepSeek's `deepseek-chat` (V3) fully supports the `tools`/`tool_calls` format, and LM Studio (since 0.3.6) exposes the same OpenAI-compatible Tool Use API for any loaded model that supports it. No new HTTP/tool-calling library needed — this is an additive JSON payload on the existing SSE streaming call. |
-| — | — | — | **SSE + tool-calls gotcha to design for up front:** in streaming mode, `tool_calls` arrive as fragmented deltas (the `arguments` string is chunked across SSE events, keyed by `index`) rather than one complete JSON blob — `agent/llm_client.py::stream_chat` will need to accumulate tool-call argument fragments by index before parsing, the same way it already accumulates `assistant_text`. This is a `llm_client.py` implementation detail, not a new dependency, but it's easy to miss and worth flagging for phase planning. |
+**Index type: `faiss.IndexIDMap2(faiss.IndexFlatIP(dim))` with L2-normalized vectors (cosine via inner product).**
+- Corpus size: the КоАП is about 3.7M chars. At roughly 1000-1500 chars per chunk that is 2.5-4k chunks, plus the ФЗ-196. That is under 10k vectors.
+- Exact search over 5000x768 vectors took about 0.8 ms. IVF/HNSW add training or tuning complexity and approximate recall for no gain at this scale. Do not use IVF.
+- `IndexIDMap2` (not `IndexIDMap`) supports `remove_ids` and `reconstruct`. Verified: `remove_ids` on 1000 of 5000 vectors returned 1000 removed and `ntotal=4000`. Note that `remove_ids` on a flat index is O(n), which is fine here.
+- Use the SQLite `chunk.id` (int64 primary key) as the FAISS id with `add_with_ids`. This gives a clean join from FAISS hits to chunk text and metadata.
 
-### Development Tools
+**Persistence and KB layout.**
+- Recommended: **one FAISS index file per KB** at `data/kb/{kb_id}.faiss`, plus SQLite tables for KBs, documents and chunks.
+- Deleting a KB then means deleting one file plus the SQLite rows (cascade). This avoids `remove_ids` entirely and keeps deletion trivially correct.
+- Store text and metadata in SQLite, not in FAISS. Store only vectors in FAISS. The FAISS file is a derived artifact and can be rebuilt from SQLite chunk rows if embeddings are also stored (optional `BLOB` column).
+- Use `faiss.serialize_index()` / `deserialize_index()` and write the bytes yourself with pathlib. This avoids FAISS C++ file I/O, which is known to mishandle non-ASCII Windows paths (not reproduced here because the user path is ASCII; this is a precaution). `write_index` and `read_index` also worked here.
+- FAISS calls are synchronous CPU work. Wrap `index.search` and `add_with_ids` in `asyncio.to_thread`, per the project's all-I/O-async rule. Keep an in-memory `dict[kb_id, Index]` cache in `agent/state.py` and evict it in `cleanup_chat_caches`-style cleanup on KB delete.
+- Searching several KBs: loop over the per-KB indexes and merge by score. This is simple at this scale.
 
-| Tool | Purpose | Notes |
-|------|---------|-------|
-| None new | — | No linter/formatter/type-checker is configured in this repo today (confirmed in `.planning/codebase/STACK.md`) — this research does not introduce one; stay consistent with the existing "no build tooling" convention unless the user asks for it separately. |
+### PDF extraction
+| Technology | Version | Purpose | Why |
+|------------|---------|---------|-----|
+| pymupdf | 1.28.2 (cp313 wheel, installed OK) | Text extraction per page | Fast, accurate spacing, no external binaries |
+
+**Measured on `C:\Projects\RAG` (this machine):**
+
+| Metric | pypdf 6.19.0 | PyMuPDF 1.28.2 |
+|--------|--------------|----------------|
+| ФЗ-196 (45 pages), time | 0.8 s | 0.1 s |
+| КоАП (875 pages), time | 90.6 s | 2.8 s |
+| ФЗ-196 text quality | words glued together: "Статья2.Основныетермины" | "Статья 2. Основные термины" |
+| КоАП text quality | newline after almost every token in some pages ("Федеральным\n \nзаконом\n \nот") | clean lines |
+| "Статья N." headings detected, ФЗ-196 | 20 | 34 |
+| "Глава N." headings detected, ФЗ-196 | 0 | 8 |
+| КоАП: статей / глав | 1138 / 32 | 1138 / 32 |
+
+pypdf is therefore unsuitable. It breaks the Статья/Глава regex on ФЗ-196, and it would block the event loop for 90 s on the КоАП.
+
+- **License caveat:** PyMuPDF is AGPL-3.0 (or commercial). This is a local coursework app that is not distributed, so this is acceptable. If this ever matters, the drop-in permissive alternative is **pypdfium2** (BSD/Apache, 5.13.0). It was tested here: 0.1 s on ФЗ-196, correct spacing, but it uses `\r\n` line endings, so normalize them. Do not use pdfplumber (pdfminer-based, slow like pypdf, adds Pillow/cryptography). I did not benchmark it on the КоАП.
+- Run extraction in `asyncio.to_thread`. It is CPU-bound, though 3 s for the КоАП is tolerable.
+- Add plain `.txt` and `.md` support with no extra libraries (decode as UTF-8, fall back to cp1251).
+
+**Structure detection: plain `re`, no library.**
+- Per-line regexes with `re.M`:
+  - `^Статья\s+(\d+(?:\.\d+)*)\.\s*(.*)$` (handles "Статья 1.1." and "Статья 12.3").
+  - `^Глава\s+([\dIVXLC]+(?:\.\d+)?)\.\s*(.*)$`.
+  - Optionally `^Раздел\s+[IVXLC\d]+\.`.
+- Section = Глава (parent) > Статья. Store `section` as "Глава 12 > Статья 12.9" in chunk metadata.
+- Known cases to handle:
+  - The Глава title often sits on the next line.
+  - Strip page headers/footers and consultant-style footer lines that repeat per page (the КоАП is a ConsultantPlus-style export). Detect lines repeated on more than N pages and drop them.
+  - Do not anchor regexes with `\s*` before "Статья", which would match in-text references like "см. статью 2".
+  - The same regexes work after PyMuPDF; the 4 rows above give the evidence.
+- Long articles (a КоАП article can exceed 500 tokens) must be sub-split with overlap, keeping the article header on each piece. See the embeddings section on the token limit.
+
+### Embeddings (via the existing httpx + LM Studio setup, no new package)
+Do NOT add the `openai` SDK. Extend `agent/llm_client.py` with `async def embed(texts, model) -> np.ndarray` that POSTs `{base}/v1/embeddings` with `{"model": id, "input": [..]}`, mirroring `_post_chat_completion`.
+
+Verified behavior (this machine, LM Studio running):
+- Both models return **L2-normalized** vectors (norm about 1.0). Still call `faiss.normalize_L2` defensively, because it is cheap and protects against other models.
+- Batching: `input` as a list works. 32 texts of about 300 tokens took 2.5 s. Use batches of 16-32 with a per-request timeout of about 120 s and bounded concurrency of 1 (single local GPU/CPU). The КоАП (about 3k chunks) is about 4-6 minutes. This must be a **background job with progress** (poll or WebSocket), not a blocking request.
+- `usage` returns `prompt_tokens: 0`, so use tiktoken for token estimates.
+- `giga-embeddings-instruct-480m-0826`: `GET /api/v0/models` says `type: "llm"`, `arch: qwen3`, `quantization: Q8_0`, max context 8192.
+  - `POST /v1/embeddings` returned "No models loaded" when the model was not loaded. After `POST /api/v1/models/load {"model": ...}` (3 s) it returned 768-dim vectors.
+  - Nomic (`type: "embeddings"`, 768-dim) JIT-loads fine.
+  - Integration: before indexing or querying, ensure the embedding model is loaded (call the existing load path under `model_switch_lock`). A load request for an embedding model will evict or compete with the chat model if VRAM is tight. Document this.
+  - The embedding dropdown cannot filter on `type == "embeddings"` only, or giga disappears. Show `type == "embeddings"` plus an allowlist or name match for `embed` and `giga`, or let the user pick any LM Studio model.
+- **Dimension:** store `dim` and the model id per KB. Reject a query against a KB built with a different embedding model, because mixing models silently produces garbage.
+
+**Discrepancies and quality warning (MEDIUM-LOW confidence, needs validation in the Day 21 phase):**
+- The official HF card for Giga-Embeddings-instruct-480M-0826 says: dimension **1024**, mean pooling + L2 norm, max sequence **512 tokens**, queries use `Instruct: {task}\nQuery: {text}`, documents get no prefix (source: https://huggingface.co/ai-sage/Giga-Embeddings-instruct-480M-0826).
+- The LM Studio copy (publisher `rad0main`, arch `qwen3`) returns **768** dims. It is a community GGUF conversion and may not be equivalent to the official model.
+- Mini test on ФЗ-196 (26 article-level chunks, 3 questions with a known gold article, then 1 without), ranking by cosine:
+  - giga **with** the Instruct prefix: gold article not in the top 3 for questions 1 and 2. Article 1 ranked first on every question (a "hub" effect).
+  - giga **plain (no prefix)**: gold in top 3 for 2 of 3 (articles 2 and 30), but still wrong for the medical question.
+  - nomic with `search_query:` / `search_document:` prefixes: gold in the top 3 for 3 of 3 (the medical-exam question hit article 23 at rank 1).
+  - This is only 3-4 queries on truncated text. It is a signal, not a benchmark.
+- **Recommendation:**
+  - Keep giga as the default, as the assignment demands.
+  - Make the query prefix and document prefix **per-model configurable** (a small dict keyed by model id: giga = no prefix by default; nomic = `search_query: ` / `search_document: `; unknown = none).
+  - Cap chunk size at about 400 tokens (about 1200-1500 chars of Russian) for giga, because of the 512-token limit on the official model.
+  - Plan the Day 22/23 comparison report to include an embedding-model A/B (giga vs nomic) on the 10 control questions. Nomic is a ready fallback that JIT-loads with no extra setup.
+- Do not hand-roll a `lms` CLI step. The HTTP load endpoint is already used by the app.
+
+### Reranking / relevance filtering
+| Option | Verdict | Cost |
+|--------|---------|------|
+| Similarity threshold + top-K (before/after) | **Primary, Day 23-24.** Required anyway for the "не знаю" behavior. | 0 deps |
+| Lexical rerank (BM25 or term-overlap on query tokens vs chunk, fused with cosine via a weighted sum or RRF) | **Recommended heuristic rerank.** Russian legal text has strong exact-term signals (article numbers, "штраф", "лишение права"). Implement about 30 lines in pure Python: lowercase, `re.findall(r"\w+")`, simple suffix truncation (stem-lite). Do not add `rank-bm25` or `pymorphy3`. | 0 deps |
+| LLM-as-reranker (existing `complete_chat_detailed`, ask for a 0-10 relevance score per candidate as JSON, top 8-10 candidates, `temperature=0`) | **Recommended as the "separate model" variant.** Reuses the DeepSeek or LM Studio plumbing. Batch all candidates in a single prompt to limit latency. | 0 deps; one extra LLM call per query |
+| Query rewrite (LLM call to expand or rephrase before embedding) | Same mechanism as above: `complete_chat`. | 0 deps |
+| Cross-encoder via sentence-transformers (`sentence-transformers` 6.1.0) | **Do NOT add.** It pulls torch (hundreds of MB to GB on Windows), which violates the spirit of the lightweight local-first constraint. I did not install it to measure the exact size. | high |
+| LM Studio-hosted reranker (bge-reranker-v2-m3 GGUF) | **Not possible today.** LM Studio has no `/v1/rerank` endpoint; confirmed locally ("Unexpected endpoint or method") and via open feature requests (lmstudio-ai/lms#521, lmstudio-ai/docs#162). LM Studio maps rerank GGUFs to the embeddings interface incorrectly (lmstudio-js#231). | n/a |
+
+Where the Day 23 spec allows "similarity threshold / separate model / heuristic", the plan is: threshold filter (primary) + lexical-fusion rerank (heuristic) + optional LLM scoring (separate model). That covers all three with zero new dependencies.
+
+### Upload
+| Technology | Version | Purpose | Why |
+|------------|---------|---------|-----|
+| python-multipart | 0.0.32 (already installed here as an indirect dependency, probably via `mcp`) | FastAPI `UploadFile` / `Form` multipart parsing | FastAPI refuses to start routes using `Form`/`File` without it. **Pin it explicitly** in `requirements.txt` so it is not a hidden transitive dependency. |
+
+- Endpoint shape: `POST /api/v1/knowledge-bases` as `multipart/form-data` with `files: list[UploadFile] = File(...)` and `Form` fields: `name`, `strategy`, `chunk_size`, `chunk_overlap`, `embedding_model`.
+- The КоАП PDF is 10 MB. Starlette spools uploads to temp files, so memory is fine. `await file.read()` then pass bytes to `asyncio.to_thread(extract)`. Alternatively, the user's PDFs live at a local path, so the endpoint can also accept server-side paths. Prefer upload because the UI spec says "file picker".
+- Do not accept arbitrary file paths from the client (path traversal). Use the filename only as display metadata and keep the stored name server-generated.
+- Return `202` plus a job id for indexing and show progress. A one-shot blocking request of 5 minutes will hit browser and proxy limits.
+- Frontend: a plain `<input type="file" multiple accept=".pdf,.txt,.md">` and `FormData` with `fetch`. No library. The WebSocket and cookie auth model is unchanged. Remember that the fetch must not set `Content-Type` manually.
+
+## Alternatives Considered
+
+| Category | Recommended | Alternative | Why Not |
+|----------|-------------|-------------|---------|
+| Vector store | faiss-cpu `IndexFlatIP` + `IndexIDMap2` + SQLite | chromadb / lancedb / sqlite-vec | The assignment explicitly says FAISS + SQLite. The others add dependencies or a server. At under 10k vectors, brute-force is the right answer. |
+| FAISS index type | Flat | IVF / HNSW | Needs training or tuning, no speedup at this scale, and IVF removal semantics are more awkward. |
+| PDF | pymupdf | pypdf | Measured: no spaces, 30x slower, misses headings. |
+| PDF | pymupdf | pypdfium2 | Permissive license, equally good in a quick test; pick it only if AGPL is a concern. |
+| PDF | pymupdf | pdfplumber | Slow, heavier, no quality gain for plain-text PDFs. |
+| Embedding client | httpx (existing) | `openai` SDK | A new dependency for a single POST. |
+| Reranker | lexical fusion + LLM scoring | sentence-transformers cross-encoder | Torch weight. |
+| Chunking | hand-written (about 60 lines) | langchain text splitters | Heavy dependency tree; the structure-aware splitter needs custom regexes anyway. |
+| Tokenizer for chunk size | tiktoken (existing, `cl100k_base`) | model-specific tokenizer | Only an approximation for the Qwen3-based giga tokenizer. Cyrillic tokenizes worse than English in cl100k, so cl100k over-counts. Use a conservative size (about 400 cl100k tokens, or characters) to stay inside 512. |
 
 ## Installation
 
 ```bash
-# Auth / password hashing
-pip install "pwdlib[argon2]==0.3.1"
-
-# No new packages needed for:
-# - session tokens (stdlib secrets/hashlib)
-# - memory storage (SQLModel/SQLAlchemy JSON columns — already a dependency)
-# - tool-call schemas (Pydantic model_json_schema — already a dependency)
-# - task state machine (hand-rolled — see below; zero new dependency)
+# requirements.txt additions (new section: RAG, Week 5)
+faiss-cpu>=1.13,<2      # 1.15.1 verified on Windows / cp313
+numpy>=2.0              # required by faiss; float32 vector arrays
+pymupdf>=1.26           # 1.28.2 verified; PDF text extraction (AGPL, local use)
+python-multipart>=0.0.20  # 0.0.32 present; required for UploadFile/Form
 ```
 
-Pin `pwdlib[argon2]==0.3.1` in `requirements.txt` alongside the existing pinned versions (project convention per `.planning/codebase/STACK.md`: "uses requirements.txt with pinned versions").
+```bash
+pip install faiss-cpu numpy pymupdf python-multipart
+```
 
-## Alternatives Considered
+No dev dependencies are needed. For tests, use `respx` (existing) to mock `/v1/embeddings` with deterministic vectors. FAISS and PyMuPDF run for real in tests, and a tiny generated PDF can come from `pymupdf` itself.
 
-| Recommended | Alternative | When to Use Alternative |
-|-------------|-------------|--------------------------|
-| `pwdlib[argon2]` | `passlib[bcrypt,argon2]` | Never for new code — unmaintained, actively broken by `bcrypt>=4.1` (passlib probes a `__about__.__version__` attribute bcrypt removed), and known to stop working under Python 3.13+. Only relevant if migrating an *existing* passlib-hashed user table (`pwdlib` doesn't read passlib's hash format out of the box). |
-| `pwdlib[argon2]` | Raw `argon2-cffi` (no wrapper) | Fine if you don't want any abstraction layer at all — `pwdlib` is a thin wrapper (hasher selection, upgrade-on-verify), not a heavy framework, so this is a "which thin layer" choice, not "wrapper vs no wrapper." Recommended `pwdlib` mainly for the built-in multi-hasher fallback (useful if you ever add bcrypt as a legacy-verify path). |
-| Server-side `Session` table + opaque cookie | Starlette `SessionMiddleware` (`itsdangerous`-signed, client-side cookie) | Only for read-mostly, low-sensitivity session data where you're fine with *no server-side revocation* (a stolen/leaked signed cookie stays valid until it expires — you cannot force-invalidate a single session). Given Auth-02 (any user can create new accounts) and Auth-04 (all data scoped to `user_id`), you want the ability to invalidate a session (e.g. account changes) — that requires server-side state, which `SessionMiddleware` doesn't provide. |
-| Hand-rolled `Enum` + transition-table dict for the task FSM | `python-statemachine` (3.2.1, pure-Python, zero hard dependencies) | Reach for `python-statemachine` if the state graph grows past the current 4 linear states + pause/resume (e.g. once TASK-03's "future delegation to subagents" actually lands and states become hierarchical/parallel). It has real advantages worth knowing about: transitions are validated for structural consistency at class-definition time (typos in the transition table become import-time errors, not runtime bugs), it raises a distinct `TransitionNotAllowed` exception (maps directly to TRANS-02's "clear, explainable rejection"), and it has first-class **history pseudo-states** — built specifically for "paused, then resumed into whatever state it was in before" (TASK-04), which is exactly the resume-without-re-explaining-context requirement. It's not overkill in dependency-weight terms (pure Python, no transitive deps) — the reason to *not* default to it now is scope, not weight: 4 states is small enough that a `dict[TaskState, set[TaskState]]` plus one `TaskStateTransition` log table is fully transparent, easy to unit test exhaustively (all 4×4=16 pairs), and matches this codebase's existing convention of doing things directly rather than through a library (deterministic slicing in `context_engine.py`, hand-written tree walks instead of an ORM graph library, etc.). If Day 13+ scope discussion reveals the pause/resume history requirement is non-trivial (e.g. resuming needs to restore more than "last state," like partial validation results), revisit — `python-statemachine`'s history states would remove real hand-rolled complexity at that point. |
-| Hand-rolled FSM | `transitions` (pytransitions) | Not recommended over `python-statemachine` if you do pick a library — `transitions` does not validate transition-table consistency at definition time (typos fail silently or at run time instead), which is a worse fit for TRANS-01/TRANS-02's "explicit, enforced, explainable" requirement. |
+## Integration points
 
-## What NOT to Use
+- `agent/llm_client.py`: add `embed()` using the same httpx pattern. Provider selection for embeddings is LM Studio only. DeepSeek has no embeddings endpoint, so the embedding dropdown lists only LM Studio models (consistent with the provider-grouped picker).
+- `shared/models.py`: new SQLModel tables `KnowledgeBase`, `KbDocument`, `KbChunk` (id, kb_id, document_id, chunk_index, text, section, source, char range, token count). Use `user_id` scoping, and `sa_column=Column(ForeignKey(..., ondelete="CASCADE"))` for cascade, per project convention. Index files live outside SQLite, so delete them in the delete handler and clear the in-memory index cache in `agent/state.py`.
+- New module (for example `agent/rag/`): `extract.py` (PyMuPDF), `chunking.py` (fixed + structure), `embeddings.py`, `index.py` (FAISS wrapper, `to_thread`), `retrieve.py`, `rerank.py`.
+- Windows gotcha for all scratch scripts and logging: set `PYTHONIOENCODING=utf-8` or the console will raise `UnicodeEncodeError` on Cyrillic. Not an issue inside the app, because structlog output is JSON, but keep `ensure_ascii=False` in mind for debug output.
+- Use `faiss.normalize_L2` on a C-contiguous `float32` array. Passing a float64 array raises an error.
+- Concurrency: guard index write and rebuild per KB with an `asyncio.Lock` (same pattern as `chat_locks`). The embedding load must go through the existing `model_switch_lock`.
 
-| Avoid | Why | Use Instead |
-|-------|-----|--------------|
-| `fastapi-users` | Full-featured multi-backend auth framework (OAuth, JWT, email verification, RBAC, routers) — all of which is out of scope per `PROJECT.md` ("OAuth / external identity providers" and "fine-grained roles" are explicitly Out of Scope; every user is "admin"). Pulling it in for a single-role, cookie-only app means fighting its opinionated router/dependency structure to get the one narrow thing you need. | Hand-rolled `Session` SQLModel table + a `get_current_user` FastAPI dependency, ~80-120 lines total — matches the app's existing "small, explicit, stdlib-first" style. |
-| `passlib` (any hasher) | Unmaintained; breaks under `bcrypt>=4.1`; will not survive a future Python 3.13+ upgrade without patching. Do not add it even though FastAPI's own tutorial still references it — that tutorial is known-stale on this point. | `pwdlib[argon2]` |
-| Starlette `SessionMiddleware` | Client-side signed cookie — all session data lives in the cookie itself (size-limited, cannot be revoked server-side, and mixes "session" concerns with the app's actual per-user data model). Also encourages putting `user_id` *and* arbitrary session data straight in a cookie value, which is a bad habit once profiles/memory get more complex. | Opaque random token cookie + server-side `Session` table (see Core Technologies) |
-| JWT in a cookie or `localStorage` | `PROJECT.md` explicitly constrains this to "HTTP-only session cookie (not JWT/localStorage)." JWTs stored client-side can't be revoked before expiry and add unneeded complexity (claims, signing keys, expiry skew) for a single-deployment, no-external-consumer app. | Opaque session token, as above |
-| `langchain` / `instructor` / `pydantic-ai` for tool-call orchestration | These wrap the LLM call itself (their own streaming/session abstractions), which would fight the existing hand-written SSE streaming in `agent/llm_client.py::stream_chat` rather than extend it — you'd end up maintaining two competing streaming code paths. Also large dependency surfaces for what's a straightforward "add a `tools` array + parse `tool_calls` deltas" change. | Pydantic `model_json_schema()` to build tool defs, plain `tools=[...]` in the existing httpx request payload, manual delta accumulation in `stream_chat` (same pattern already used for `assistant_text`) |
-| A single polymorphic `Memory` table with a `layer` enum column covering all three tiers | MEM-02 requires long-term and working memory to be in **dedicated** tables (not folded together), and short-term is explicitly *the message tree itself* (no new storage). A single `Memory` table with a `layer` discriminator re-creates the "everything in one undifferentiated store" anti-pattern the milestone is designed to avoid (see `PROJECT.md`'s Core Value). | Two dedicated tables: `WorkingMemoryItem`, `LongTermMemoryItem` |
+## What NOT to add
 
-## Stack Patterns by Variant
-
-**If the pause/resume requirement (TASK-04) turns out to need more than "resume to last known state":**
-- Switch the task FSM from hand-rolled to `python-statemachine` 3.2.1
-- Because its history pseudo-states solve "resume into whatever state/sub-state a task was in" natively, instead of you hand-rolling a `paused_from_state` column and re-deriving allowed-next-transitions manually
-
-**If the app is ever deployed behind HTTPS (not `localhost` dev):**
-- Set the `Session` cookie's `secure=True` (only send over TLS) and keep `samesite="lax"`
-- Because in local dev over plain `http://localhost`, `secure=True` would silently prevent the cookie from ever being set — gate this off a `COOKIE_SECURE` setting in `shared/config.py` (mirrors how `DEEPSEEK_API_KEY`/`LM_STUDIO_BASE_URL` are already environment-driven), defaulting to `False` for local dev
-
-**If both UI (port 8000) and Agent (port 8001) need the same session cookie (they do, per Auth-03):**
-- Set the cookie without a `Domain` attribute (host-only, defaults to `localhost`) and without a `Path` restriction narrower than `/`
-- Because cookie scoping in browsers is host+path based, not port based — a cookie set for `localhost` is sent to both `localhost:8000` and `localhost:8001` automatically, so the existing two-port split needs no special cross-port cookie relay logic
-
-## Version Compatibility
-
-| Package A | Compatible With | Notes |
-|-----------|------------------|-------|
-| `pwdlib[argon2]==0.3.1` | Python 3.9+ (matches existing FastAPI/SQLModel floor) | `argon2-cffi` 25.1.0 (pulled in transitively) dropped Python 3.7 support; confirm the project's actual Python floor in `run.py`/CI before pinning — `.planning/codebase/STACK.md` lists "Python 3.8+" as the documented floor, which would conflict with `argon2-cffi` 25.1.0's floor. If the project truly still supports 3.8, pin `argon2-cffi<25` explicitly; otherwise bump the documented floor to 3.9+ as part of this milestone. |
-| `python-statemachine==3.2.1` (if adopted later) | Python 3.9–3.14, zero hard runtime dependencies | Safe to add at any point without a dependency-resolution fight — it doesn't pull in anything that could collide with FastAPI/SQLModel/Pydantic/SQLAlchemy pins. |
-| SQLModel JSON columns | SQLite (existing engine) | SQLite's `JSON` column type is stored as `TEXT` under the hood with SQLite's built-in JSON1 functions (`json_extract`, etc.) available for future querying — no extension/pragma needed, works today with the existing `aiosqlite` driver and `PRAGMA` set already in `shared/database.py`. |
-| `pwdlib` password hashes | Existing `Settings`/`Chat`/`Message` tables | No interaction — password hashes live only in the new `User` table; no schema coupling to existing models beyond adding `user_id` FKs per Auth-04. |
+- torch / sentence-transformers / transformers
+- langchain / llama-index / haystack
+- chromadb / qdrant / lancedb / sqlite-vec
+- `openai` SDK
+- `rank-bm25`, `pymorphy3`, `nltk` (use the 30-line heuristic)
+- Celery or any queue for indexing; use an `asyncio.create_task` background job with an in-memory progress dict (consistent with the existing in-process state pattern)
+- Any npm or bundled frontend library for upload
 
 ## Sources
 
-- [pwdlib PyPI](https://pypi.org/project/pwdlib) — version 0.3.1, Aug 2026 release, argon2/bcrypt extras — HIGH confidence
-- [pwdlib guide (frankie567.github.io)](https://frankie567.github.io/pwdlib/guide/) — API shape (`PasswordHash.recommended()`, multi-hasher construction) — HIGH confidence
-- [Introducing pwdlib — François Voron](https://www.fvoron.com/blog/introducing-pwdlib-a-modern-password-hash-helper-for-python/) — rationale for replacing passlib — MEDIUM confidence (author's own blog, cross-checked against PyPI discussion)
-- [passlib seems not maintained anymore — fastapi/fastapi Discussion #11773](https://github.com/fastapi/fastapi/discussions/11773) — confirms passlib staleness and FastAPI docs known-stale reference — MEDIUM confidence
-- [argon2-cffi PyPI](https://pypi.org/project/argon2-cffi/) — version 25.1.0, Python 3.13/3.14 support, dropped 3.7 — HIGH confidence
-- [OWASP Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html) — Argon2id `m=19456,t=2,p=1` minimum profile — HIGH confidence (authoritative source)
-- [itsdangerous PyPI](https://pypi.org/project/itsdangerous/) — version 2.2.0, Apr 2024 (used by Starlette `SessionMiddleware`, confirmed NOT recommended here) — HIGH confidence
-- [python-statemachine PyPI](https://pypi.org/project/python-statemachine/) — version 3.2.1, Aug 2026 — HIGH confidence
-- [python-statemachine async support docs](https://python-statemachine.readthedocs.io/en/latest/async.html) — async engine auto-selection, relevant if FSM transitions are awaited from `agent/ws.py` — MEDIUM confidence
-- [python-statemachine — Coming from pytransitions](https://python-statemachine.readthedocs.io/en/v3.0.0/how-to/coming_from_transitions.html) — structural validation vs `transitions` library — MEDIUM confidence
-- [DeepSeek API — Function Calling guide](https://api-docs.deepseek.com/guides/function_calling) — confirms `tools`/`tool_calls` OpenAI-compatible support on `deepseek-chat` (V3) — HIGH confidence (official docs)
-- [LM Studio — Tool Use docs](https://lmstudio.ai/docs/developer/openai-compat/tools) — confirms OpenAI-compatible Tool Use API since LM Studio 0.3.6 — HIGH confidence (official docs)
-- [SQLModel JSON Fields discussion #1925](https://github.com/fastapi/sqlmodel/discussions/1925) — `Field(sa_column=Column(JSON))` pattern — MEDIUM confidence (community-verified pattern, consistent with existing `Settings.facts_json` in this codebase)
-- `.planning/codebase/STACK.md`, `.planning/codebase/ARCHITECTURE.md` — existing app conventions (FastAPI/SQLModel/SQLAlchemy 2.x async, structlog, pydantic-settings, `Settings.facts_json` JSON pattern, no build tooling) — HIGH confidence (primary source, already-verified project state)
-
----
-*Stack research for: multi-user auth + agent memory + task state machine, added to AiAdventAgentV2*
-*Researched: 2026-09-19*
+- Local verification (HIGH): `pip download` and install of faiss-cpu 1.15.1 (cp313 win_amd64), numpy 2.5.3, pymupdf 1.28.2, pypdf 6.19.0, pypdfium2 5.13.0, python-multipart 0.0.32 on Python 3.13.15. Extraction benchmark on `C:\Projects\RAG\*.pdf`. FAISS add, remove, search, serialize and write/read tested. LM Studio `/v1/embeddings`, `/api/v0/models`, `/api/v1/models/load` and `/v1/rerank` probed live.
+- Giga-Embeddings-instruct-480M-0826 model card (MEDIUM, official but does not describe the LM Studio GGUF): https://huggingface.co/ai-sage/Giga-Embeddings-instruct-480M-0826
+- Giga-Embeddings-instruct family and prefix format (MEDIUM): https://huggingface.co/ai-sage/Giga-Embeddings-instruct
+- LM Studio rerank feature requests (MEDIUM; consistent with the local probe): https://github.com/lmstudio-ai/lms/issues/521 , https://github.com/lmstudio-ai/docs/issues/162 , https://github.com/lmstudio-ai/lmstudio-js/issues/231
+- Not verified by me (LOW): the non-ASCII path problem in FAISS file I/O on Windows. This comes from training knowledge and was not reproduced, so the byte-serialization advice is a precaution. Torch install size on Windows was not measured.
+- Not done: Context7 library lookups (the faiss API used here was exercised directly instead). No retrieval benchmark beyond the 4-question mini test, so the embedding model comparison needs a proper 10-question evaluation during the phase.

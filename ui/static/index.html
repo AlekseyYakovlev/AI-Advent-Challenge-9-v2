@@ -164,6 +164,18 @@
                     <div id="scheduler-list" class="space-y-2 mt-2"></div>
                 </div>
             </div>
+            <div id="kb-panel" class="border-t border-slate-800 p-3 text-xs text-slate-400 overflow-y-auto max-h-72">
+                <h3 class="text-slate-300 font-semibold mb-2 flex items-center justify-between">
+                    <span>База знаний <span id="kb-count" class="text-white font-semibold">0</span></span>
+                    <button type="button" data-fold-toggle="kb-panel-body" aria-expanded="false"
+                        title="Свернуть/развернуть" class="text-slate-400 hover:text-white">▸</button>
+                </h3>
+                <div id="kb-panel-body" class="hidden">
+                    <button type="button" id="btn-kb-new"
+                        class="w-full rounded-lg bg-indigo-600 hover:bg-indigo-500 px-4 py-2 text-sm font-semibold transition">+ Новая база знаний</button>
+                    <div id="kb-list" class="space-y-2 mt-2"></div>
+                </div>
+            </div>
             <div id="agent-status" class="p-3 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
                 <span>Agent: <span id="agent-status-text">подключение…</span></span>
                 <button id="btn-logout"
@@ -176,9 +188,15 @@
 
         <!-- Main -->
         <main class="flex-1 flex flex-col min-w-0">
-            <header class="flex items-center gap-3 px-4 py-3 border-b border-slate-800 bg-slate-900/50">
+            <header class="flex flex-wrap items-center gap-3 px-4 py-3 border-b border-slate-800 bg-slate-900/50">
                 <div class="flex-1 min-w-0">
                     <h1 id="chat-title" class="text-lg font-semibold truncate">AI Agent</h1>
+                </div>
+                <div class="flex items-center gap-2 flex-wrap">
+                    <span id="rag-badge" class="hidden md:inline-flex rounded-full bg-slate-800 border border-slate-700 px-2 py-0.5 text-xs text-slate-300 max-w-[12rem] truncate">без RAG</span>
+                    <button id="rag-toggle" type="button" role="switch" aria-checked="false" disabled class="rounded-lg px-3 py-1.5 text-sm border bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed" title="Выберите базу знаний">без RAG</button>
+                    <select id="rag-kb-select" aria-label="База знаний для RAG" disabled class="rounded-lg bg-slate-800 border border-slate-700 px-3 py-1.5 text-sm max-w-[12rem] truncate focus:outline-none focus:ring-2 focus:ring-indigo-500"><option value="">— без базы знаний —</option></select>
+                    <span id="rag-k-wrap" class="hidden items-center gap-1"><label for="rag-k-input" class="text-xs text-slate-500" title="Сколько фрагментов передавать в модель (1–20)">K</label><input id="rag-k-input" type="number" min="1" max="20" step="1" value="5" class="w-16 rounded-lg bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"></span>
                 </div>
                 <select id="model-select"
                     class="rounded-lg bg-slate-800 border border-slate-700 px-3 py-1.5 text-sm max-w-xs truncate">
@@ -248,7 +266,7 @@
         <div class="bg-slate-900 border border-slate-700 rounded-xl shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
             <div class="flex items-center justify-between px-5 py-4 border-b border-slate-700">
                 <h2 class="text-lg font-semibold">Настройки</h2>
-                <button id="btn-close-settings" class="text-slate-400 hover:text-white text-xl leading-none">&times;</button>
+                <button id="btn-close-settings" type="button" aria-label="Закрыть" class="text-slate-400 hover:text-white text-xl leading-none">&times;</button>
             </div>
             <form id="settings-form" class="p-5 space-y-4">
                 <div class="flex items-center gap-2">
@@ -359,6 +377,44 @@
                 </div>
                 <div id="mcp-server-list" class="space-y-2"></div>
             </section>
+            <section id="llm-providers-section" class="border-t border-slate-700 p-4 space-y-4">
+                <div class="flex items-center justify-between">
+                    <h3 class="text-lg font-semibold">Провайдеры LLM</h3>
+                    <button type="button" id="btn-llm-provider-add"
+                        class="rounded-lg bg-indigo-600 hover:bg-indigo-500 px-4 py-2 text-sm font-semibold transition">+ Добавить провайдера</button>
+                </div>
+                <div id="llm-provider-form" class="hidden rounded-lg bg-slate-800/50 border border-slate-700 p-4 space-y-4">
+                    <div>
+                        <label for="llm-provider-name" class="block text-sm text-slate-400 mb-1">Название</label>
+                        <input type="text" id="llm-provider-name" class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    </div>
+                    <div>
+                        <label for="llm-provider-base-url" class="block text-sm text-slate-400 mb-1">Base URL</label>
+                        <input type="text" id="llm-provider-base-url" placeholder="https://api.deepseek.com" class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    </div>
+                    <div>
+                        <label for="llm-provider-key-env" class="block text-sm text-slate-400 mb-1">Переменная окружения с API-ключом</label>
+                        <input type="text" id="llm-provider-key-env" placeholder="DEEPSEEK_API_KEY" class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono">
+                        <p class="text-xs text-slate-500 mt-1">Имя переменной в .env, а не сам ключ. Оставьте пустым, если ключ не нужен.</p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <input type="checkbox" id="llm-provider-enabled" class="rounded" checked>
+                        <label for="llm-provider-enabled" class="text-sm">Включён</label>
+                    </div>
+                    <p id="llm-provider-form-error" class="text-xs text-red-400"></p>
+                    <div class="flex justify-end gap-2">
+                        <button type="button" id="btn-llm-provider-cancel"
+                            class="rounded-lg px-4 py-2 text-sm text-slate-400 hover:text-white transition">Отменить</button>
+                        <button type="button" id="btn-llm-provider-save"
+                            class="rounded-lg bg-indigo-600 hover:bg-indigo-500 px-4 py-2 text-sm font-semibold transition">Сохранить провайдера</button>
+                    </div>
+                </div>
+                <div id="llm-provider-empty" class="hidden text-center text-slate-500 text-sm py-4">
+                    <p class="font-semibold">Провайдеры не настроены</p>
+                    <p>Добавьте провайдера с OpenAI-совместимым API (DeepSeek, OpenAI, OpenRouter), чтобы его модели появились в списке выбора модели.</p>
+                </div>
+                <div id="llm-provider-list" class="space-y-2"></div>
+            </section>
         </div>
     </div>
 
@@ -392,6 +448,97 @@
                     </button>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <!-- Knowledge base create modal -->
+    <div id="kb-create-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+        role="dialog" aria-modal="true" aria-labelledby="kb-create-title">
+        <div class="bg-slate-900 border border-slate-700 rounded-xl shadow-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
+            <div class="flex items-center justify-between px-5 py-4 border-b border-slate-700">
+                <h2 id="kb-create-title" class="text-lg font-semibold">Новая база знаний</h2>
+                <button type="button" id="btn-close-kb-create" aria-label="Закрыть"
+                    class="text-slate-400 hover:text-white text-xl leading-none">&times;</button>
+            </div>
+            <form id="kb-create-form" class="p-5 space-y-4" novalidate>
+                <div>
+                    <label for="kb-name" class="block text-sm text-slate-400 mb-1">Название</label>
+                    <input type="text" id="kb-name" maxlength="200"
+                        class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                </div>
+                <div>
+                    <span class="block text-sm text-slate-400 mb-1">Файлы (PDF, TXT, MD)</span>
+                    <label for="kb-files"
+                        class="block cursor-pointer rounded-lg border border-dashed border-slate-700 px-3 py-3 text-center text-sm text-slate-300 hover:border-indigo-500 transition">
+                        Выбрать файлы
+                        <input type="file" id="kb-files" multiple accept=".pdf,.txt,.md" class="sr-only">
+                    </label>
+                    <ul id="kb-file-list" class="mt-2 space-y-1 text-xs text-slate-300"></ul>
+                </div>
+                <div>
+                    <label for="kb-strategy" class="block text-sm text-slate-400 mb-1">Стратегия разбиения</label>
+                    <select id="kb-strategy"
+                        class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <option value="fixed">Фиксированная длина</option>
+                        <option value="structural">Структурная</option>
+                    </select>
+                </div>
+                <div id="kb-fixed-fields" class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label for="kb-chunk-size" class="block text-sm text-slate-400 mb-1">Размер чанка (символов)</label>
+                        <input type="number" id="kb-chunk-size" value="1000" min="100" max="2000" step="1"
+                            class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    </div>
+                    <div>
+                        <label for="kb-chunk-overlap" class="block text-sm text-slate-400 mb-1">Перекрытие (символов)</label>
+                        <input type="number" id="kb-chunk-overlap" value="150" min="0" step="1"
+                            class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    </div>
+                </div>
+                <p id="kb-structural-hint" class="hidden text-xs text-slate-500">Делит по главам, статьям и заголовкам; размер — верхний предел</p>
+                <div>
+                    <label for="kb-embedding-model" class="block text-sm text-slate-400 mb-1">Модель эмбеддингов</label>
+                    <select id="kb-embedding-model"
+                        class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"></select>
+                    <div class="flex items-center gap-2 mt-2">
+                        <input type="checkbox" id="kb-show-all-models">
+                        <label for="kb-show-all-models" class="text-xs text-slate-400">показать все модели</label>
+                    </div>
+                    <div class="flex items-center gap-3 mt-2">
+                        <button type="button" id="btn-kb-embed-check"
+                            class="rounded-lg bg-slate-700 hover:bg-slate-600 disabled:opacity-50 px-3 py-2 text-sm transition">Проверить эмбеддинг</button>
+                        <p id="kb-embed-check-result" class="text-xs"></p>
+                    </div>
+                </div>
+                <p id="kb-create-error" class="text-xs text-red-400" role="alert"></p>
+                <div class="flex justify-end gap-2 pt-2">
+                    <button type="submit" id="btn-kb-submit"
+                        class="rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2 text-sm font-semibold transition">Индексировать</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Knowledge base search modal -->
+    <div id="kb-search-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+        role="dialog" aria-modal="true" aria-labelledby="kb-search-title">
+        <div class="bg-slate-900 border border-slate-700 rounded-xl shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
+            <div class="flex items-center justify-between px-5 py-4 border-b border-slate-700">
+                <h2 id="kb-search-title" class="text-lg font-semibold">Тест поиска</h2>
+                <button type="button" id="btn-close-kb-search" aria-label="Закрыть"
+                    class="text-slate-400 hover:text-white text-xl leading-none">&times;</button>
+            </div>
+            <div class="p-5 space-y-3">
+                <form id="kb-search-form" class="flex gap-2">
+                    <label for="kb-search-query" class="sr-only">Вопрос</label>
+                    <input type="text" id="kb-search-query" placeholder="Введите вопрос…"
+                        class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    <button type="submit" id="btn-kb-search"
+                        class="rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 px-4 py-2 text-sm font-semibold transition">Найти</button>
+                </form>
+                <p id="kb-search-status" class="text-xs text-slate-400"></p>
+                <div id="kb-search-results" class="space-y-2"></div>
+            </div>
         </div>
     </div>
 

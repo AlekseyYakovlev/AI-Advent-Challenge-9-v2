@@ -1,32 +1,32 @@
 ---
 gsd_state_version: 1.0
-milestone: v2.0
-milestone_name: "Week 4: MCP Integration"
-status: executing
-last_updated: "2026-10-02T10:02:43.947Z"
-last_activity: 2026-10-02 -- Phase 09 execution started
+milestone: v3.0
+milestone_name: "Week 5: RAG"
+status: planning
+last_updated: "2026-10-03T14:24:29.947Z"
+last_activity: 2026-10-03 -- Phase 15 planning complete
 progress:
-  total_phases: 13
-  completed_phases: 2
-  total_plans: 26
-  completed_plans: 19
-  percent: 15
+  total_phases: 15
+  completed_phases: 4
+  total_plans: 34
+  completed_plans: 21
+  percent: 27
 ---
 
 # Project State
 
 ## Project Reference
 
-**Project:** AiAdventAgentV2 — Week 4: MCP Integration
+**Project:** AiAdventAgentV2 — Week 5: RAG
 **Core value:** The agent must demonstrably separate and manage distinct kinds of state — short-term dialog, working task data, long-term profile/knowledge, and task lifecycle — making explicit, inspectable decisions about what goes where.
-**Current focus:** Phase 09 — auto-rename-chats-with-llm-day-21
+**Current focus:** Phase 15 — reranking and filtering day 23
 
 ## Current Position
 
-Phase: 09 (auto-rename-chats-with-llm-day-21) — EXECUTING
-Plan: 1 of 6
-Status: Executing Phase 09
-Last activity: 2026-10-02 -- Phase 09 execution started
+Phase: 15
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-10-03 -- Phase 15 planning complete
 
 ## Performance Metrics
 
@@ -45,11 +45,17 @@ No phases executed yet — metrics will populate after Phase 1 completes.
 - INV-04 conflict-check scope resolved as full-response prose + tool-calls (D-08), shipped in 05-03's `run_self_critique`.
 - Global-vs-per-chat invariant precedence resolved as per-chat-overrides-global via an explicit `overrides_id` FK link (D-05), shipped in 05-02 and confirmed live in the Day 14 acceptance demo.
 - Day 14 demo observed the primary LLM call proactively avoiding invariant violations (refuses + offers alternatives) rather than complying then justifying/retracting in a separate call — accepted as correct, since invariants are injected into every request's system prompt, not just the critique call's. Phase 6 (hard TRANS enforcement) should account for this: a "flagged conflict" may be rarer in practice than assumed, since well-behaved models self-censor at the primary-answer stage.
+- [Phase ?]: Phase 12-01: provider keys resolve only from .env-declared names (or builtin DEEPSEEK_API_KEY); seed markers make deleted seeded providers permanent
+- [Phase 12-02]: PUT distinguishes omitted vs explicit null/empty api_key_env; LM Studio routes without provider_id keep legacy host
+- [Phase ?]: [Phase 12-03]: _ToolTurn.client falls back to keyless LM Studio until headless passes client (12-04); title/facts jobs resolve provider_id inside the background task
+- [Phase ?]: Phase 12-04: disabled provider accepted at job creation, run fails later with UI-SPEC message (no fallback)
+- [Phase 12-06]: Live DeepSeek check recorded as blocked (placeholder key), not passed; browser UAT S1-S10 passed on isolated copy
 
 ### Roadmap Evolution
 
 - Phase 8 added: Scheduler (Day 18) — delayed/periodic jobs, written from scratch in Python (not a fork of mcp-cron), branch `Day18`
 - Phases 9-12 added (2026-10-02): backlog 999.4 / 999.5 / 999.6 / 999.11 promoted as Day 21 work, all on branch `Day21` (auto-rename chats, modals close only via x, edit/delete long-term memory in UI, LLM providers section in Settings)
+- v3.0 roadmap created 2026-10-03: carried-over 10-11 + RAG phases 13-17 (Days 21-25)
 
 ### Open Questions (flagged by research, need resolution during phase planning)
 
@@ -83,6 +89,11 @@ None.
 | 260925-qvd | Strip TOOL_USE_RULE from the system message after the first tool round (rule + follow-up caused empty replies: 12/12 with tools, 5/16 without) | 2026-09-25 | 0514344 | Tested (555 passed; real-model recheck pending) | [260925-qvd-strip-tool-use-rule-from-system-message-](./quick/260925-qvd-strip-tool-use-rule-from-system-message-/) |
 | 260926-38j | Multi-step tool scenarios: text-leaked tool calls recovered (hermes/qwen XML) + tool_calls flushed on stream stop, announce/MCP-error nudges, fallback summary for empty replies, clock + local-vs-remote hint, MAX_TOOL_ROUNDS 15 | 2026-09-26 | 166e5c8 | Tested (635 passed); real model + real GitLab Sandbox: A ok, B ok on 3rd run (commit 55903a8a on Test, MR !1; model also merged MR unprompted, see follow-ups) | [260926-38j-fix-complex-multi-step-tool-scenarios-le](./quick/260926-38j-fix-complex-multi-step-tool-scenarios-le/) |
 | fast-day20-defer | Defer Day 16 leftovers to Day 20: backlog 999.1-999.3, manual Ctrl+C check, real-model/browser rechecks of 260924-1ic/2n8, 260925-oya/q0s/qj5/qvd | 2026-09-26 | — | Docs only | — |
+| Phase 12 P01 | 25min | 3 tasks | 13 files |
+| Phase 12 P02 | 15min | 2 tasks | 4 files |
+| Phase 12 P03 | 45min | 2 tasks | 7 files |
+| Phase 12 P04 | 20min | 2 tasks | 7 files |
+| Phase 12 P06 | 35min | 2 tasks | 8 files |
 
 ## Deferred Items
 
@@ -94,8 +105,8 @@ Items acknowledged and deferred at milestone close on 2026-09-23:
 
 ## Session Continuity
 
-**Last session:** 2026-09-26T10:51:08.498Z
-**Next action:** Run `/bm:discuss-phase 9` (or `/bm:plan-phase 9`) to start Day 21.
+**Last session:** 2026-10-03T10:59:56.684Z
+**Next action:** Run `/bm:execute-phase 10` (carried over, plans exist), then 11, then `/bm:discuss-phase 13` (Day 21 RAG).
 
 ---
 *State initialized: 2026-09-19*

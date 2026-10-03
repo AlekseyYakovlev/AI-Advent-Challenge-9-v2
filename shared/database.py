@@ -15,7 +15,17 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from shared.auth import hash_password
 from shared.config import settings
 from shared.logger import get_logger
-from shared.models import Chat, Message, Session, Settings, TokenUsage, User  # noqa: F401
+from shared.models import (  # noqa: F401
+    Chat,
+    LlmProvider,
+    LlmProviderSeed,
+    Message,
+    ScheduledTask,
+    Session,
+    Settings,
+    TokenUsage,
+    User,
+)
 
 logger = get_logger(__name__)
 
@@ -110,6 +120,44 @@ async def migrate_add_message_tool_trace(conn: Any) -> None:
     if "tool_trace" not in columns:
         logger.info("migrating_message_add_tool_trace")
         await conn.execute(text("ALTER TABLE message ADD COLUMN tool_trace TEXT"))
+
+
+async def migrate_add_message_rag_sources(conn: Any) -> None:
+    """Add rag_sources column to message when missing (idempotent)."""
+    table_check = await conn.execute(
+        text(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='table' AND name='message'",
+        ),
+    )
+    if table_check.fetchone() is None:
+        return
+
+    result = await conn.execute(text("PRAGMA table_info(message)"))
+    columns = [row[1] for row in result.fetchall()]
+    if "rag_sources" not in columns:
+        logger.info("migrating_message_add_rag_sources")
+        await conn.execute(text("ALTER TABLE message ADD COLUMN rag_sources TEXT"))
+
+
+async def migrate_add_scheduledtask_provider_id(conn: Any) -> None:
+    """Add provider_id column to scheduledtask when missing (idempotent)."""
+    table_check = await conn.execute(
+        text(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='table' AND name='scheduledtask'",
+        ),
+    )
+    if table_check.fetchone() is None:
+        return
+
+    result = await conn.execute(text("PRAGMA table_info(scheduledtask)"))
+    columns = [row[1] for row in result.fetchall()]
+    if "provider_id" not in columns:
+        logger.info("migrating_scheduledtask_add_provider_id")
+        await conn.execute(
+            text("ALTER TABLE scheduledtask ADD COLUMN provider_id INTEGER"),
+        )
 
 
 async def migrate_add_user_id_columns(conn: Any) -> None:
@@ -228,6 +276,8 @@ async def init_db() -> None:
         await migrate_add_user_id_columns(conn)
         await migrate_add_task_transition_rejection_columns(conn)
         await migrate_add_message_tool_trace(conn)
+        await migrate_add_message_rag_sources(conn)
+        await migrate_add_scheduledtask_provider_id(conn)
         await conn.run_sync(SQLModel.metadata.create_all)
         await _migrate_legacy_strategies(conn)
 

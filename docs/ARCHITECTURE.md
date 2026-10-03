@@ -336,3 +336,109 @@ when the events socket reconnects.
 chats are not retitled retroactively. A backend that accepts `reasoning_effort` but ignores it still
 spends the 30 tokens on reasoning and gets the fallback title; this shows up in the log as
 `chat_title_llm_unusable` with `finish_reason` `length` and `has_reasoning` true.
+
+## Long-term memory editing
+
+**Storage.** Table `LongTermMemory`, unique `(user_id, key)`. No schema change.
+
+**CRUD layer.** `agent/memory.py`: `get_long_term_memory` filters by `id` AND `user_id` in one query;
+`update_long_term_memory` checks the key collision before mutating and maps a commit-time `IntegrityError`
+to `MemoryKeyConflictError`; `delete_long_term_memory` returns a bool. Edits never go through the upsert
+`save_long_term_memory`, which would create a second row on a rename.
+
+**Routes.** `PUT` / `DELETE /api/v1/memory/long-term/{entry_id}` are user-scoped without a chat id, answer
+404 for foreign ids and 409 for a duplicate key. Both check Origin; PUT also checks the JSON content type.
+
+**No cache, no event.** `build_system_prompt` and the headless scheduler prompt call
+`list_long_term_memory` on every turn / run, so an edit applies from the next turn. Nothing is stored in
+`agent/state.py` and no `/ws/events` frame is sent, so another tab shows the old list until its next
+refresh.
+
+**Frontend.** `renderMemoryEntries(..., { editable: true })` is used for the long-term list only. The
+edit form is inline (no modal); the draft lives in `state.editingMemory`, so the reload after a `done`
+frame does not discard typing. Memory text is written with `textContent` / `.value` only. Delete asks
+with a native `confirm()` first.
+
+**Known limits.** The model may save a deleted fact again, or re-create a renamed key, through
+`save_long_term_memory`. Working memory is not editable. There is no undo.
+
+## Knowledge base indexing
+
+Users upload PDF/TXT/MD files into a knowledge base (KB); the Agent splits them into chunks, embeds
+them with an LM Studio embedding model and stores a FAISS index. Everything is scoped by `user_id`.
+
+**Modules.** `agent/kb_api.py` (REST router `/api/v1/kb`), `agent/kb_indexer.py` (background job,
+delete, orphan recovery), `agent/kb_loaders.py` (PDF extraction with PyMuPDF, header/footer and
+annotation cleaning, scan detection, UTF-8/Windows-1251 text decoding), `agent/kb_chunking.py` (fixed
+and structural chunking), `agent/kb_limits.py` (all caps and constants), `agent/kb_schemas.py` (`KbOut`
+and the `kb_progress` / `kb_deleted` frames), `agent/kb_search.py` (top-k search over a cached
+index), `agent/embeddings.py` (LM Studio `/v1/embeddings` client, model guard, batching) and
+`shared/kb_storage.py` (paths, FAISS read/write, directory removal).
+
+**Tables.** `KnowledgeBase` (owner, name, status, strategy, chunk settings, embedding model, dim,
+file/chunk counts, live progress `done_chunks`/`total_chunks`/`phase`), `KbDocument` (one row per
+uploaded file, unique on `(kb_id, sha256)`) and `KbChunk` (text, section breadcrumb, source, page,
+offsets). `KbChunk.id` is the FAISS vector id, so a search hit maps back to its row without a lookup
+table. Rows cascade on KB or user delete.
+
+**Storage layout.** `<DB_PATH stem>_kb/<user_id>/<kb_id>/{uploads/, index.faiss}`, or under
+`KB_STORAGE_DIR` when set. The index is an `IndexIDMap2` over L2-normalised vectors
+(inner product = cosine similarity). FAISS file I/O goes through byte buffers so non-ASCII Windows
+paths work.
+
+**Chunking.** `fixed`: windows of `chunk_size` with `chunk_overlap`. `structural`: splits legal text
+at `Раздел`/`Глава`/`Статья` headings (article numbers with `-N` suffixes are distinct), Markdown at
+headings, other text at paragraphs; every chunk is prefixed with a breadcrumb and long sections are
+sub-split. No chunk exceeds 2000 characters (`MAX_EMBED_CHARS`), the safe limit of the embedder.
+
+**Job flow.** `POST /api/v1/kb` stores the uploads, inserts the KB as `queued` and spawns a job
+(one at a time, `Semaphore(1)`). Phases: `loading_model` (the embedding model is loaded in LM Studio
+if needed), `parsing`, `embedding` (sequential batches of 32, progress throttled to two `kb_progress`
+frames per second on `/ws/events`). CPU-bound and FAISS work runs in `asyncio.to_thread`, so
+`/health` stays responsive. The job is all-or-nothing: any failure leaves the KB `failed` with a
+readable message, no partial index and no chunk rows. Deleting a KB cancels its job, removes rows and
+the directory, and emits `kb_deleted`.
+
+**Orphan recovery.** At Agent startup, KBs left `queued`/`indexing` by a crash or restart are marked
+`failed` with a restart message; the user deletes and recreates them.
+
+**Embedding model guard (D-24).** LM Studio's `/v1/embeddings` ignores the `model` field and answers
+with whatever embedding model is loaded, so naming an `llm`-type model would silently return vectors
+from a different model. The guard checks the model's type via `/api/v0/models` and rejects anything
+but `embeddings` with a Russian message. Embedding models are also hidden from the chat model picker.
+
+## Chat RAG pre-step (Day 22)
+
+**Modules.** `agent/rag.py` (retrieval, budget, block rendering, payload), `agent/rag_turn.py`
+(fail-soft pre-step `prepare_rag_turn`), `agent/rag_api.py` (REST routes). `ChatRagConfig` holds
+`mode`, `kb_id`, `top_k` per chat (CASCADE on the chat, SET NULL on the knowledge base, so deleting a
+KB detaches it instead of failing). `Message.rag_sources` stores the metadata-only payload of an
+assistant answer (no fragment text); snippets are fetched lazily through the chunk route.
+
+**Position in the WS turn.** After `build_llm_context` and the system-prompt suffix, before streaming:
+the question is embedded with the KB's embedding model, the top-K chunks are fetched from the cached
+FAISS index, and the numbered fragments plus an instruction are merged only into the outbound copy of
+the last user message. The stored message and the message tree keep the raw question.
+
+**Budget.** `min(30% of context_length, context_length - used_tokens - max_tokens)`. Fragments are
+dropped lowest score first until they fit; if chunks exist but none fits, the turn continues without
+fragments and reports the `context_full` warning.
+
+**D-12 ordering note.** The decision asks for the budget to be settled before the compression
+strategy. Here the budget is computed after `build_llm_context` from the exact used tokens and merged
+only into the outbound copy, so RAG tokens never reach the compression strategy or the
+`no_compression` overflow check. This satisfies the intent of D-12 (RAG can neither distort
+compression nor trigger an overflow); see `14-04-SUMMARY.md` in the phase directory.
+
+**Why RAG cannot reach the delete paths.** The pre-step catches every failure itself (`RagFailure` and
+any other exception become a `warning` payload; only cancellation propagates), and the fragments are
+added after the overflow check, so neither the `CONTEXT_OVERFLOW` nor the `LLM_ERROR` branch (which
+delete the just-submitted user message) can be caused by RAG.
+
+**Embedding dimension guard.** Before searching, the query vector size is compared with the index
+dimension; a mismatch yields the `dim_mismatch` warning instead of a wrong search. A corrupt index
+yields `index_corrupt`; an unloaded embedder yields `embedder_unavailable`.
+
+**Fragment safety.** Runs of three or more `=` inside document text are collapsed so a document
+cannot close the fragments block (prompt-injection guard); the frontend renders everything with
+`textContent`.

@@ -339,13 +339,14 @@ class SchedulerService:
             if run is None or task is None:
                 return
             task_id, user_id, prompt, model = task.id, task.user_id, task.prompt, task.model
+            provider_id = task.provider_id
         self._run_task_ids[run_id] = task_id
         try:
             # The semaphore is taken outside the deadline so queueing does not eat the budget.
             async with self._semaphore:
                 async with asyncio.timeout(settings.SCHEDULER_RUN_TIMEOUT):
                     async with async_session_factory() as run_session:
-                        result = await run_headless_turn(run_session, user_id, prompt, model)
+                        result = await run_headless_turn(run_session, user_id, prompt, model, provider_id)
         except HeadlessRunError as exc:
             await self._finish_run(run_id, RunStatus.FAILED, error=exc.message)
         except TimeoutError:
