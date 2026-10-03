@@ -120,9 +120,9 @@ def _repeated_edge_keys(pages_lines: list[list[str]]) -> set[str]:
     return {key for key, n in counts.items() if n >= threshold}
 
 
-def _is_noise_line(line: str) -> bool:
-    """Page numbers, bare numbers and commentary headers carry no content."""
-    return bool(_PAGE_NUMBER_RE.match(line) or _COMMENT_RE.match(line))
+def _is_noise_line(line: str, at_edge: bool) -> bool:
+    """Edge page numbers and commentary headers carry no content; body numbers do."""
+    return bool(_COMMENT_RE.match(line) or (at_edge and _PAGE_NUMBER_RE.match(line)))
 
 
 def _join_lines(lines: list[tuple[str, int]]) -> list[tuple[str, int]]:
@@ -169,11 +169,11 @@ def clean_pdf_pages(pages: list[str]) -> tuple[str, list[int]]:
 
     flat: list[tuple[str, int]] = []
     for page_idx, lines in enumerate(pages_lines):
-        edges: set[int] = _edge_indexes(len(lines)) if repeated else set()
+        edges: set[int] = _edge_indexes(len(lines))
         for idx, line in enumerate(lines):
             if idx in edges and _normalize_key(line) in repeated:
                 continue
-            if _is_noise_line(line):
+            if _is_noise_line(line, idx in edges):
                 continue
             flat.append((line, page_idx))
 
