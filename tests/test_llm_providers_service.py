@@ -407,6 +407,39 @@ async def test_check_lm_studio_reports_loaded() -> None:
     assert result.models == [{"id": "q", "loaded": True}]
 
 
+async def test_check_lm_studio_adds_model_types() -> None:
+    """LM Studio models carry `type` when /api/v0/models is reachable."""
+    uid = await _create_user("c10", "pw")
+    lm = (await _seeded_rows(uid))[0]
+    with respx.mock:
+        respx.get(f"{lm.base_url}/v1/models").mock(
+            return_value=httpx.Response(200, json={"data": [{"id": "e"}, {"id": "q"}]}),
+        )
+        respx.get(f"{lm.base_url}/api/v0/models").mock(
+            return_value=httpx.Response(
+                200,
+                json={"data": [{"id": "e", "type": "embeddings"}, {"id": "q", "type": "llm"}]},
+            ),
+        )
+        result = await providers.check_provider(lm)
+    assert result.status == "ok"
+    assert {m["id"]: m.get("type") for m in result.models} == {"e": "embeddings", "q": "llm"}
+
+
+async def test_check_lm_studio_types_failure_keeps_models() -> None:
+    """A failing /api/v0/models leaves the list intact, without `type`, status ok."""
+    uid = await _create_user("c11", "pw")
+    lm = (await _seeded_rows(uid))[0]
+    with respx.mock:
+        respx.get(f"{lm.base_url}/v1/models").mock(
+            return_value=httpx.Response(200, json={"data": [{"id": "q"}]}),
+        )
+        respx.get(f"{lm.base_url}/api/v0/models").mock(return_value=httpx.Response(404))
+        result = await providers.check_provider(lm)
+    assert result.status == "ok"
+    assert result.models == [{"id": "q", "loaded": False}]
+
+
 # ---------------------------------------------------------------- groups & cache
 
 
