@@ -118,6 +118,7 @@ async def judge_rows(
     model: str,
     force: bool,
     on_progress: Callable[[list[dict[str, str]]], None] | None = None,
+    max_tokens: int = JUDGE_MAX_TOKENS,
 ) -> list[dict[str, str]]:
     """Fill judge_verdict / judge_comment for each row, sequentially, never aborting the loop."""
     judged = 0
@@ -130,7 +131,7 @@ async def judge_rows(
             row["judge_verdict"], row["judge_comment"] = JUDGE_ERROR, "нет вопроса в наборе"
         else:
             row["judge_verdict"], row["judge_comment"] = await _judge_one(
-                row, question, client, model
+                row, question, client, model, max_tokens
             )
         judged += 1
         if on_progress is not None and judged % SAVE_EVERY == 0:
@@ -139,7 +140,11 @@ async def judge_rows(
 
 
 async def _judge_one(
-    row: dict[str, str], question: dict[str, Any], client: Any, model: str
+    row: dict[str, str],
+    question: dict[str, Any],
+    client: Any,
+    model: str,
+    max_tokens: int = JUDGE_MAX_TOKENS,
 ) -> tuple[str, str]:
     """Judge a single row; any transport failure or bad reply becomes JUDGE_ERROR."""
     messages = build_judge_messages(
@@ -153,7 +158,7 @@ async def _judge_one(
             messages,
             model,
             temperature=JUDGE_TEMPERATURE,
-            max_tokens=JUDGE_MAX_TOKENS,
+            max_tokens=max_tokens,
         )
     except (httpx.HTTPError, asyncio.TimeoutError) as exc:
         return JUDGE_ERROR, f"запрос не удался: {type(exc).__name__}"
@@ -203,6 +208,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", default=JUDGE_DEFAULT_MODEL)
     parser.add_argument("--base-url", default=DEEPSEEK_BASE_URL)
     parser.add_argument("--force", action="store_true", help="re-judge rows that already have a verdict")
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=JUDGE_MAX_TOKENS,
+        help="completion budget per judged row (reasoning models need more than the default)",
+    )
     parser.add_argument("--check", action="store_true", help="verify key and model id, then exit")
     return parser
 
@@ -258,7 +269,7 @@ def _write_meta(path: Path, args: argparse.Namespace, rows: list[dict[str, str]]
         "model": args.model,
         "base_url": args.base_url,
         "temperature": JUDGE_TEMPERATURE,
-        "max_tokens": JUDGE_MAX_TOKENS,
+        "max_tokens": getattr(args, "max_tokens", JUDGE_MAX_TOKENS),
         "rows": len(rows),
         "judge_verdicts": dict(Counter(r["judge_verdict"] or "" for r in rows)),
         "agreement": {"matching": matching, "compared": compared},
@@ -299,6 +310,7 @@ async def judge_command(args: argparse.Namespace) -> int:
         args.model,
         args.force,
         on_progress=lambda current: write_answers(args.answers, current),
+        max_tokens=getattr(args, "max_tokens", JUDGE_MAX_TOKENS),
     )
     write_answers(args.answers, rows)
     meta = _write_meta(args.meta, args, rows)
@@ -311,6 +323,7 @@ async def judge_command(args: argparse.Namespace) -> int:
 
 def main() -> int:
     """CLI entry point."""
+    sys.stdout.reconfigure(encoding="utf-8")
     return asyncio.run(judge_command(build_parser().parse_args()))
 
 

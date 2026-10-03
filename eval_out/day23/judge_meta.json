@@ -1,0 +1,18 @@
+{
+  "model": "deepseek-flash",
+  "base_url": "https://api.deepseek.com",
+  "temperature": 0.0,
+  "max_tokens": 8000,
+  "rows": 70,
+  "judge_verdicts": {
+    "верно": 54,
+    "частично": 7,
+    "неверно": 4,
+    "галлюцинация": 5
+  },
+  "agreement": {
+    "matching": 61,
+    "compared": 70
+  },
+  "timestamp": "2026-10-03T19:18:02.182654+00:00"
+}
