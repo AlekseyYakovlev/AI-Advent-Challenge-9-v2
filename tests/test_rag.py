@@ -1,6 +1,8 @@
 """Tests for the shared RAG helpers: retrieval wrapper, budget, block, merge, payload."""
 
 import asyncio
+import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -269,6 +271,22 @@ def test_shipped_calibrated_thresholds_are_valid_cosines() -> None:
         assert marker == marker.lower()
         assert isinstance(value, float)
         assert 0.0 <= value <= 1.0
+
+
+CALIBRATION_REPORT = Path(__file__).resolve().parent.parent / "eval_out" / "day23" / "calibration.json"
+
+
+def test_shipped_thresholds_match_calibration_report() -> None:
+    report = json.loads(CALIBRATION_REPORT.read_text(encoding="utf-8"))
+    for label, entry in report["kbs"].items():
+        marker = entry["embedding_model"].lower()
+        matching = [key for key in rag.CALIBRATED_THRESHOLDS if key in marker]
+        if entry["stats"]["separable"]:
+            assert len(matching) == 1, label
+            assert rag.CALIBRATED_THRESHOLDS[matching[0]] == entry["threshold"], label
+        else:
+            assert matching == [], label
+            assert rag.calibrated_threshold(entry["embedding_model"]) is None, label
 
 
 def test_payload_defaults_are_v2_ok_without_search() -> None:

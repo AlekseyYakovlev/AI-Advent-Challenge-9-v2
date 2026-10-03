@@ -419,6 +419,41 @@ async def test_fts_exempt_survives_threshold(monkeypatch: pytest.MonkeyPatch) ->
     assert trace["verdict"] == "below_threshold"
 
 
+async def _cut_everything_threshold(kb_id: int) -> float:
+    _, base = await _run(kb_id, _cfg(candidate_k=1000, top_k=1000), RARE_QUESTION)
+    return max(item["cos"] for item in base["candidates"]) + 0.01
+
+
+async def test_fts_exempt_requires_keyword_cuts_weak_overlap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    kb_id, _ = await _rare_kb(monkeypatch)
+    threshold = await _cut_everything_threshold(kb_id)
+    question = "зябликовый ракета галактика квазар туманность"
+    chunks, trace = await _run(
+        kb_id, _cfg(threshold=threshold, candidate_k=3, hybrid=True), question
+    )
+    rare = [item for item in trace["candidates"] if item["file"] == "rare.txt"]
+    assert rare and rare[0]["fts_rank"] is not None
+    assert rare[0]["fts_exempt"] is False
+    assert rare[0]["status"] == "below_threshold"
+    assert chunks == []
+    assert trace["verdict"] == "below_threshold"
+
+
+async def test_fts_exempt_requires_keyword_passes_on_article_number(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    files: dict[str, str | bytes] = {"doc.txt": DISTINCT, "law.txt": "Статья 7.3 Порядок учёта. " + RARE}
+    kb_id, _ = await _ready_kb(monkeypatch, files)
+    threshold = await _cut_everything_threshold(kb_id)
+    question = "ракета галактика квазар туманность 7.3"
+    _, trace = await _run(kb_id, _cfg(threshold=threshold, candidate_k=3, hybrid=True), question)
+    exempt = [item for item in trace["candidates"] if item["fts_exempt"]]
+    assert [item["file"] for item in exempt] == ["law.txt"]
+    assert exempt[0]["status"] == "in_answer"
+
+
 async def test_hybrid_fts_error_falls_back(monkeypatch: pytest.MonkeyPatch) -> None:
     kb_id, _ = await _rare_kb(monkeypatch)
     _, off = await _run(kb_id, _cfg(), RARE_QUESTION)

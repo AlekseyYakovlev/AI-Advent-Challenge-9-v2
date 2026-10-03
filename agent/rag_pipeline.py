@@ -12,7 +12,14 @@ from agent.kb_search import cosine_for_ids
 from agent.rag import DEFAULT_CANDIDATE_K, RagFailure, resolve_threshold, retrieve_vectors
 from agent.rag_fts import fts_search, load_chunks_by_ids
 from agent.rag_llm import llm_rerank, rewrite_query
-from agent.rag_rank import RERANK_TOP_N, lexical_rerank, rrf_order
+from agent.rag_rank import (
+    RERANK_TOP_N,
+    article_numbers,
+    lexical_rerank,
+    lexical_score,
+    parse_article,
+    rrf_order,
+)
 from shared.logger import get_logger
 from shared.models import ChatRagConfig, KnowledgeBase
 
@@ -209,15 +216,35 @@ async def _hybrid_stage(
     return True
 
 
+# D-08 amended by the user at the 15-09 checkpoint (2026-10-03): with hybrid on, an FTS hit
+# below the threshold survives only on a keyword match, because on the calibration set every
+# out-of-corpus question otherwise received an exempt chunk and below_threshold was unreachable.
+FTS_EXEMPT_MIN_LEXICAL = 0.5
+
+
+def _earns_fts_exemption(question: str, chunk: dict[str, Any]) -> bool:
+    """True when an FTS hit matches an article number of the question or overlaps lexically."""
+    chunk_articles = {parse_article(chunk.get("section")), parse_article(chunk.get("title"))}
+    text: str = chunk.get("text") or ""
+    for number in article_numbers(question):
+        if number in chunk_articles or number in text:
+            return True
+    return lexical_score(question, chunk) >= FTS_EXEMPT_MIN_LEXICAL
+
+
 def _apply_threshold(
-    ordered: list[_Candidate], config: PipelineConfig, hybrid_ran: bool
+    ordered: list[_Candidate], config: PipelineConfig, hybrid_ran: bool, question: str
 ) -> list[_Candidate]:
-    """Cut by raw cosine only; an FTS hit survives when hybrid ran (D-07, D-08)."""
+    """Cut by raw cosine; an FTS hit with a keyword match survives when hybrid ran (D-07, D-08)."""
     survivors: list[_Candidate] = []
     for item in ordered:
         if item.cos >= config.threshold:
             survivors.append(item)
-        elif hybrid_ran and item.fts_rank is not None:
+        elif (
+            hybrid_ran
+            and item.fts_rank is not None
+            and _earns_fts_exemption(question, item.chunk)
+        ):
             item.fts_exempt = True
             survivors.append(item)
         else:
@@ -342,7 +369,7 @@ async def run_retrieval_pipeline(
     ordered = list(candidates.values())
     for position, item in enumerate(ordered, start=1):
         item.rank_before = position
-    survivors = _apply_threshold(ordered, config, hybrid_ran)
+    survivors = _apply_threshold(ordered, config, hybrid_ran, question)
 
     if config.lexical and survivors:
         survivors = await _lexical_stage(question, survivors, run)

@@ -73,9 +73,12 @@ NO_FRAGMENTS_INSTRUCTION = (
 DEFAULT_CANDIDATE_K = 20
 # Keys are lowercase markers matched as substrings of KnowledgeBase.embedding_model
 # (same style as agent/embeddings.py::MODEL_PREFIXES). Values are raw-cosine cut-offs
-# measured by scripts/rag_eval.py calibrate on the frozen calibration set; a model
-# without an entry has no cut.
-CALIBRATED_THRESHOLDS: dict[str, float] = {}
+# from the 2026-10-03 calibration run (eval_out/day23/calibration.json) on the frozen
+# calibration set (D-15). bge-m3: midpoint rule, its gold and out-of-corpus distributions
+# are separable. nomic is intentionally absent: its distributions are not separable, so
+# the rule-derived 0.79 would also cut answerable chunks; the user chose at the 15-09
+# checkpoint to store no cut for it (it resolves to 0). A model without an entry has no cut.
+CALIBRATED_THRESHOLDS: dict[str, float] = {"bge-m3": 0.67}
 
 _DELIMITER_RUN = re.compile(r"={3,}")
 
