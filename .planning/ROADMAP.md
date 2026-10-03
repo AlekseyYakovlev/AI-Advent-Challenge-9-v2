@@ -144,9 +144,20 @@ Plans:
   3. If the embedding model is unavailable or the KB was deleted, the turn still answers without RAG and shows a visible warning; a large RAG block never deletes the user message
   4. `scripts/rag_eval.py` runs the frozen 10-question control set (including out-of-corpus questions) and `Day22_report.md` compares no-RAG vs RAG answers and giga vs nomic embeddings on hit@k
 
-**Plans**: TBD
+**Plans**: 8 plans
 **UI hint**: yes
 **Research flag**: standard patterns; decide the retrieval result shape, `rag_sources` storage and eval fixture here
+
+Plans:
+
+- [ ] 14-01-PLAN.md — ChatRagConfig + Message.rag_sources migration, dim-mismatch error, agent/rag.py (retrieve, failure mapping, budget, block, merge, payload)
+- [ ] 14-02-PLAN.md — Draft, user-approve and freeze the 10-question control set fixture (checkpoint)
+- [ ] 14-03-PLAN.md — REST: GET/PUT /chats/{id}/rag, chunk snippet route, rag_sources in the chat tree
+- [ ] 14-04-PLAN.md — WS turn: fail-soft prepare_rag_turn, outbound-only merge, rag_sources persistence, done.rag
+- [ ] 14-05-PLAN.md — scripts/rag_eval.py (build-kbs, run, hit@k, tables) with fake-backed tests
+- [ ] 14-06-PLAN.md — UI: header toggle/KB select/K/badge, per-answer mode label, warning line, Источники block
+- [ ] 14-07-PLAN.md — Live eval (nomic vs bge-m3, no-RAG vs RAG), verdicts, Day22_report.md (checkpoint)
+- [ ] 14-08-PLAN.md — Playwright E2E on the isolated copy (18000/18001) and docs sync
 
 ### Phase 15: Reranking and filtering (Day 23)
 
