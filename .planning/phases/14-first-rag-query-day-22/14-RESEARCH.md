@@ -425,7 +425,7 @@ Categories 6 `direct`, 2 `synthesis` (two `expected_sources` entries, one per fi
    - Known: UI-SPEC has warnings for embedder, KB deleted, KB not ready, dim mismatch only.
    - Unclear: text for `context_full` and `index_corrupt`/generic failure.
    - Recommendation: add two copies (suggested above; for generic failure reuse the toast text) and note the UI-SPEC deviation in the plan; or fold `index_corrupt`/`retrieval_failed` into one «Поиск по базе знаний не удался…» line.
-   - RESOLVED: add `context_full` copy and one shared «Поиск по базе знаний не удался…» copy for `index_corrupt`/`retrieval_failed`, noted as a UI-SPEC deviation (→ plans 14-01 warning codes/copy, 14-06 UI rendering).
+   - RESOLVED: add `context_full` copy plus a separate `index_corrupt` copy («Индекс базы знаний повреждён…») and a `retrieval_failed` copy («Поиск по базе знаний не удался…»), noted as a UI-SPEC deviation (→ plans 14-01 warning codes/copy, 14-06 UI rendering).
 2. **Where `Day22_report.md` and eval outputs live**
    - Recommendation: report at repo root; raw outputs in `eval_out/day22/` (committed). Discretion; no precedent.
    - RESOLVED: `Day22_report.md` at repo root, eval outputs in `eval_out/day22/` (scratch DB gitignored), control set in `tests/fixtures/rag/control_set.json` (→ plans 14-02, 14-05, 14-07).

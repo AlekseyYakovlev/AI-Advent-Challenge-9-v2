@@ -150,13 +150,24 @@ Plans:
 
 Plans:
 
+**Wave 1**
+
 - [ ] 14-01-PLAN.md — ChatRagConfig + Message.rag_sources migration, dim-mismatch error, agent/rag.py (retrieve, failure mapping, budget, block, merge, payload)
 - [ ] 14-02-PLAN.md — Draft, user-approve and freeze the 10-question control set fixture (checkpoint)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 14-03-PLAN.md — REST: GET/PUT /chats/{id}/rag, chunk snippet route, rag_sources in the chat tree
 - [ ] 14-04-PLAN.md — WS turn: fail-soft prepare_rag_turn, outbound-only merge, rag_sources persistence, done.rag
 - [ ] 14-05-PLAN.md — scripts/rag_eval.py (build-kbs, run, hit@k, tables) with fake-backed tests
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 14-06-PLAN.md — UI: header toggle/KB select/K/badge, per-answer mode label, warning line, Источники block
 - [ ] 14-07-PLAN.md — Live eval (nomic vs bge-m3, no-RAG vs RAG), verdicts, Day22_report.md (checkpoint)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
 - [ ] 14-08-PLAN.md — Playwright E2E on the isolated copy (18000/18001) and docs sync
 
 ### Phase 15: Reranking and filtering (Day 23)
