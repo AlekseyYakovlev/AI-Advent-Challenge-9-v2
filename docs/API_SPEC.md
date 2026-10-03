@@ -384,6 +384,82 @@ overwritten. The `done` frame of `/ws/chat/{chat_id}` is unchanged and is not de
 arrives separately as a `chat_title_updated` frame on `/ws/events`. The title request goes through the
 same provider as the turn (`provider_id`).
 
+## Knowledge bases (Day 21)
+
+User-scoped document collections indexed into a FAISS vector index with an LM Studio embedding model.
+All routes require the session cookie; a knowledge base owned by another user answers `404` (never
+`403`). Mutating routes (`POST`, `DELETE`) also require an allowed `Origin`; JSON routes require
+`Content-Type: application/json`. Error messages are Russian and shown inline by the UI.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/kb` | List the caller's knowledge bases, newest first (`KbOut[]`) |
+| POST | `/api/v1/kb` | Create from `multipart/form-data`; answers `202` with `KbOut` and indexes in the background |
+| GET | `/api/v1/kb/{kb_id}` | One knowledge base (`KbOut`) |
+| DELETE | `/api/v1/kb/{kb_id}` | Cancel a running job, delete rows and the storage directory; `204` |
+| POST | `/api/v1/kb/{kb_id}/search` | Test search: body `{"query": str, "top_k": 1..20 = 5}`; `{"results": [...]}` |
+| GET | `/api/v1/kb/embedding-models` | LM Studio models with `type`, loaded state and embedding eligibility |
+| POST | `/api/v1/kb/embedding-check` | Body `{"model": str}`; runs the indexing guard and returns `{"model", "dim"}` |
+
+### Create (multipart fields)
+
+`name` (1-200 chars), `strategy` (`fixed` | `structural`), `chunk_size` (100-2000, default 1000),
+`chunk_overlap` (default 150, less than the size and at most half of it; both ignored for the
+`structural` strategy except as the upper bound), `embedding_model` (required) and one or more `files`.
+
+Caps (`agent/kb_limits.py`): up to 10 files, 50 MB per file, 100 MB in total, extensions `.pdf`, `.txt`,
+`.md` only. Files are SHA-256 de-duplicated per knowledge base. Validation runs on the server before
+anything is kept; any violation answers `422` (`413` for a declared request above the cap) and leaves
+no rows or files behind. Messages: `Введите название базы знаний.`, `Выберите хотя бы один файл.`,
+`Можно загрузить не больше 10 файлов.`, `Файл {name}: поддерживаются только PDF, TXT и MD.`,
+`Файл {name} больше 50 МБ.`, `Общий размер файлов больше 100 МБ.`, `Файл {name} пустой.`,
+`Файл {name} уже добавлен.`, `Размер чанка должен быть не меньше 100`,
+`Размер чанка не должен превышать 2000`, `Перекрытие должно быть меньше размера чанка и не больше его половины`.
+
+### KbOut
+
+```json
+{
+  "id": 3, "name": "ФЗ-196", "status": "indexing", "error": null,
+  "strategy": "structural", "chunk_size": 1000, "chunk_overlap": 150,
+  "embedding_model": "text-embedding-nomic-embed-text-v1.5", "dim": 768,
+  "file_count": 1, "chunk_count": 0, "done": 320, "total": 1450,
+  "phase": "embedding", "created_at": "2026-10-03T10:00:00Z"
+}
+```
+
+`status` is `queued`, `indexing`, `ready` or `failed`; `phase` is `loading_model`, `parsing` or
+`embedding` while indexing. `error` is a readable Russian message when `failed`.
+
+### Search result item
+
+`{"rank", "score", "chunk_id", "source", "section", "page_start", "text"}` - `score` is cosine
+similarity, `section` is the structural breadcrumb (for example `Глава 5 > Статья 5.1`) or null.
+Status codes: `409` the knowledge base is not ready or its index is corrupt, `422` empty query or an
+embedding error, `503` LM Studio is not running.
+
+### Embedding models
+
+Only models LM Studio reports as `type: embeddings` are eligible. LM Studio's `/v1/embeddings`
+ignores the requested model name and answers with whichever embedding model is loaded, so an `llm`
+model such as `giga-embeddings-instruct-480m-0826` would silently produce vectors from another model.
+The guard (D-24) therefore rejects non-embedding models with a message containing
+`не поддерживает эмбеддинги`; `POST /embedding-check` and the indexer apply the same guard.
+
+### Events on /ws/events
+
+```json
+{ "type": "kb_progress", "kb": { "...": "KbOut" } }
+{ "type": "kb_deleted", "kb_id": 3 }
+```
+
+- `kb_progress`: status or progress changed (throttled to about two frames per second while indexing).
+  A job cancelled by a delete may publish a final `failed` frame (`Индексация прервана.`) just before
+  `kb_deleted`.
+- `kb_deleted`: the knowledge base was removed. Frames go only to the owner's sockets.
+- After an Agent restart, jobs left in `queued` or `indexing` become `failed` with
+  `Индексация прервана перезапуском агента. Удалите базу и создайте её заново.`
+
 ## Environment Settings
 
 | Variable | Default | Meaning |
@@ -399,6 +475,8 @@ same provider as the turn (`provider_id`).
 | MCP_TOOL_RESULT_MAX_CHARS | 20000 | Maximum characters of an MCP tool result sent to the model |
 | LLM_PROVIDER_CHECK_TIMEOUT | 10.0 | Seconds allowed for a provider connection check or model-list request (not `LLM_TIMEOUT`) |
 | LLM_PROVIDER_ENV_FILE | .env | File whose declared variable names provider `api_key_env` references may resolve |
+| KB_STORAGE_DIR | empty | Root for knowledge-base uploads and indexes; empty means `<DB_PATH stem>_kb` next to the database |
+| KB_EMBED_TIMEOUT | 120.0 | Seconds allowed for one embeddings request to LM Studio |
 | MCP_AUTO_CONNECT | true | Connect the user's enabled, unconnected MCP servers at the start of a chat turn (failures not retried until manual reconnect/edit) |
 
 With `MCP_AUTO_CONNECT` on, the first chat turn may wait up to `MCP_CONNECT_TIMEOUT` for a server

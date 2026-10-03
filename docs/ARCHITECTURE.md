@@ -336,3 +336,48 @@ when the events socket reconnects.
 chats are not retitled retroactively. A backend that accepts `reasoning_effort` but ignores it still
 spends the 30 tokens on reasoning and gets the fallback title; this shows up in the log as
 `chat_title_llm_unusable` with `finish_reason` `length` and `has_reasoning` true.
+
+## Knowledge base indexing
+
+Users upload PDF/TXT/MD files into a knowledge base (KB); the Agent splits them into chunks, embeds
+them with an LM Studio embedding model and stores a FAISS index. Everything is scoped by `user_id`.
+
+**Modules.** `agent/kb_api.py` (REST router `/api/v1/kb`), `agent/kb_indexer.py` (background job,
+delete, orphan recovery), `agent/kb_loaders.py` (PDF extraction with PyMuPDF, header/footer and
+annotation cleaning, scan detection, UTF-8/Windows-1251 text decoding), `agent/kb_chunking.py` (fixed
+and structural chunking), `agent/kb_limits.py` (all caps and constants), `agent/kb_schemas.py` (`KbOut`
+and the `kb_progress` / `kb_deleted` frames), `agent/kb_search.py` (top-k search over a cached
+index), `agent/embeddings.py` (LM Studio `/v1/embeddings` client, model guard, batching) and
+`shared/kb_storage.py` (paths, FAISS read/write, directory removal).
+
+**Tables.** `KnowledgeBase` (owner, name, status, strategy, chunk settings, embedding model, dim,
+file/chunk counts, live progress `done_chunks`/`total_chunks`/`phase`), `KbDocument` (one row per
+uploaded file, unique on `(kb_id, sha256)`) and `KbChunk` (text, section breadcrumb, source, page,
+offsets). `KbChunk.id` is the FAISS vector id, so a search hit maps back to its row without a lookup
+table. Rows cascade on KB or user delete.
+
+**Storage layout.** `<DB_PATH stem>_kb/<user_id>/<kb_id>/{uploads/, index.faiss}`, or under
+`KB_STORAGE_DIR` when set. The index is an `IndexIDMap2` over L2-normalised vectors
+(inner product = cosine similarity). FAISS file I/O goes through byte buffers so non-ASCII Windows
+paths work.
+
+**Chunking.** `fixed`: windows of `chunk_size` with `chunk_overlap`. `structural`: splits legal text
+at `Раздел`/`Глава`/`Статья` headings (article numbers with `-N` suffixes are distinct), Markdown at
+headings, other text at paragraphs; every chunk is prefixed with a breadcrumb and long sections are
+sub-split. No chunk exceeds 2000 characters (`MAX_EMBED_CHARS`), the safe limit of the embedder.
+
+**Job flow.** `POST /api/v1/kb` stores the uploads, inserts the KB as `queued` and spawns a job
+(one at a time, `Semaphore(1)`). Phases: `loading_model` (the embedding model is loaded in LM Studio
+if needed), `parsing`, `embedding` (sequential batches of 32, progress throttled to two `kb_progress`
+frames per second on `/ws/events`). CPU-bound and FAISS work runs in `asyncio.to_thread`, so
+`/health` stays responsive. The job is all-or-nothing: any failure leaves the KB `failed` with a
+readable message, no partial index and no chunk rows. Deleting a KB cancels its job, removes rows and
+the directory, and emits `kb_deleted`.
+
+**Orphan recovery.** At Agent startup, KBs left `queued`/`indexing` by a crash or restart are marked
+`failed` with a restart message; the user deletes and recreates them.
+
+**Embedding model guard (D-24).** LM Studio's `/v1/embeddings` ignores the `model` field and answers
+with whatever embedding model is loaded, so naming an `llm`-type model would silently return vectors
+from a different model. The guard checks the model's type via `/api/v0/models` and rejects anything
+but `embeddings` with a Russian message. Embedding models are also hidden from the chat model picker.
