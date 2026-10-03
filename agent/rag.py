@@ -122,8 +122,9 @@ def render_rag_block(chunks: list[dict[str, Any]]) -> str:
     """Render numbered fragments between delimiters, followed by the instruction."""
     lines: list[str] = [BLOCK_OPEN]
     for index, chunk in enumerate(chunks, 1):
-        label = chunk.get("section") or chunk.get("title") or ""
-        lines.append(f"[{index}] {chunk['source']} — {label}")
+        label = " ".join(str(chunk.get("section") or chunk.get("title") or "").split())
+        source = " ".join(str(chunk["source"]).split())
+        lines.append(_neutralize(f"[{index}] {source} — {label}"))
         lines.append(_neutralize(chunk["text"]))
     lines.append(BLOCK_CLOSE)
     lines.append(RAG_INSTRUCTION)
