@@ -14,13 +14,13 @@ provides:
   - Day23_report.md, tests/test_rag_report_day23.py
 requirements-completed: [RANK-07, RANK-09]
 requirements-partial: [RANK-08]
-status: awaiting-user-review (Task 3 pending)
+status: complete
 completed: 2026-10-03
 ---
 
 # Phase 15 Plan 11: Judge column and Day 23 report Summary
 
-Tasks 1 and 2 are done and committed. Task 3 (user review of verdicts and the report) is pending; nothing has been approved yet.
+All three tasks are done. Task 3 (user review of verdicts and the report): the user replied "Approved" with no corrections on 2026-10-03.
 
 ## Task 1: key and judge model
 
@@ -39,7 +39,7 @@ Tasks 1 and 2 are done and committed. Task 3 (user review of verdicts and the re
 
 - `CALIBRATED_THRESHOLDS = {"bge-m3": 0.67}`. nomic is intentionally absent (classes not separable, the rule value 0.79 was rejected): user decision option-b at 15-09 Task 1.
 - D-08 FTS exemption amended (article-number match or lexical overlap >= 0.5): user decision option-b at 15-09 Task 2.
-- The manual verdicts from 15-10 were written by Claude and are NOT yet reviewed by the user. The report says so.
+- The manual verdicts from 15-10 were written by Claude and reviewed/approved by the user on 2026-10-03.
 - No stage beat the baseline on this 10-question set: baseline hit@5 0.88, stage runs 0.62 to 0.75. The 0.67 threshold cuts all chunks for Q01, Q07, Q08. Baseline Q07 is empty (token budget, finish_reason length).
 - For Q01, Q02, Q07, Q08 the model input is identical across threshold, lexical, llm_rerank and hybrid, yet the verdicts differ. Part of the per-stage differences is therefore generation noise at temperature 0, not stage effect. The report states this.
 
@@ -60,9 +60,9 @@ Tasks 1 and 2 are done and committed. Task 3 (user review of verdicts and the re
 
 None.
 
-## Task 3: pending
+## Task 3: done — user replied "Approved" (no corrections)
 
-Checkpoint `human-verify` is not done. Awaiting the user's "approved" or corrections for answers.csv verdicts and Day23_report.md. After approval or corrections the verdict counts in the report must be re-derived from answers.csv, the tests rerun and the result committed. STATE.md and ROADMAP.md were not modified. app.db was not touched.
+Checkpoint `human-verify` resolved: the user approved the verdicts and Day23_report.md without corrections, so no counts changed. The report wording was updated from "not yet reviewed" to "reviewed and approved"; tests/test_rag_report_day23.py passes. app.db was not touched.
 
 ## Self-Check: PASSED
 
