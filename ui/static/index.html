@@ -188,9 +188,15 @@
 
         <!-- Main -->
         <main class="flex-1 flex flex-col min-w-0">
-            <header class="flex items-center gap-3 px-4 py-3 border-b border-slate-800 bg-slate-900/50">
+            <header class="flex flex-wrap items-center gap-3 px-4 py-3 border-b border-slate-800 bg-slate-900/50">
                 <div class="flex-1 min-w-0">
                     <h1 id="chat-title" class="text-lg font-semibold truncate">AI Agent</h1>
+                </div>
+                <div class="flex items-center gap-2 flex-wrap">
+                    <span id="rag-badge" class="hidden md:inline-flex rounded-full bg-slate-800 border border-slate-700 px-2 py-0.5 text-xs text-slate-300 max-w-[12rem] truncate">без RAG</span>
+                    <button id="rag-toggle" type="button" role="switch" aria-checked="false" disabled class="rounded-lg px-3 py-1.5 text-sm border bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed" title="Выберите базу знаний">без RAG</button>
+                    <select id="rag-kb-select" aria-label="База знаний для RAG" disabled class="rounded-lg bg-slate-800 border border-slate-700 px-3 py-1.5 text-sm max-w-[12rem] truncate focus:outline-none focus:ring-2 focus:ring-indigo-500"><option value="">— без базы знаний —</option></select>
+                    <span id="rag-k-wrap" class="hidden items-center gap-1"><label for="rag-k-input" class="text-xs text-slate-500" title="Сколько фрагментов передавать в модель (1–20)">K</label><input id="rag-k-input" type="number" min="1" max="20" step="1" value="5" class="w-16 rounded-lg bg-slate-800 border border-slate-700 px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"></span>
                 </div>
                 <select id="model-select"
                     class="rounded-lg bg-slate-800 border border-slate-700 px-3 py-1.5 text-sm max-w-xs truncate">

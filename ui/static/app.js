@@ -185,6 +185,9 @@ function renderMessages() {
             tokenInfo.textContent = `${msg.token_count} tokens`;
             bubble.appendChild(tokenInfo);
         }
+        if (!isUser && msg.rag_sources) {
+            bubble.appendChild(buildRagMeta(msg.rag_sources));
+        }
         const controls = document.createElement('div');
         controls.innerHTML = branchControlsHtml(msg);
         bubble.appendChild(controls);
@@ -195,6 +198,11 @@ function renderMessages() {
             });
         }
         container.appendChild(wrapper);
+        const rag = msg.rag_sources;
+        if (!isUser && rag && rag.mode === 'rag' && !rag.warning
+            && Array.isArray(rag.sources) && rag.sources.length > 0) {
+            container.appendChild(wrapToolCard(buildRagSourcesBlock(rag)));
+        }
         state.lastConflicts
             .filter((conflict) => conflict.message_id === msg.id)
             .forEach((conflict) => {
@@ -1270,6 +1278,7 @@ async function selectChat(chatId) {
     $('chat-title').textContent = chat?.title || 'Чат';
     renderChatList();
     await loadChatTree(chatId);
+    await loadChatRag(chatId);
     await loadChatStats(chatId);
     await loadChatMemory(chatId);
     await loadChatTasks(chatId);
@@ -1476,6 +1485,7 @@ function handleWsMessage(data) {
             if (data.invariant_conflict) {
                 showToast('⚠️ Обнаружен конфликт с инвариантом', 'warning');
             }
+            if (data.rag && data.rag.warning) showToast('Поиск по базе знаний не удался — ответ дан без RAG', 'warning');
             break;
         case 'error':
             if (data.code !== 'TOOL_ERROR') state.pendingToolCalls = [];
@@ -3092,11 +3102,15 @@ function handleEventFrame(frame) {
     if (frame && frame.type === 'kb_progress' && frame.kb) {
         upsertKb(frame.kb);
         renderKbPanel();
+        renderRagControls();
         return;
     }
     if (frame && frame.type === 'kb_deleted') {
+        const wasAttached = state.rag && state.rag.kb_id === frame.kb_id;
         removeKb(frame.kb_id);
         renderKbPanel();
+        renderRagControls();
+        if (wasAttached && state.currentChatId) loadChatRag(state.currentChatId);
         return;
     }
     applySchedulerEvent(frame);
@@ -3329,6 +3343,18 @@ function bindEvents() {
     });
     $('model-select').addEventListener('change', (e) => {
         onModelSelect(e.target.value).catch((err) => showToast(err.message, 'error'));
+    });
+    $('rag-toggle').addEventListener('click', () => {
+        if (!state.rag) return;
+        saveChatRag({ mode: state.rag.mode === 'rag' ? 'off' : 'rag' });
+    });
+    $('rag-kb-select').addEventListener('change', (e) => {
+        saveChatRag({ kb_id: e.target.value ? Number(e.target.value) : null });
+    });
+    $('rag-k-input').addEventListener('change', (e) => {
+        const clamped = Math.min(20, Math.max(1, parseInt(e.target.value, 10) || 5));
+        e.target.value = String(clamped);
+        saveChatRag({ top_k: clamped });
     });
     $('messages').addEventListener('click', (e) => {
         const fromBtn = e.target.closest('[data-branch-from]');
@@ -3800,6 +3826,214 @@ function buildKbResultCard(item) {
     });
     card.appendChild(toggle);
     return card;
+}
+
+state.rag = null;
+
+function readyKbs() {
+    return (state.lastKbs || []).filter((kb) => kb.status === 'ready');
+}
+
+async function loadChatRag(chatId) {
+    try {
+        if (state.lastKbs === null) await loadKbList(true);
+        const cfg = await apiFetch(`/api/v1/chats/${chatId}/rag`);
+        if (state.currentChatId !== chatId) return;
+        state.rag = cfg;
+    } catch (err) {
+        state.rag = null;
+    }
+    renderRagControls();
+}
+
+function renderRagControls() {
+    const toggle = $('rag-toggle');
+    const select = $('rag-kb-select');
+    const kWrap = $('rag-k-wrap');
+    const kInput = $('rag-k-input');
+    const badge = $('rag-badge');
+    if (!toggle || !select || !kWrap || !kInput || !badge) return;
+    const cfg = state.rag;
+    const kbs = readyKbs();
+
+    select.replaceChildren();
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = '— без базы знаний —';
+    select.appendChild(placeholder);
+    kbs.forEach((kb) => {
+        const opt = document.createElement('option');
+        opt.value = String(kb.id);
+        opt.textContent = kb.name;
+        select.appendChild(opt);
+    });
+    select.title = kbs.length ? '' : 'Нет готовых баз знаний. Создайте базу в боковой панели.';
+
+    if (!cfg) {
+        select.disabled = true;
+        toggle.disabled = true;
+        kWrap.classList.add('hidden');
+        kWrap.classList.remove('flex');
+        badge.textContent = 'без RAG';
+        badge.title = 'без RAG';
+        badge.classList.remove('text-yellow-400');
+        return;
+    }
+
+    const isOn = cfg.mode === 'rag';
+    select.disabled = false;
+    select.value = cfg.kb_id !== null && cfg.kb_id !== undefined ? String(cfg.kb_id) : '';
+    toggle.disabled = cfg.kb_id === null || cfg.kb_id === undefined;
+    toggle.title = toggle.disabled ? 'Выберите базу знаний' : '';
+    toggle.textContent = isOn ? 'с RAG' : 'без RAG';
+    toggle.setAttribute('aria-checked', String(isOn));
+    const onCls = ['bg-indigo-600', 'border-indigo-500', 'text-white'];
+    const offCls = ['bg-slate-800', 'border-slate-700', 'text-slate-300', 'hover:bg-slate-700'];
+    onCls.forEach((c) => toggle.classList.toggle(c, isOn));
+    offCls.forEach((c) => toggle.classList.toggle(c, !isOn));
+
+    kWrap.classList.toggle('hidden', !isOn);
+    kWrap.classList.toggle('flex', isOn);
+    kInput.value = String(cfg.top_k || 5);
+
+    const kbReady = kbs.some((kb) => kb.id === cfg.kb_id);
+    let text = 'без RAG';
+    let unavailable = false;
+    if (isOn) {
+        if (kbReady) {
+            text = `RAG: ${cfg.kb_name || kbs.find((kb) => kb.id === cfg.kb_id).name}`;
+        } else {
+            text = 'RAG: база недоступна';
+            unavailable = true;
+        }
+    }
+    badge.textContent = text;
+    badge.title = text;
+    badge.classList.toggle('text-yellow-400', unavailable);
+    badge.classList.toggle('text-slate-300', !unavailable);
+}
+
+async function saveChatRag(patch) {
+    if (!state.currentChatId || !state.rag) return;
+    const prev = state.rag;
+    const body = {
+        mode: prev.mode,
+        kb_id: prev.kb_id,
+        top_k: prev.top_k,
+        ...patch,
+    };
+    try {
+        state.rag = await apiFetch(`/api/v1/chats/${state.currentChatId}/rag`, {
+            method: 'PUT',
+            body: JSON.stringify(body),
+        });
+    } catch (err) {
+        state.rag = prev;
+        showToast('Не удалось сохранить настройки RAG. Проверьте соединение и попробуйте снова.', 'error');
+    }
+    renderRagControls();
+}
+
+function buildRagMeta(rag) {
+    const frag = document.createDocumentFragment();
+    const sources = Array.isArray(rag.sources) ? rag.sources : [];
+    if (rag.warning) {
+        const warn = mcpEl(
+            'div',
+            'mt-2 rounded-lg border border-yellow-700 bg-yellow-900/30 px-3 py-2 text-xs text-yellow-400',
+            `⚠ ${rag.warning.text}`,
+        );
+        warn.setAttribute('role', 'status');
+        frag.appendChild(warn);
+    }
+    let label = 'без RAG';
+    if (rag.warning) label = 'без RAG (сбой поиска)';
+    else if (rag.mode === 'rag') label = `с RAG · K=${rag.top_k}`;
+    frag.appendChild(mcpEl('div', 'mt-1 text-xs text-slate-500', label));
+    if (rag.mode === 'rag' && !rag.warning && sources.length === 0) {
+        const empty = mcpEl('div', 'text-xs text-slate-500', 'Подходящих фрагментов не найдено');
+        empty.title = 'Ответ дан без фрагментов базы знаний. Переформулируйте вопрос или проверьте, что в базе есть нужный документ.';
+        frag.appendChild(empty);
+    }
+    return frag;
+}
+
+function buildRagSourcesBlock(rag) {
+    const details = mcpEl(
+        'details',
+        'rag-sources rounded-lg border border-slate-700 bg-slate-900 text-xs text-slate-300 px-3 py-2 mt-2 max-w-[75%]',
+    );
+    details.appendChild(mcpEl(
+        'summary',
+        'cursor-pointer select-none font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500',
+        `Источники (${rag.sources.length})`,
+    ));
+    const body = mcpEl('div', 'mt-2 space-y-2');
+    rag.sources.forEach((src) => body.appendChild(buildRagSourceRow(rag.kb_id, src)));
+    details.appendChild(body);
+    details.addEventListener('toggle', () => {
+        if (!details.open || details.dataset.loaded === '1') return;
+        details.dataset.loaded = '1';
+        loadRagSnippets(details);
+    });
+    return details;
+}
+
+function buildRagSourceRow(kbId, src) {
+    const card = mcpEl('div', 'rag-source-row bg-slate-800 border border-slate-700 rounded-lg p-3 space-y-1');
+    card.dataset.kbId = kbId === null || kbId === undefined ? '' : String(kbId);
+    card.dataset.chunkId = String(src.chunk_id);
+    card.dataset.file = src.file || '';
+    const head = mcpEl('div', 'text-xs flex flex-wrap gap-x-2 text-slate-400');
+    head.appendChild(mcpEl('span', '', `#${src.rank}`));
+    head.appendChild(mcpEl('span', 'text-slate-200', Number(src.score).toFixed(3)));
+    const file = mcpEl('span', 'truncate', src.file || '');
+    file.title = src.file || '';
+    head.appendChild(file);
+    if (src.section) head.appendChild(mcpEl('span', 'truncate', src.section));
+    head.appendChild(mcpEl('span', 'font-mono text-slate-500', String(src.chunk_id)));
+    card.appendChild(head);
+    const snippet = mcpEl('p', 'rag-snippet text-sm text-slate-200 line-clamp-4 whitespace-pre-wrap', 'Загрузка фрагмента…');
+    card.appendChild(snippet);
+    const toggle = mcpEl('button', 'rag-snippet-toggle hidden text-xs text-indigo-400 hover:text-indigo-300', 'показать полностью');
+    toggle.type = 'button';
+    toggle.setAttribute('aria-expanded', 'false');
+    toggle.addEventListener('click', () => {
+        const expanded = !snippet.classList.toggle('line-clamp-4');
+        toggle.textContent = expanded ? 'свернуть' : 'показать полностью';
+        toggle.setAttribute('aria-expanded', String(expanded));
+    });
+    card.appendChild(toggle);
+    return card;
+}
+
+async function loadRagSnippets(details) {
+    const rows = details.querySelectorAll('.rag-source-row');
+    await Promise.all(Array.from(rows).map(async (row) => {
+        const snippet = row.querySelector('.rag-snippet');
+        const toggle = row.querySelector('.rag-snippet-toggle');
+        const kbId = row.dataset.kbId;
+        const chunkId = row.dataset.chunkId;
+        const file = row.dataset.file;
+        const unavailable = () => {
+            snippet.textContent = 'Текст фрагмента недоступен: база знаний удалена';
+            snippet.classList.remove('text-slate-200', 'line-clamp-4');
+            snippet.classList.add('text-slate-500');
+        };
+        if (!kbId) {
+            unavailable();
+            return;
+        }
+        try {
+            const data = await apiFetch(
+                `/api/v1/kb/${kbId}/chunks/${encodeURIComponent(chunkId)}?file=${encodeURIComponent(file)}`,
+            );
+            snippet.textContent = data.text;
+            toggle.classList.remove('hidden');
+        } catch (err) {
+            unavailable();
+        }
+    }));
 }
 
 async function runKbSearch(event) {
