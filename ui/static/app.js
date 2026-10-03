@@ -28,6 +28,9 @@ const state = {
     isStatsLocal: false,
     statsAbortController: null,
     lastMemory: null,
+    editingMemory: null,
+    savingMemory: false,
+    deletingMemoryId: null,
     lastProfile: null,
     lastTasks: null,
     lastGlobalInvariants: null,
@@ -293,6 +296,90 @@ async function loadChatMemory(chatId) {
     } catch (err) {
         console.error('Failed to load memory:', err);
     }
+}
+
+function memoryErrorText(err, fallback) {
+    const text = err && typeof err.message === 'string' ? err.message : '';
+    if (text && !text.startsWith('[') && !text.startsWith('{')) return text;
+    return fallback;
+}
+
+function patchLongTermMemoryLocally(entryId, updatedEntry) {
+    if (!state.lastMemory) return;
+    const current = state.lastMemory.long_term;
+    state.lastMemory.long_term = updatedEntry === null
+        ? current.filter((item) => item.id !== entryId)
+        : current.map((item) => (item.id === entryId ? updatedEntry : item));
+}
+
+async function refreshMemoryPanel() {
+    renderMemoryPanel();
+    if (state.currentChatId !== null) {
+        await loadChatMemory(state.currentChatId);
+    }
+}
+
+function startMemoryEdit(entry) {
+    state.editingMemory = { id: entry.id, key: entry.key, value: entry.value };
+    renderMemoryPanel();
+}
+
+function cancelMemoryEdit() {
+    state.editingMemory = null;
+    renderMemoryPanel();
+}
+
+async function saveLongTermMemory() {
+    const draft = state.editingMemory;
+    if (!draft || state.savingMemory) return;
+    const key = draft.key.trim();
+    const value = draft.value;
+    if (!key || !value.trim()) {
+        showToast('Заполните ключ и значение', 'error');
+        return;
+    }
+    state.savingMemory = true;
+    renderMemoryPanel();
+    try {
+        const updated = await apiFetch(`/api/v1/memory/long-term/${draft.id}`, {
+            method: 'PUT',
+            body: JSON.stringify({ key, value }),
+        });
+        if (updated !== undefined) {
+            if (state.editingMemory && state.editingMemory.id === draft.id) {
+                state.editingMemory = null;
+            }
+            patchLongTermMemoryLocally(draft.id, updated);
+            showToast('Запись памяти обновлена', 'success');
+        }
+    } catch (err) {
+        showToast(memoryErrorText(err, 'Не удалось сохранить запись памяти.'), 'error');
+    } finally {
+        state.savingMemory = false;
+    }
+    await refreshMemoryPanel();
+}
+
+async function deleteLongTermMemory(entry) {
+    if (state.deletingMemoryId !== null) return;
+    if (!confirm(`Удалить запись «${entry.key}» из долговременной памяти? Это действие нельзя отменить.`)) return;
+    state.deletingMemoryId = entry.id;
+    renderMemoryPanel();
+    try {
+        const result = await apiFetch(`/api/v1/memory/long-term/${entry.id}`, { method: 'DELETE' });
+        if (result !== undefined) {
+            patchLongTermMemoryLocally(entry.id, null);
+            if (state.editingMemory && state.editingMemory.id === entry.id) {
+                state.editingMemory = null;
+            }
+            showToast('Запись памяти удалена', 'success');
+        }
+    } catch (err) {
+        showToast(memoryErrorText(err, 'Не удалось удалить запись памяти.'), 'error');
+    } finally {
+        state.deletingMemoryId = null;
+    }
+    await refreshMemoryPanel();
 }
 
 function renderMemoryEntries(container, entries) {
