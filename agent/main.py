@@ -53,7 +53,7 @@ from agent.schemas import (
 from agent.llm_client import LMStudioClient, get_lm_studio_client
 from agent.state import CORS_ORIGINS, chat_locks, cleanup_chat_caches
 from agent.context_engine import compute_chat_stats
-from agent import invariants, mcp_client, mcp_config, memory, profile, providers, tasks
+from agent import invariants, kb_indexer, mcp_client, mcp_config, memory, profile, providers, tasks
 from agent import scheduler_tools  # noqa: F401  (registers the scheduler LLM tools)
 from agent.events import ws_events
 from agent.scheduler import scheduler
@@ -394,11 +394,13 @@ async def lifespan(_app: FastAPI):
     # The supervisor hard-kills the Agent, so shutdown hooks may never have run: fail any
     # run left RUNNING before the loop can claim or block on it.
     await scheduler.recover_orphaned_runs()
+    await kb_indexer.recover_orphaned_kb_jobs()
     if app_config.SCHEDULER_ENABLED:
         await scheduler.start()
     yield
     logger.info("agent_shutting_down")
     await scheduler.stop()
+    await kb_indexer.shutdown_kb_jobs()
     await mcp_client.cleanup_all_sessions()
     await engine.dispose()
 

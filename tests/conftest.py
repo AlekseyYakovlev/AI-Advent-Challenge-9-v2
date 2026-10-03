@@ -17,7 +17,7 @@ os.environ.setdefault("SCHEDULER_ENABLED", "false")
 os.environ["DEEPSEEK_API_KEY"] = ""
 os.environ["LLM_PROVIDER_ENV_FILE"] = str(Path(__file__).parent / "no-such-provider.env")
 
-from agent import mcp_client, providers
+from agent import kb_indexer, mcp_client, providers
 from agent import state as agent_state
 from agent.events import hub as events_hub
 from agent.main import app
@@ -54,6 +54,7 @@ async def clean_test_db() -> None:
     shutil.rmtree(kb_storage.kb_root(), ignore_errors=True)
     events_hub.clear()
     providers.reset_state()
+    kb_indexer.reset_state()
     yield
     await mcp_client.cleanup_all_sessions()
     await engine.dispose()

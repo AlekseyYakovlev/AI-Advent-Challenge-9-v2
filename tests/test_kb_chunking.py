@@ -228,3 +228,28 @@ def test_structural_page_start() -> None:
     )
     assert chunks[0].page_start == 1
     assert chunks[1].page_start == 2
+
+
+def test_legal_underscore_suffix_article() -> None:
+    text = (
+        "Глава 14. Предпринимательство\n\n"
+        "Статья 14.1. Первая\n\nТекст один.\n\n"
+        "Статья 14.1_1-1. Суффиксная статья\n\nТекст суффикса."
+    )
+    chunks = chunk_structural(text, doc_title="КоАП", is_markdown=False)
+    assert [c.section for c in chunks] == [
+        "Глава 14 > Статья 14.1",
+        "Глава 14 > Статья 14.1_1-1",
+    ]
+    assert chunks[1].text.splitlines()[0] == "КоАП > Глава 14 > Статья 14.1_1-1. Суффиксная статья"
+
+
+def test_legal_heading_merged_with_body_keeps_body() -> None:
+    body = "Нарушение установленного порядка влечёт предупреждение или штраф в размере тысячи рублей."
+    text = (
+        f"Статья 5.1. Нарушение права. {body} " + "Ещё предложение. " * 12
+        + "\n\nСтатья 5.2. Другая\n\nТекст."
+    )
+    chunks = chunk_structural(text, doc_title="КоАП", is_markdown=False)
+    assert chunks[0].text.splitlines()[0] == "КоАП > Статья 5.1. Нарушение права."
+    assert body in chunks[0].text
