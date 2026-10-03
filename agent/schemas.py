@@ -73,6 +73,7 @@ class MessageResponse(BaseModel):
     content: str = Field(max_length=CONTENT_MAX_LENGTH)
     token_count: int = 0
     created_at: datetime
+    rag_sources: Optional[dict[str, Any]] = None
 
 
 class BranchRequest(BaseModel):
