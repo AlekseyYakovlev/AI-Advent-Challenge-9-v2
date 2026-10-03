@@ -42,7 +42,7 @@
 - [ ] **RAG-05**: The sources used for an answer (file, section, chunk_id, score) are stored on the assistant message and shown under it
 - [ ] **RAG-06**: A frozen set of 10 control questions on the KB exists before any comparison run, each with the expected answer content and expected sources (including out-of-corpus questions)
 - [ ] **RAG-07**: `scripts/rag_eval.py` runs the control set across modes and embedding models and produces the tables (retrieval hit@k, answers, sources) used by the Day 22-25 reports
-- [ ] **RAG-08**: `Day22_report.md` lists the 10 questions with expectation and expected sources, and compares answers without RAG vs with RAG, plus an A/B of giga vs nomic embeddings on retrieval hit@k
+- [ ] **RAG-08**: `Day22_report.md` lists the 10 questions with expectation and expected sources, and compares answers without RAG vs with RAG, plus an A/B of nomic vs bge-m3 embeddings on retrieval hit@k (giga is not available as an embedder — see Phase 13 spike / D-15)
 
 ### Reranking and filtering (Day 23)
 

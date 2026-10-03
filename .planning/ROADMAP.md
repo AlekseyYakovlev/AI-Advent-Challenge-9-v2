@@ -142,7 +142,7 @@ Plans:
   1. User attaches a KB to a chat and switches between "без RAG" and "с RAG"; the current mode and KB are visibly indicated in the chat
   2. With RAG on, an answer is based on the top-K retrieved chunks and shows its sources (file, section, chunk_id, score) under the message; the stored user message remains the raw question
   3. If the embedding model is unavailable or the KB was deleted, the turn still answers without RAG and shows a visible warning; a large RAG block never deletes the user message
-  4. `scripts/rag_eval.py` runs the frozen 10-question control set (including out-of-corpus questions) and `Day22_report.md` compares no-RAG vs RAG answers and giga vs nomic embeddings on hit@k
+  4. `scripts/rag_eval.py` runs the frozen 10-question control set (including out-of-corpus questions) and `Day22_report.md` compares no-RAG vs RAG answers and nomic vs bge-m3 embeddings on hit@k (giga is not available as an embedder — see Phase 13 spike / D-15)
 
 **Plans**: 8 plans
 **UI hint**: yes

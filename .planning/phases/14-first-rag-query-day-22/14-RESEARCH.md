@@ -419,17 +419,21 @@ Categories 6 `direct`, 2 `synthesis` (two `expected_sources` entries, one per fi
 | A4 | LM Studio JIT auto-evict could unload the chat LLM on embedder JIT-load | D-16 spike | first-turn latency; user setting |
 | A5 | Control-question expected articles must be verified against indexed text | Fixture | wrong expectations invalidate hit@k |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Copy for the "context full" case and the "index corrupt" case**
    - Known: UI-SPEC has warnings for embedder, KB deleted, KB not ready, dim mismatch only.
    - Unclear: text for `context_full` and `index_corrupt`/generic failure.
    - Recommendation: add two copies (suggested above; for generic failure reuse the toast text) and note the UI-SPEC deviation in the plan; or fold `index_corrupt`/`retrieval_failed` into one «Поиск по базе знаний не удался…» line.
+   - RESOLVED: add `context_full` copy and one shared «Поиск по базе знаний не удался…» copy for `index_corrupt`/`retrieval_failed`, noted as a UI-SPEC deviation (→ plans 14-01 warning codes/copy, 14-06 UI rendering).
 2. **Where `Day22_report.md` and eval outputs live**
    - Recommendation: report at repo root; raw outputs in `eval_out/day22/` (committed). Discretion; no precedent.
+   - RESOLVED: `Day22_report.md` at repo root, eval outputs in `eval_out/day22/` (scratch DB gitignored), control set in `tests/fixtures/rag/control_set.json` (→ plans 14-02, 14-05, 14-07).
 3. **KB chunk strategy parity for the A/B**
    - Recommendation: build both KBs with `structural` strategy and identical settings; record in report.
+   - RESOLVED: both A/B KBs built with `structural` strategy, chunk_size 1000 / overlap 150, identical settings recorded in run_meta.json and the report (→ plans 14-05 build-kbs, 14-07).
 4. **Disclosure:** research probe loaded `text-embedding-bge-m3` in the user's LM Studio (see D-16 section).
+   - RESOLVED: informational only, no plan action; 14-07 re-runs the D-16 probe at execution time and records the result.
 
 ## Environment Availability
 
