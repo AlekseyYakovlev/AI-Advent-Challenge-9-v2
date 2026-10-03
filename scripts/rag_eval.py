@@ -915,6 +915,406 @@ def _add_calibrate_parser(sub: Any) -> None:
     calibrate.add_argument("--allow-draft", action="store_true", help="testing only")
 
 
+def ablation_config(
+    run: str, top_k: int, candidate_k: int, threshold: float, threshold_source: str = "calibrated"
+) -> Any:
+    """PipelineConfig of one ablation run; baseline is the plain Day 22 top-k."""
+    from agent.rag_pipeline import PipelineConfig
+
+    if run == "baseline":
+        return PipelineConfig(candidate_k=top_k, top_k=top_k, threshold=0.0)
+    flags = ABLATION_RUNS[run]
+    return PipelineConfig(
+        candidate_k=candidate_k,
+        top_k=top_k,
+        threshold=threshold,
+        threshold_source=threshold_source,
+        lexical=flags.get("lexical", False),
+        llm_rerank=flags.get("llm_rerank", False),
+        hybrid=flags.get("hybrid", False),
+        rewrite=flags.get("rewrite", False),
+    )
+
+
+def count_skips(traces: list[dict[str, Any]]) -> dict[str, int]:
+    """Count skipped pipeline stages keyed by 'stage:reason'."""
+    counts: dict[str, int] = {}
+    for trace in traces:
+        for skip in trace.get("skipped") or []:
+            key = f"{skip['stage']}:{skip['reason']}"
+            counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def count_incomplete(rows: list[dict[str, Any]]) -> int:
+    """Answers that are empty or were cut off by the token limit."""
+    return sum(
+        1
+        for row in rows
+        if not (row.get("answer") or "").strip() or row.get("finish_reason") == "length"
+    )
+
+
+def _mean_num(values: list[float]) -> float | None:
+    """Arithmetic mean, or None for an empty list."""
+    return sum(values) / len(values) if values else None
+
+
+def _num(value: float | None, digits: int = 0) -> str:
+    """Render a mean with fixed decimals or n/a."""
+    return "n/a" if value is None else f"{value:.{digits}f}"
+
+
+def render_ablation_md(raws: list[dict[str, Any]]) -> str:
+    """Summary table with one row per ablation run."""
+    header = [
+        "run", "hit@1", "hit@3", "hit@5", "chunks before", "chunks after", "retrieval ms",
+        "answer ms", "below_threshold", "пустых/обрезанных", "skipped",
+    ]
+    lines = ["| " + " | ".join(header) + " |", "|" + "|".join("---" for _ in header) + "|"]
+    for run in ABLATION_RUNS:
+        rows = [raw for raw in raws if raw["run"] == run]
+        if not rows:
+            continue
+        in_corpus = [raw["retrieval"] for raw in rows if raw["category"] != "out_of_corpus"]
+        hits = [_num(_mean([r[f"hit{k}"] for r in in_corpus]), 2) for k in HIT_KS]
+        skips = count_skips(rows)
+        cells = [
+            run,
+            *hits,
+            _num(_mean_num([float(r["chunks_before"]) for r in rows]), 1),
+            _num(_mean_num([float(r["chunks_after"]) for r in rows]), 1),
+            _num(_mean_num([float(r["retrieval_latency_ms"]) for r in rows])),
+            _num(_mean_num([float(r["answer_latency_ms"]) for r in rows])),
+            str(sum(1 for r in rows if r["verdict"] == "below_threshold")),
+            str(count_incomplete(rows)),
+            ", ".join(f"{key}={n}" for key, n in sorted(skips.items())) or "-",
+        ]
+        lines.append("| " + " | ".join(cells) + " |")
+    return "\n".join(lines) + "\n"
+
+
+ANSWER_COLUMNS: tuple[str, ...] = (
+    "id", "category", "run", "answer", "cited_sources", *JUDGE_COLUMNS
+)
+
+
+def render_ablation_answers_md(rows: list[dict[str, Any]]) -> str:
+    """Markdown answers sheet (answers truncated); full text lives in the raw files."""
+    lines = ["| " + " | ".join(ANSWER_COLUMNS) + " |", "|" + "|".join("---" for _ in ANSWER_COLUMNS) + "|"]
+    for row in rows:
+        answer = row.get("answer") or ""
+        if len(answer) > ANSWER_TABLE_CHARS:
+            answer = answer[:ANSWER_TABLE_CHARS] + "…"
+        cells = [_cell(str(row.get(col) or "")) for col in ANSWER_COLUMNS]
+        cells[ANSWER_COLUMNS.index("answer")] = _cell(answer)
+        lines.append("| " + " | ".join(cells) + " |")
+    return "\n".join(lines) + "\n"
+
+
+def render_ablation_answers_csv(rows: list[dict[str, Any]]) -> str:
+    """CSV answers sheet; verdict and judge columns are empty unless carried over."""
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, lineterminator="\n")
+    writer.writerow(ANSWER_COLUMNS)
+    for row in rows:
+        writer.writerow([row.get(col) or "" for col in ANSWER_COLUMNS])
+    return buffer.getvalue()
+
+
+def _load_existing_verdicts(path: Path) -> dict[tuple[str, str], dict[str, str]]:
+    """Filled verdict/comment/judge cells of an existing answers.csv keyed by (id, run)."""
+    if not path.exists():
+        return {}
+    existing: dict[tuple[str, str], dict[str, str]] = {}
+    with path.open(encoding="utf-8", newline="") as handle:
+        for row in csv.DictReader(handle):
+            kept = {col: row.get(col) or "" for col in JUDGE_COLUMNS if row.get(col)}
+            if kept:
+                existing[(row["id"], row["run"])] = kept
+    return existing
+
+
+def _render_ablation_outputs(
+    opts: EvalOptions, fixture: dict[str, Any], meta: dict[str, Any]
+) -> dict[str, Any]:
+    """Render tables and run_meta.json from the complete set of raw files."""
+    raws = _load_raw(opts.out / "raw")
+    by_key = {(raw["run"], raw["id"]): raw for raw in raws}
+    carried = _load_existing_verdicts(opts.out / "answers.csv")
+    answer_rows: list[dict[str, Any]] = []
+    for question in fixture["questions"]:
+        for run in ABLATION_RUNS:
+            raw = by_key.get((run, question["id"]))
+            if raw is None:
+                continue
+            answer_rows.append(
+                {
+                    "id": question["id"],
+                    "category": question["category"],
+                    "run": run,
+                    "answer": raw["answer"],
+                    "cited_sources": "; ".join(raw.get("cited_sources") or []),
+                    **carried.get((question["id"], run), {}),
+                }
+            )
+    (opts.out / "ablation.md").write_text(render_ablation_md(raws), encoding="utf-8")
+    (opts.out / "answers.md").write_text(render_ablation_answers_md(answer_rows), encoding="utf-8")
+    (opts.out / "answers.csv").write_text(
+        render_ablation_answers_csv(answer_rows), encoding="utf-8", newline=""
+    )
+    present = [run for run in ABLATION_RUNS if any(raw["run"] == run for raw in raws)]
+    meta = {
+        **meta,
+        "runs": present,
+        "incomplete_answers": {
+            run: count_incomplete([raw for raw in raws if raw["run"] == run]) for run in present
+        },
+    }
+    _write_json(opts.out / "run_meta.json", meta)
+    return meta
+
+
+def _failed_trace(config: Any, code: str) -> dict[str, Any]:
+    """Trace stand-in for a retrieval that raised RagFailure."""
+    return {
+        "verdict": "kb_unavailable",
+        "config": {"candidate_k": config.candidate_k, "top_k": config.top_k, "threshold": config.threshold},
+        "stages": [],
+        "stage_ms": {},
+        "skipped": [],
+        "candidates": [],
+        "warning": code,
+    }
+
+
+async def _ablate_question(
+    session: Any,
+    kb: Any,
+    client: Any,
+    opts: EvalOptions,
+    run: str,
+    config: Any,
+    question: dict[str, Any],
+) -> dict[str, Any]:
+    """Run one question through the pipeline and the answer model; return the raw record."""
+    from agent.rag import (
+        RagFailure,
+        build_rag_block,
+        merge_no_fragments_note,
+        merge_rag_block,
+        rag_budget,
+    )
+    from agent.rag_pipeline import VERDICT_BELOW_THRESHOLD, mark_over_budget, run_retrieval_pipeline
+
+    started = time.perf_counter()
+    warning: str | None = None
+    try:
+        chunks, trace = await run_retrieval_pipeline(
+            session, kb, question["question"], config, client, opts.model
+        )
+    except RagFailure as failure:
+        chunks, trace, warning = [], _failed_trace(config, failure.code), failure.code
+    retrieval_ms = int((time.perf_counter() - started) * 1000)
+    verdict = trace.pop("verdict")
+    messages = [
+        {"role": "system", "content": EVAL_SYSTEM_PROMPT},
+        {"role": "user", "content": question["question"]},
+    ]
+    kept: list[dict[str, Any]] = []
+    dropped = 0
+    if verdict == VERDICT_BELOW_THRESHOLD:
+        merge_no_fragments_note(messages)
+    else:
+        budget = rag_budget(opts.context_length, _message_tokens(messages), opts.max_tokens)
+        block, kept, dropped = build_rag_block(chunks, budget)
+        if block:
+            merge_rag_block(messages, block)
+        mark_over_budget(trace, len(kept))
+    answer_started = time.perf_counter()
+    reply = await _ask(client, opts, messages)
+    answer_ms = int((time.perf_counter() - answer_started) * 1000)
+    return {
+        "run": run,
+        "id": question["id"],
+        "category": question["category"],
+        "question": question["question"],
+        "config": trace["config"],
+        "search": trace,
+        "retrieval": {**score_question(chunks, question, opts.top_k), "warning": warning, "dropped": dropped},
+        "chunks_before": len(trace["candidates"]),
+        "chunks_after": len(kept),
+        "retrieval_latency_ms": retrieval_ms,
+        "answer_latency_ms": answer_ms,
+        "skipped": trace.get("skipped", []),
+        "verdict": verdict,
+        "messages": reply.pop("sent"),
+        "chunks": [{k: v for k, v in c.items() if k != "text"} for c in chunks],
+        "fragments": [c["text"] for c in kept],
+        "cited_sources": _cited_sources(reply["answer"], kept),
+        **reply,
+    }
+
+
+async def run_ablation(
+    opts: EvalOptions,
+    client: Any,
+    session_factory: Any,
+    runs: list[str],
+    kb_label: str,
+    kb_id: int,
+    candidate_k: int,
+    threshold: float,
+    threshold_source: str = "calibrated",
+) -> dict[str, Any]:
+    """Answer every control question under each ablation run and write all outputs."""
+    from shared.models import KnowledgeBase
+
+    fixture = load_fixture(opts.fixture, require_frozen=not opts.allow_draft)
+    raw_dir = opts.out / "raw"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    async with session_factory() as session:
+        kb = await session.get(KnowledgeBase, kb_id)
+        kb_meta = {
+            "label": kb_label,
+            "kb_id": kb_id,
+            "embedding_model": kb.embedding_model,
+            "strategy": getattr(kb.strategy, "value", kb.strategy),
+            "chunk_size": kb.chunk_size,
+            "chunk_overlap": kb.chunk_overlap,
+        }
+        for run in runs:
+            config = ablation_config(run, opts.top_k, candidate_k, threshold, threshold_source)
+            for question in fixture["questions"]:
+                raw = await _ablate_question(session, kb, client, opts, run, config, question)
+                _write_json(raw_dir / f"{run}_{question['id']}.json", raw)
+    calibration_sha: str | None = None
+    calibration_json = opts.out / "calibration.json"
+    if calibration_json.exists():
+        recorded = json.loads(calibration_json.read_text(encoding="utf-8"))
+        calibration_sha = recorded.get("fixtures", {}).get("calibration", {}).get("sha256")
+    meta = {
+        "fixture": opts.fixture.name,
+        "fixture_sha256": fixture_sha256(opts.fixture),
+        "calibration_fixture_sha256": calibration_sha,
+        "provider": opts.provider,
+        "model": opts.model,
+        "temperature": 0.0,
+        "max_tokens": opts.max_tokens,
+        "context_length": opts.context_length,
+        "top_k": opts.top_k,
+        "candidate_k": candidate_k,
+        "threshold": threshold,
+        "threshold_source": threshold_source,
+        "kb": kb_meta,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    return _render_ablation_outputs(opts, fixture, meta)
+
+
+def _parse_runs(text: str | None) -> list[str] | None:
+    """Comma list of run names in canonical order; None when a name is unknown."""
+    if not text:
+        return list(ABLATION_RUNS)
+    names = [name.strip() for name in text.split(",") if name.strip()]
+    if not names or any(name not in ABLATION_RUNS for name in names):
+        return None
+    return [run for run in ABLATION_RUNS if run in names]
+
+
+async def ablate_command(args: argparse.Namespace) -> int:
+    """Preflight, then run the ablation configurations through the shared pipeline."""
+    runs = _parse_runs(args.runs)
+    if runs is None:
+        print(f"preflight: --runs must be a comma list of {', '.join(ABLATION_RUNS)}")
+        return EXIT_PREFLIGHT
+    if len(args.kb) != 1:
+        print("preflight: ablate takes exactly one --kb LABEL=ID")
+        return EXIT_PREFLIGHT
+    _use_scratch_storage(args.db)
+    (kb_label, kb_id), = _kb_ids(args.kb).items()
+    load_fixture(args.fixture, require_frozen=True)
+
+    from agent.llm_client import LLMClient
+    from agent.providers import DEEPSEEK_BASE_URL
+    from agent.rag import resolve_threshold
+    from shared.config import settings
+    from shared.database import async_session_factory, init_db
+    from shared.models import KbStatus, KnowledgeBase
+
+    await init_db()
+    if args.provider == "deepseek":
+        base_url = args.base_url or DEEPSEEK_BASE_URL
+        api_key = settings.DEEPSEEK_API_KEY
+        if not api_key:
+            print("preflight: DEEPSEEK_API_KEY is not set")
+            return EXIT_PREFLIGHT
+    else:
+        base_url = args.base_url or os.environ.get("LM_STUDIO_BASE_URL", "http://localhost:1234")
+        api_key = ""
+        if not await _lm_studio_reachable(base_url):
+            return EXIT_PREFLIGHT
+    async with async_session_factory() as session:
+        kb = await session.get(KnowledgeBase, kb_id)
+        if kb is None or kb.status != KbStatus.READY:
+            print(f"preflight: knowledge base {kb_label}={kb_id} does not exist or is not ready")
+            return EXIT_PREFLIGHT
+        threshold, source = resolve_threshold(args.threshold, kb.embedding_model)
+    if threshold == 0.0 and args.threshold is None:
+        print(
+            "preflight: no calibrated threshold for this embedder; run calibrate and store the "
+            "constant first, or pass --threshold"
+        )
+        return EXIT_PREFLIGHT
+    opts = EvalOptions(
+        kb={kb_label: kb_id},
+        provider=args.provider,
+        model=args.model,
+        top_k=args.top_k,
+        context_length=args.context_length,
+        max_tokens=args.max_tokens,
+        fixture=args.fixture,
+        out=args.out,
+    )
+    await run_ablation(
+        opts,
+        LLMClient(base_url, api_key),
+        async_session_factory,
+        runs,
+        kb_label,
+        kb_id,
+        max(args.candidate_k, args.top_k),
+        threshold,
+        source,
+    )
+    print(f"ablation written to {opts.out} (runs: {', '.join(runs)})")
+    return EXIT_OK
+
+
+def _add_ablate_parser(sub: Any) -> None:
+    """Register the ablate subcommand."""
+    ablate = sub.add_parser("ablate", help="compare retrieval-pipeline configurations")
+    ablate.add_argument("--db", type=Path, default=DAY23_DB)
+    ablate.add_argument("--kb", action="append", required=True, metavar="LABEL=ID")
+    ablate.add_argument("--provider", choices=("lmstudio", "deepseek"), default="lmstudio")
+    ablate.add_argument("--model", default=DEFAULT_MODEL)
+    ablate.add_argument("--base-url", default="")
+    ablate.add_argument("--top-k", type=int, default=5)
+    ablate.add_argument("--candidate-k", type=int, default=DEFAULT_CANDIDATE_K)
+    ablate.add_argument("--threshold", type=float, default=None)
+    ablate.add_argument("--runs", default=None, help="comma list; default all: " + ",".join(ABLATION_RUNS))
+    ablate.add_argument("--context-length", type=int, default=16384)
+    ablate.add_argument(
+        "--max-tokens",
+        type=int,
+        default=DEFAULT_ABLATE_MAX_TOKENS,
+        help="answer budget; 4096 is the Day 22 baseline value (1024 left most qwen3.5-9b "
+        "answers empty because the budget went to reasoning) and it enters rag_budget",
+    )
+    ablate.add_argument("--fixture", type=Path, default=DEFAULT_FIXTURE)
+    ablate.add_argument("--out", type=Path, default=DAY23_OUT)
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Command-line interface."""
     parser = argparse.ArgumentParser(description="Offline RAG evaluation runner.")
@@ -941,6 +1341,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--allow-draft", action="store_true", help="testing only")
     run.add_argument("--only-kb", metavar="LABEL", default=None)
     _add_calibrate_parser(sub)
+    _add_ablate_parser(sub)
     return parser
 
 
@@ -951,6 +1352,7 @@ def main() -> int:
         "build-kbs": build_kbs,
         "run": run_command,
         "calibrate": calibrate_command,
+        "ablate": ablate_command,
     }
     return asyncio.run(handlers[args.command](args))
 
