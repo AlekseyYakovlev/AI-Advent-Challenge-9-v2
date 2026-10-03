@@ -1,6 +1,7 @@
 """Shared pytest fixtures and test environment setup."""
 
 import os
+import shutil
 from collections.abc import Callable, Coroutine
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -21,6 +22,7 @@ from agent import state as agent_state
 from agent.events import hub as events_hub
 from agent.main import app
 from shared.config import settings
+from shared import kb_storage
 from shared.database import async_session_factory, engine, init_db
 
 
@@ -29,7 +31,8 @@ async def clean_test_db() -> None:
     """Remove and recreate the test database before each test.
 
     Also clears agent.state's in-memory dicts (chat_locks, active_streams,
-    ws_rate_limiter, title_tasks): the DB resets chat ids back to 1 each test, but each
+    ws_rate_limiter, title_tasks, kb_jobs, kb_index_cache) and wipes the KB storage
+    directory: the DB resets chat ids back to 1 each test, but each
     `with TestClient(app):` block spins its own event loop, so a stale
     `asyncio.Lock` left in `chat_locks` from an earlier test's (now-closed)
     loop would otherwise deadlock a later test that reuses the same chat id.
@@ -46,6 +49,9 @@ async def clean_test_db() -> None:
     agent_state.ws_rate_limiter.clear()
     agent_state.chat_locks.clear()
     agent_state.title_tasks.clear()
+    agent_state.kb_jobs.clear()
+    agent_state.kb_index_cache.clear()
+    shutil.rmtree(kb_storage.kb_root(), ignore_errors=True)
     events_hub.clear()
     providers.reset_state()
     yield
@@ -53,6 +59,7 @@ async def clean_test_db() -> None:
     await engine.dispose()
     if db_path.exists():
         db_path.unlink()
+    shutil.rmtree(kb_storage.kb_root(), ignore_errors=True)
 
 
 @pytest.fixture
