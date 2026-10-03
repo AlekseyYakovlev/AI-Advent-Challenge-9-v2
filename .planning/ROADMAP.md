@@ -36,7 +36,8 @@ Full details: [milestones/v2.0-ROADMAP.md](milestones/v2.0-ROADMAP.md)
 
 ### 🚧 v3.0 Week 5: RAG (In Progress)
 
-- [x] **Phase 10: Modals close only via x button (Day 21)** — carried over from v2.0; a modal closes only on its 'x'; a backdrop click no longer closes it (completed 2026-10-02)
+- [x] **Phase 10: Modals close only via x button (Day 21)** — carried over from v2.0; a modal closes only on its 'x'; a backdrop click no longer closes it
+ (completed 2026-10-02)
 - [ ] **Phase 11: Edit and delete long-term memory entries via UI (Day 21)** — carried over from v2.0; "Редактировать" / "Удалить" buttons per long-term memory entry
 - [ ] **Phase 13: Knowledge base indexing (Day 21)** — upload PDF/TXT/MD, chunk (fixed or structural), embed via LM Studio, persist FAISS + SQLite, background indexing with live progress
 - [ ] **Phase 14: First RAG query (Day 22)** — attach a KB to a chat, toggle RAG, retrieve top-K chunks into the LLM request, show sources, frozen 10-question eval and Day22 report
@@ -98,9 +99,20 @@ Plans:
   3. While indexing runs, the UI shows live status and progress (queued / x of y / ready / failed) and the Agent keeps passing health checks; a job interrupted by an Agent restart shows as failed
   4. A "тест поиска" query against a ready KB returns top chunks with scores and metadata (source, section, chunk_id)
   5. Deleting a KB removes its rows, on-disk index and uploaded files; another user's KB is never visible (404)
-**Plans**: TBD
+**Plans**: 8 plans
 **UI hint**: yes
 **Research flag**: needs deeper research (embedding round trip and per-model prefixes, КоАП header/footer patterns, VRAM co-loading with the chat model); start with a short spike
+
+Plans:
+
+- [ ] 13-01-PLAN.md — Foundation: pinned RAG deps, KB config keys, KnowledgeBase/KbDocument/KbChunk tables, FAISS bytes storage helper, KB state, test isolation
+- [ ] 13-02-PLAN.md — KB limits module + pure chunkers (fixed with validation, structural cascade with breadcrumbs and 2000-char sub-split)
+- [ ] 13-03-PLAN.md — PyMuPDF/TXT/MD loaders with header/footer/annotation cleaning, scan detection, golden tests on real КоАП/ФЗ-196 pages
+- [ ] 13-04-PLAN.md — Embeddings client with D-24 identity guard, explicit load, batching, prefixes; additive `type` on provider models
+- [ ] 13-05-PLAN.md — Background indexing job (all-or-nothing), delete with cancel, orphan recovery, kb_progress events, lifespan wiring
+- [ ] 13-06-PLAN.md — KB REST API (multipart 202 create with caps/dedupe, list/get/delete, search, embedding models/check) + search service
+- [ ] 13-07-PLAN.md — Sidebar «База знаний» block, create modal, test-search modal, live progress, chat picker hides embeddings
+- [ ] 13-08-PLAN.md — Real-PDF golden tests, Playwright E2E on isolated copy (18000/18001) with both PDFs and strategies, docs sync
 
 ### Phase 14: First RAG query (Day 22)
 
