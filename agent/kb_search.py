@@ -60,7 +60,7 @@ async def search_kb(
     if kb.status != KbStatus.READY:
         raise KbNotReadyError()
     index = await load_index_cached(kb)
-    vector = await embed_query(kb.embedding_model, query)
+    vector = await embed_query(kb.embedding_model, query, None, kb.query_prefix)
     array = np.asarray([vector], dtype="float32")
     if array.shape[1] != index.d:
         raise KbIndexCorruptError()

@@ -212,7 +212,10 @@ async def embed_passages(
     return await embed_texts(model_id, [prefix + text for text in texts], base_url)
 
 
-async def embed_query(model_id: str, text: str, base_url: str | None = None) -> list[float]:
-    """Embed a search query with the model's query prefix."""
-    prefix = prefixes_for(model_id)[0]
+async def embed_query(
+    model_id: str, text: str, base_url: str | None = None, prefix: str | None = None
+) -> list[float]:
+    """Embed a search query with an explicit prefix, else the model's query prefix."""
+    if prefix is None:
+        prefix = prefixes_for(model_id)[0]
     return (await embed_texts(model_id, [prefix + text], base_url))[0]
