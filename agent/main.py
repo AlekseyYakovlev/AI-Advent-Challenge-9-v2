@@ -57,6 +57,7 @@ from agent import invariants, kb_indexer, mcp_client, mcp_config, memory, profil
 from agent import scheduler_tools  # noqa: F401  (registers the scheduler LLM tools)
 from agent.events import ws_events
 from agent.scheduler import scheduler
+from agent.kb_api import router as kb_router
 from agent.providers_api import router as providers_router
 from agent.scheduler_api import router as scheduler_router
 from agent.ws import ws_chat
@@ -417,6 +418,7 @@ app.add_middleware(
 
 app.include_router(scheduler_router)
 app.include_router(providers_router)
+app.include_router(kb_router)
 
 
 @app.get("/debug/routes")
