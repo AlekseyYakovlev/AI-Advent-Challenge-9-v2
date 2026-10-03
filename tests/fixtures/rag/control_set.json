@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "status": "draft",
-  "frozen_at": null,
+  "status": "frozen",
+  "frozen_at": "2026-10-03",
   "corpus": ["ФЗ-196", "КоАП РФ"],
   "questions": [
     {

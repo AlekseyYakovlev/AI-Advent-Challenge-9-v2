@@ -73,7 +73,6 @@ def test_status_value() -> None:
     assert _load()["status"] in {"draft", "frozen"}
 
 
-@pytest.mark.xfail(strict=True, reason="awaiting user approval (D-13)")
 def test_fixture_is_frozen() -> None:
     data: dict[str, Any] = _load()
     assert data["status"] == "frozen"

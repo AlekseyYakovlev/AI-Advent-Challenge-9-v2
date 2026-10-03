@@ -1,7 +1,7 @@
 ---
 phase: 14-first-rag-query-day-22
 plan: 02
-status: paused
+status: complete
 subsystem: rag-eval
 tags: [rag, fixture, control-set]
 requirements: [RAG-06]
@@ -11,7 +11,7 @@ key-files:
     - tests/test_rag_fixture.py
 ---
 
-# Phase 14 Plan 02: RAG control set (PAUSED at Task 2 checkpoint)
+# Phase 14 Plan 02: RAG control set (complete, frozen)
 
 Draft 10-question control set (status draft) and schema test are committed; awaiting user approval (D-13) before Task 3 freezes it.
 
@@ -20,8 +20,8 @@ Draft 10-question control set (status draft) and schema test are committed; awai
 | Task | Name | Status | Commit |
 | ---- | ---- | ------ | ------ |
 | 1 | Draft control set + schema test | done | 8b84824 |
-| 2 | User approval (checkpoint) | awaiting | - |
-| 3 | Freeze fixture, record sha256 | not started | - |
+| 2 | User approval (checkpoint) | approved | - |
+| 3 | Freeze fixture, record sha256 | done | see git log (test(14-02): freeze RAG control set) |
 
 Verified: `pytest tests/test_rag_fixture.py -q` -> 9 passed, 1 xfailed.
 
@@ -46,6 +46,10 @@ Verified: `pytest tests/test_rag_fixture.py -q` -> 9 passed, 1 xfailed.
 - Raw PDF extraction splits article headings across lines (Статья / 26. / ...); the loader's cleaning (`load_document`) rejoins them, and article numbers were checked against ARTICLE_RE on the cleaned text (FZ-196: 34 articles found).
 - Out-of-corpus claims verified by text search: no matches for "транспортный налог", "базовый тариф", "КБМ" in either cleaned text.
 
-## Pending
+## Approval and freeze
 
-Task 3: apply approved edits, set status frozen + frozen_at, remove xfail marker, record sha256 here, commit `test(14-02): freeze RAG control set`.
+User approval (D-13), verbatim: "approved" (no edits to the control set).
+
+- Fixture status: frozen, frozen_at: 2026-10-03; xfail marker removed from test_fixture_is_frozen.
+- sha256 of tests/fixtures/rag/control_set.json (working-copy bytes, LF): `e1f2641cb95eb3cf12854b3111ee52c0127c5a846f9ffcfee246626a62f7696d`
+- Verified: `pytest tests/test_rag_fixture.py -q` -> 10 passed.
