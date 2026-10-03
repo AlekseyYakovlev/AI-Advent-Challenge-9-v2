@@ -506,6 +506,59 @@ Notes: `updated_at` is refreshed and `created_at` is kept on update. There is no
 created by the LLM tool `save_long_term_memory`). No WebSocket frame is sent for edits; the change is
 visible to the model from the next turn.
 
+## Chat RAG (Day 22)
+
+A chat can answer with fragments retrieved from one of the caller's ready knowledge bases. The
+setting is per chat and stored in `ChatRagConfig`; the knowledge base stays the Day 21 one. A chat
+with no row behaves as `off`.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/chats/{chat_id}/rag` | Current setting: `{chat_id, mode, kb_id, kb_name, kb_status, top_k}`; defaults `off`, `null`, `5` |
+| PUT | `/api/v1/chats/{chat_id}/rag` | Body `{"mode": "off" or "rag", "kb_id": int or null, "top_k": 1..20 = 5}`; answers the same object |
+| GET | `/api/v1/kb/{kb_id}/chunks/{chunk_id}?file=` | Text of one chunk: `{chunk_id, source, section, title, text}` |
+
+- `PUT` requires an allowed `Origin` and `Content-Type: application/json`. A chat or knowledge base
+  owned by another user answers `404` (never `403`). A knowledge base that is not `ready` answers
+  `422` ("База знаний ещё не готова"); `mode` or `top_k` outside the allowed values answer `422`.
+  `kb_id: null` forces `mode` to `off`.
+- A deleted knowledge base is detached (`kb_id` becomes `null`, the row keeps its `mode`).
+- The chunk route answers `404` when the knowledge base is not the caller's, the chunk does not
+  exist, or `file` is given and differs from the chunk's source (guards a stale citation against a
+  reused `kb_id`).
+
+### Message.rag_sources
+
+`MessageResponse` (history, `GET /api/v1/chats/{id}/tree`) carries `rag_sources`: `null` for user
+messages and for messages written before this feature, otherwise the payload below. Only metadata is
+stored, never fragment text; the stored user message is always the raw question.
+
+### done.rag
+
+The final WebSocket `done` frame carries the same payload under `rag`:
+
+```json
+{
+  "v": 1,
+  "mode": "rag",
+  "kb_id": 3,
+  "kb_name": "fz196",
+  "top_k": 5,
+  "sources": [
+    {"rank": 1, "chunk_id": "c-12", "file": "FZ_196.pdf", "section": "Глава IV > Статья 26", "page": "1-74", "score": 0.804}
+  ],
+  "dropped": 0,
+  "context_tokens": 1450,
+  "warning": null
+}
+```
+
+- `mode` is `off` or `rag`; with `off` the source list is empty and `warning` is `null`.
+- `dropped` counts fragments removed (lowest score first) to fit the RAG budget.
+- `warning` is `{code, text}` when retrieval failed and the answer was produced without fragments
+  (the turn never fails because of RAG). Codes: `kb_deleted`, `kb_not_ready`, `embedder_unavailable`,
+  `dim_mismatch`, `index_corrupt`, `context_full`, `retrieval_failed`. `text` is a Russian message.
+
 ## Environment Settings
 
 | Variable | Default | Meaning |

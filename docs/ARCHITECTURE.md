@@ -406,3 +406,39 @@ the directory, and emits `kb_deleted`.
 with whatever embedding model is loaded, so naming an `llm`-type model would silently return vectors
 from a different model. The guard checks the model's type via `/api/v0/models` and rejects anything
 but `embeddings` with a Russian message. Embedding models are also hidden from the chat model picker.
+
+## Chat RAG pre-step (Day 22)
+
+**Modules.** `agent/rag.py` (retrieval, budget, block rendering, payload), `agent/rag_turn.py`
+(fail-soft pre-step `prepare_rag_turn`), `agent/rag_api.py` (REST routes). `ChatRagConfig` holds
+`mode`, `kb_id`, `top_k` per chat (CASCADE on the chat, SET NULL on the knowledge base, so deleting a
+KB detaches it instead of failing). `Message.rag_sources` stores the metadata-only payload of an
+assistant answer (no fragment text); snippets are fetched lazily through the chunk route.
+
+**Position in the WS turn.** After `build_llm_context` and the system-prompt suffix, before streaming:
+the question is embedded with the KB's embedding model, the top-K chunks are fetched from the cached
+FAISS index, and the numbered fragments plus an instruction are merged only into the outbound copy of
+the last user message. The stored message and the message tree keep the raw question.
+
+**Budget.** `min(30% of context_length, context_length - used_tokens - max_tokens)`. Fragments are
+dropped lowest score first until they fit; if chunks exist but none fits, the turn continues without
+fragments and reports the `context_full` warning.
+
+**D-12 ordering note.** The decision asks for the budget to be settled before the compression
+strategy. Here the budget is computed after `build_llm_context` from the exact used tokens and merged
+only into the outbound copy, so RAG tokens never reach the compression strategy or the
+`no_compression` overflow check. This satisfies the intent of D-12 (RAG can neither distort
+compression nor trigger an overflow); see `14-04-SUMMARY.md` in the phase directory.
+
+**Why RAG cannot reach the delete paths.** The pre-step catches every failure itself (`RagFailure` and
+any other exception become a `warning` payload; only cancellation propagates), and the fragments are
+added after the overflow check, so neither the `CONTEXT_OVERFLOW` nor the `LLM_ERROR` branch (which
+delete the just-submitted user message) can be caused by RAG.
+
+**Embedding dimension guard.** Before searching, the query vector size is compared with the index
+dimension; a mismatch yields the `dim_mismatch` warning instead of a wrong search. A corrupt index
+yields `index_corrupt`; an unloaded embedder yields `embedder_unavailable`.
+
+**Fragment safety.** Runs of three or more `=` inside document text are collapsed so a document
+cannot close the fragments block (prompt-injection guard); the frontend renders everything with
+`textContent`.

@@ -287,6 +287,28 @@ Title tests must create chats titled `New Chat` and classify mocked LLM requests
   test search cards, scan PDF and giga failures, Agent killed mid-job (restart message), delete during
   and after indexing (directory removed), second-user isolation.
 
+## Chat RAG (Day 22)
+
+- `test_rag.py`: retrieval wrapper, budget formula, block rendering and delimiter neutralizing, payload versioning and parsing, failure-to-warning mapping.
+- `test_rag_turn.py`: `prepare_rag_turn` outcomes (off, no row, KB missing or foreign, not ready, context_full, retrieval failure) and that it never raises except on cancellation.
+- `test_rag_ws.py`: WS turn with RAG: fragments only in the outbound last user message, raw question stored, `done.rag` payload, `Message.rag_sources` persisted, RAG failure never deletes the user message or breaks the answer.
+- `test_rag_api.py`: GET/PUT `/chats/{id}/rag` (defaults, validation, 404 for foreign chat/KB, 422 for not-ready KB, `kb_id` null forces off) and the chunk snippet route (404 rules, `file` guard).
+- `test_rag_static.py`: frontend source guard: RAG controls, labels, sources block and warnings use `textContent`/DOM builders only, no `innerHTML` with server text.
+- `test_rag_fixture.py`: control question set of the evaluation (counts, expected sources, validity).
+- `test_rag_eval.py`: `scripts/rag_eval.py` scoring (hit@k), run directory outputs, preflight failures, scratch DB never `app.db`.
+- `test_rag_report.py`: Day 22 report generation from the evaluation outputs.
+
+### scripts/e2e_rag_playwright.py (browser UAT, not part of pytest)
+- Runs a temporary copy of the app at UI :18000 / Agent :18001 with a scratch database and KB storage
+  against the real LM Studio (nomic embedder and a chat model, `qwen/qwen3.5-9b` preferred) and the
+  real ФЗ-196 PDF; never touches :8000/:8001. Exit 0 all passed, 1 a check failed, 2 blocked, 4
+  Playwright missing. Takes a few minutes (reasoning-model answers dominate).
+- Scenarios: KB reaches «готово»; new chat has a disabled switch and «без RAG»; attach KB, «с RAG»,
+  K=5, badge, state survives reload; RAG answer with «с RAG · K=5», «Источники (N)», lazy snippet,
+  stored question equals the raw one with no fragments block in history; «без RAG» answer without
+  sources; KB deleted mid-chat: answer with the yellow warning, toast and «без RAG (сбой поиска)»,
+  warning persists after reload; no console errors.
+
 ## Long-term memory editing (Day 21)
 
 ### test_memory.py (CRUD helpers)
