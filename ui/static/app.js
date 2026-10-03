@@ -1402,7 +1402,10 @@ function findModelEntry(providerId, modelId) {
 }
 
 function usableModelGroups() {
-    return state.modelGroups.filter((g) => !g.error && g.models.length > 0);
+    return state.modelGroups
+        .filter((g) => !g.error)
+        .map((g) => ({ ...g, models: g.models.filter((m) => m.type !== 'embeddings') }))
+        .filter((g) => g.models.length > 0);
 }
 
 async function fetchModelGroups(refresh) {
@@ -2877,6 +2880,16 @@ function handleEventFrame(frame) {
         applyChatTitleUpdate(frame);
         return;
     }
+    if (frame && frame.type === 'kb_progress' && frame.kb) {
+        upsertKb(frame.kb);
+        renderKbPanel();
+        return;
+    }
+    if (frame && frame.type === 'kb_deleted') {
+        removeKb(frame.kb_id);
+        renderKbPanel();
+        return;
+    }
     applySchedulerEvent(frame);
 }
 
@@ -2935,6 +2948,7 @@ function connectEventsWs() {
         state.eventsReconnectAttempt = 0;
         stopSchedulerPolling();
         loadSchedulerTasks(true);
+        loadKbList(true);
         clearEventsPing();
         state.eventsPingTimer = setInterval(() => {
             if (ws.readyState === WebSocket.OPEN) ws.send('ping');
@@ -3162,10 +3176,477 @@ function bindEvents() {
     });
     setupFoldablePanels();
     bindSchedulerModals();
+    bindKbUi();
     const schedulerFold = document.querySelector('[data-fold-toggle="scheduler-panel-body"]');
     if (schedulerFold) {
         schedulerFold.addEventListener('click', () => {
             if (!$('scheduler-panel-body').classList.contains('hidden')) loadSchedulerTasks();
+        });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Knowledge bases
+// ---------------------------------------------------------------------------
+
+state.lastKbs = null;
+state.kbExpanded = new Set();
+state.kbConfirmDelete = new Map();
+state.kbSelectedFiles = [];
+state.kbModalOpener = null;
+state.kbSearchId = null;
+state.kbEmbeddingModels = [];
+
+const KB_EMBED_NAME_RE = /embed|giga|nomic|bge|e5/i;
+
+function ruPlural(n, forms) {
+    const mod10 = n % 10;
+    const mod100 = n % 100;
+    if (mod10 === 1 && mod100 !== 11) return forms[0];
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return forms[1];
+    return forms[2];
+}
+
+async function loadKbList(silent = false) {
+    try {
+        state.lastKbs = await apiFetch('/api/v1/kb') || [];
+    } catch (err) {
+        if (!silent) showToast('Не удалось загрузить базы знаний', 'error');
+        return;
+    }
+    renderKbPanel();
+}
+
+function upsertKb(kb) {
+    if (state.lastKbs === null) {
+        loadKbList(true);
+        return;
+    }
+    const idx = state.lastKbs.findIndex((item) => item.id === kb.id);
+    if (idx >= 0) state.lastKbs[idx] = kb;
+    else state.lastKbs.unshift(kb);
+}
+
+function removeKb(kbId) {
+    if (state.lastKbs === null) return;
+    state.lastKbs = state.lastKbs.filter((item) => item.id !== kbId);
+    state.kbExpanded.delete(kbId);
+    clearKbDeleteConfirm(kbId);
+}
+
+function clearKbDeleteConfirm(kbId) {
+    const timer = state.kbConfirmDelete.get(kbId);
+    if (timer !== undefined) clearTimeout(timer);
+    state.kbConfirmDelete.delete(kbId);
+}
+
+function kbStatusChip(kb) {
+    const chip = mcpEl('span', 'text-xs flex-shrink-0 flex items-center gap-1');
+    let cls = 'text-slate-400';
+    let text = 'в очереди';
+    if (kb.status === 'indexing') {
+        cls = 'text-sky-400';
+        if (kb.phase === 'loading_model') text = 'загрузка модели…';
+        else if (kb.phase === 'parsing') text = 'разбор файлов…';
+        else text = `индексация ${kb.done} из ${kb.total}`;
+        chip.appendChild(mcpEl('span', 'inline-block w-1.5 h-1.5 rounded-full bg-sky-400 animate-pulse motion-reduce:animate-none'));
+    } else if (kb.status === 'ready') {
+        cls = 'text-emerald-400';
+        text = 'готово';
+    } else if (kb.status === 'failed') {
+        cls = 'text-red-400';
+        text = 'ошибка';
+        if (kb.error) chip.title = kb.error;
+    }
+    chip.classList.add(cls);
+    chip.appendChild(mcpEl('span', '', text));
+    return chip;
+}
+
+function kbProgressBar(kb) {
+    const total = kb.total || 0;
+    const done = kb.done || 0;
+    const bar = mcpEl('div', 'h-1 rounded bg-slate-700 overflow-hidden');
+    bar.setAttribute('role', 'progressbar');
+    bar.setAttribute('aria-valuemin', '0');
+    bar.setAttribute('aria-valuemax', String(total));
+    bar.setAttribute('aria-valuenow', String(done));
+    const fill = mcpEl('div', 'h-1 bg-sky-400');
+    fill.style.width = total > 0 ? `${Math.min(100, Math.round((done / total) * 100))}%` : '0%';
+    bar.appendChild(fill);
+    return bar;
+}
+
+function kbDeleteControls(kb) {
+    const wrap = mcpEl('span', 'flex gap-2');
+    if (state.kbConfirmDelete.has(kb.id)) {
+        const confirmBtn = mcpEl('button', 'text-xs text-red-400 hover:text-red-300 font-semibold', 'Точно удалить?');
+        confirmBtn.type = 'button';
+        confirmBtn.addEventListener('click', () => deleteKb(kb.id));
+        const cancelBtn = mcpEl('button', 'text-xs text-slate-400 hover:text-white', 'Отмена');
+        cancelBtn.type = 'button';
+        cancelBtn.addEventListener('click', () => {
+            clearKbDeleteConfirm(kb.id);
+            renderKbPanel();
+        });
+        wrap.append(confirmBtn, cancelBtn);
+        return wrap;
+    }
+    const delBtn = mcpEl('button', 'text-xs text-red-400 hover:text-red-300', 'Удалить');
+    delBtn.type = 'button';
+    if (kb.status === 'queued' || kb.status === 'indexing') delBtn.title = 'Индексация будет прервана';
+    delBtn.addEventListener('click', () => {
+        clearKbDeleteConfirm(kb.id);
+        state.kbConfirmDelete.set(kb.id, setTimeout(() => {
+            state.kbConfirmDelete.delete(kb.id);
+            renderKbPanel();
+        }, 4000));
+        renderKbPanel();
+    });
+    wrap.appendChild(delBtn);
+    return wrap;
+}
+
+function buildKbCard(kb) {
+    const card = mcpEl('div', 'rounded-lg bg-slate-800 border border-slate-700 p-2 space-y-1');
+    const head = mcpEl('div', 'flex items-center justify-between gap-2');
+    const name = mcpEl('span', 'text-sm font-semibold truncate', kb.name);
+    name.title = kb.name;
+    head.append(name, kbStatusChip(kb));
+    card.appendChild(head);
+
+    const shortModel = String(kb.embedding_model || '').split('/').pop();
+    const meta = mcpEl('div', 'text-xs text-slate-500 flex items-center justify-between gap-2');
+    const counts = `${kb.file_count} ${ruPlural(kb.file_count, ['файл', 'файла', 'файлов'])} · ${kb.chunk_count} ${ruPlural(kb.chunk_count, ['чанк', 'чанка', 'чанков'])}`;
+    meta.appendChild(mcpEl('span', '', counts));
+    const model = mcpEl('span', 'truncate', shortModel);
+    model.title = kb.embedding_model || '';
+    meta.appendChild(model);
+    card.appendChild(meta);
+
+    if (kb.status === 'queued' || kb.status === 'indexing') card.appendChild(kbProgressBar(kb));
+
+    if (kb.status === 'failed' && kb.error) {
+        const expanded = state.kbExpanded.has(kb.id);
+        const err = mcpEl('button', `text-xs text-red-400 text-left w-full ${expanded ? '' : 'line-clamp-2'}`, kb.error);
+        err.type = 'button';
+        err.setAttribute('aria-expanded', String(expanded));
+        err.addEventListener('click', () => {
+            if (state.kbExpanded.has(kb.id)) state.kbExpanded.delete(kb.id);
+            else state.kbExpanded.add(kb.id);
+            renderKbPanel();
+        });
+        card.appendChild(err);
+    }
+
+    const actions = mcpEl('div', 'flex items-center justify-between gap-2 pt-1');
+    const searchBtn = mcpEl('button', 'rounded bg-slate-700 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed px-2 py-1 text-xs text-slate-200', 'Тест поиска');
+    searchBtn.type = 'button';
+    if (kb.status === 'ready') {
+        searchBtn.addEventListener('click', () => openKbSearchModal(kb, searchBtn));
+    } else {
+        searchBtn.disabled = true;
+        searchBtn.title = 'Поиск доступен после завершения индексации';
+    }
+    actions.append(searchBtn, kbDeleteControls(kb));
+    card.appendChild(actions);
+    return card;
+}
+
+function renderKbPanel() {
+    const list = $('kb-list');
+    const kbs = state.lastKbs || [];
+    $('kb-count').textContent = String(kbs.length);
+    list.replaceChildren();
+    if (!kbs.length) {
+        const empty = mcpEl('div', 'text-center py-2');
+        empty.appendChild(mcpEl('div', 'text-slate-300 font-semibold', 'Баз знаний пока нет'));
+        empty.appendChild(mcpEl('div', 'text-slate-500 mt-1', 'Нажмите «+ Новая база знаний», загрузите PDF, TXT или MD и запустите индексацию.'));
+        list.appendChild(empty);
+        return;
+    }
+    kbs.forEach((kb) => list.appendChild(buildKbCard(kb)));
+}
+
+async function deleteKb(kbId) {
+    clearKbDeleteConfirm(kbId);
+    try {
+        await apiFetch(`/api/v1/kb/${kbId}`, { method: 'DELETE' });
+    } catch (err) {
+        showToast(err.message, 'error');
+        renderKbPanel();
+        return;
+    }
+    removeKb(kbId);
+    renderKbPanel();
+    showToast('База знаний удалена', 'success');
+}
+
+function closeKbModal(modalId) {
+    const modal = $(modalId);
+    if (!modal || modal.classList.contains('hidden')) return;
+    modal.classList.add('hidden');
+    if (modalId === 'kb-search-modal') state.kbSearchId = null;
+    const opener = state.kbModalOpener;
+    state.kbModalOpener = null;
+    if (opener && opener.isConnected) opener.focus();
+}
+
+function formatKbFileSize(bytes) {
+    if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} МБ`;
+    return `${Math.max(1, Math.round(bytes / 1024))} КБ`;
+}
+
+function renderKbFileList() {
+    const list = $('kb-file-list');
+    list.replaceChildren();
+    state.kbSelectedFiles.forEach((file, idx) => {
+        const li = mcpEl('li', 'flex items-center justify-between gap-2 rounded bg-slate-800 px-2 py-1');
+        const label = mcpEl('span', 'truncate', `${file.name} · ${formatKbFileSize(file.size)}`);
+        label.title = file.name;
+        const remove = mcpEl('button', 'text-slate-400 hover:text-white text-base leading-none', '×');
+        remove.type = 'button';
+        remove.setAttribute('aria-label', `Убрать файл ${file.name}`);
+        remove.addEventListener('click', () => {
+            state.kbSelectedFiles.splice(idx, 1);
+            renderKbFileList();
+        });
+        li.append(label, remove);
+        list.appendChild(li);
+    });
+}
+
+function applyKbStrategyVisibility() {
+    const structural = $('kb-strategy').value === 'structural';
+    $('kb-fixed-fields').classList.toggle('hidden', structural);
+    $('kb-structural-hint').classList.toggle('hidden', !structural);
+}
+
+function renderKbEmbeddingSelect(preferred) {
+    const select = $('kb-embedding-model');
+    const showAll = $('kb-show-all-models').checked;
+    const models = state.kbEmbeddingModels.filter(
+        (m) => showAll || m.type === 'embeddings' || KB_EMBED_NAME_RE.test(m.id),
+    );
+    select.replaceChildren();
+    if (!models.length) {
+        const opt = mcpEl('option', '', 'Нет доступных моделей');
+        opt.value = '';
+        opt.disabled = true;
+        opt.selected = true;
+        select.appendChild(opt);
+        return;
+    }
+    const group = document.createElement('optgroup');
+    group.label = 'LM Studio';
+    models.forEach((m) => {
+        const opt = mcpEl('option', '', `${m.id}${m.loaded ? ' ✓' : ''}`);
+        opt.value = m.id;
+        group.appendChild(opt);
+    });
+    select.appendChild(group);
+    let chosen = preferred ? models.find((m) => m.id === preferred) : null;
+    if (!chosen) {
+        chosen = models.find((m) => m.eligible && m.loaded)
+            || models.find((m) => m.eligible)
+            || models[0];
+    }
+    select.value = chosen.id;
+}
+
+async function populateKbEmbeddingSelect() {
+    const result = $('kb-embed-check-result');
+    try {
+        state.kbEmbeddingModels = await apiFetch('/api/v1/kb/embedding-models') || [];
+    } catch (err) {
+        state.kbEmbeddingModels = [];
+        result.className = 'text-xs text-red-400';
+        result.textContent = err.message;
+    }
+    renderKbEmbeddingSelect(null);
+}
+
+function openKbCreateModal(opener) {
+    $('kb-create-form').reset();
+    $('kb-create-error').textContent = '';
+    const result = $('kb-embed-check-result');
+    result.textContent = '';
+    result.className = 'text-xs';
+    state.kbSelectedFiles = [];
+    renderKbFileList();
+    applyKbStrategyVisibility();
+    state.kbModalOpener = opener || null;
+    $('kb-create-modal').classList.remove('hidden');
+    $('kb-name').focus();
+    populateKbEmbeddingSelect();
+}
+
+async function checkKbEmbedding() {
+    const model = $('kb-embedding-model').value;
+    const result = $('kb-embed-check-result');
+    if (!model) return;
+    const btn = $('btn-kb-embed-check');
+    btn.disabled = true;
+    try {
+        const data = await apiFetch('/api/v1/kb/embedding-check', {
+            method: 'POST',
+            body: JSON.stringify({ model }),
+        });
+        result.className = 'text-xs text-emerald-400';
+        result.textContent = `Размерность: ${data.dim}`;
+    } catch (err) {
+        result.className = 'text-xs text-red-400';
+        result.textContent = err.message;
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+async function submitKbCreate(event) {
+    event.preventDefault();
+    const errorEl = $('kb-create-error');
+    errorEl.textContent = '';
+    const name = $('kb-name').value.trim();
+    if (!name) {
+        errorEl.textContent = 'Введите название базы знаний.';
+        return;
+    }
+    if (!state.kbSelectedFiles.length) {
+        errorEl.textContent = 'Выберите хотя бы один файл.';
+        return;
+    }
+    const formData = new FormData();
+    formData.append('name', name);
+    formData.append('strategy', $('kb-strategy').value);
+    formData.append('chunk_size', $('kb-chunk-size').value);
+    formData.append('chunk_overlap', $('kb-chunk-overlap').value);
+    formData.append('embedding_model', $('kb-embedding-model').value);
+    state.kbSelectedFiles.forEach((file) => formData.append('files', file));
+
+    const btn = $('btn-kb-submit');
+    btn.disabled = true;
+    btn.textContent = 'Загрузка…';
+    try {
+        const resp = await fetch(`${AGENT_BASE}/api/v1/kb`, {
+            method: 'POST',
+            body: formData,
+            credentials: 'include',
+        });
+        if (resp.status === 401) {
+            window.location.href = '/static/login.html?expired=1';
+            return;
+        }
+        const body = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+            const detail = body.detail;
+            errorEl.textContent = typeof detail === 'string' && detail
+                ? detail
+                : 'Не удалось выполнить запрос. Проверьте соединение и попробуйте снова.';
+            return;
+        }
+        upsertKb(body);
+        renderKbPanel();
+        const fold = document.querySelector('[data-fold-toggle="kb-panel-body"]');
+        if (fold && $('kb-panel-body').classList.contains('hidden')) fold.click();
+        closeKbModal('kb-create-modal');
+    } catch (err) {
+        errorEl.textContent = 'Не удалось выполнить запрос. Проверьте соединение и попробуйте снова.';
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Индексировать';
+    }
+}
+
+function openKbSearchModal(kb, opener) {
+    state.kbSearchId = kb.id;
+    state.kbModalOpener = opener || null;
+    $('kb-search-title').textContent = `Тест поиска: ${kb.name}`;
+    $('kb-search-query').value = '';
+    $('kb-search-results').replaceChildren();
+    const status = $('kb-search-status');
+    status.className = 'text-xs text-slate-400';
+    status.textContent = 'Введите вопрос и нажмите «Найти».';
+    $('kb-search-modal').classList.remove('hidden');
+    $('kb-search-query').focus();
+}
+
+function buildKbResultCard(item) {
+    const card = mcpEl('div', 'bg-slate-800 border border-slate-700 rounded-lg p-3 space-y-1');
+    const head = mcpEl('div', 'text-xs flex flex-wrap items-center gap-2 text-slate-400');
+    head.appendChild(mcpEl('span', '', `#${item.rank}`));
+    head.appendChild(mcpEl('span', 'text-slate-200', Number(item.score).toFixed(3)));
+    head.appendChild(mcpEl('span', '', item.source || ''));
+    if (item.section) head.appendChild(mcpEl('span', 'truncate', item.section));
+    head.appendChild(mcpEl('span', 'font-mono text-slate-500', String(item.chunk_id)));
+    card.appendChild(head);
+    const body = mcpEl('p', 'text-sm text-slate-200 line-clamp-4 whitespace-pre-wrap', item.text || '');
+    card.appendChild(body);
+    const toggle = mcpEl('button', 'text-xs text-indigo-400 hover:text-indigo-300', 'показать полностью');
+    toggle.type = 'button';
+    toggle.setAttribute('aria-expanded', 'false');
+    toggle.addEventListener('click', () => {
+        const expanded = !body.classList.toggle('line-clamp-4');
+        toggle.textContent = expanded ? 'свернуть' : 'показать полностью';
+        toggle.setAttribute('aria-expanded', String(expanded));
+    });
+    card.appendChild(toggle);
+    return card;
+}
+
+async function runKbSearch(event) {
+    event.preventDefault();
+    const query = $('kb-search-query').value.trim();
+    if (!query || state.kbSearchId === null) return;
+    const status = $('kb-search-status');
+    const results = $('kb-search-results');
+    const btn = $('btn-kb-search');
+    btn.disabled = true;
+    btn.textContent = 'Поиск…';
+    status.className = 'text-xs text-slate-400';
+    status.textContent = 'Поиск…';
+    results.replaceChildren();
+    try {
+        const data = await apiFetch(`/api/v1/kb/${state.kbSearchId}/search`, {
+            method: 'POST',
+            body: JSON.stringify({ query, top_k: 5 }),
+        });
+        const items = (data && data.results) || [];
+        if (!items.length) {
+            status.textContent = 'Ничего не найдено. Попробуйте переформулировать вопрос.';
+        } else {
+            status.textContent = '';
+            items.slice(0, 5).forEach((item) => results.appendChild(buildKbResultCard(item)));
+        }
+    } catch (err) {
+        status.className = 'text-xs text-red-400';
+        status.textContent = err.message;
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Найти';
+    }
+}
+
+function bindKbUi() {
+    $('btn-kb-new').addEventListener('click', (e) => openKbCreateModal(e.currentTarget));
+    $('btn-close-kb-create').addEventListener('click', () => closeKbModal('kb-create-modal'));
+    $('btn-close-kb-search').addEventListener('click', () => closeKbModal('kb-search-modal'));
+    $('kb-files').addEventListener('change', (e) => {
+        Array.from(e.target.files).forEach((file) => {
+            const dup = state.kbSelectedFiles.some((f) => f.name === file.name && f.size === file.size);
+            if (!dup) state.kbSelectedFiles.push(file);
+        });
+        e.target.value = '';
+        renderKbFileList();
+    });
+    $('kb-strategy').addEventListener('change', applyKbStrategyVisibility);
+    $('kb-show-all-models').addEventListener('change', () => renderKbEmbeddingSelect($('kb-embedding-model').value));
+    $('btn-kb-embed-check').addEventListener('click', checkKbEmbedding);
+    $('kb-create-form').addEventListener('submit', submitKbCreate);
+    $('kb-search-form').addEventListener('submit', runKbSearch);
+    const fold = document.querySelector('[data-fold-toggle="kb-panel-body"]');
+    if (fold) {
+        fold.addEventListener('click', () => {
+            if (!$('kb-panel-body').classList.contains('hidden')) loadKbList(true);
         });
     }
 }
@@ -3178,6 +3659,7 @@ async function init() {
     await loadProfile();
     await loadInvariants();
     await loadSchedulerTasks();
+    loadKbList(true);
     connectEventsWs();
     try {
         await loadChats();
