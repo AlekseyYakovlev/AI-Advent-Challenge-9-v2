@@ -201,3 +201,448 @@ def render_answers_csv(rows: list[dict[str, Any]]) -> str:
             ]
         )
     return buffer.getvalue()
+
+
+@dataclass
+class EvalOptions:
+    """Resolved settings of one evaluation run."""
+
+    kb: dict[str, int]
+    provider: str = "lmstudio"
+    model: str = DEFAULT_MODEL
+    top_k: int = 5
+    modes: list[str] = field(default_factory=lambda: ["off", "rag"])
+    context_length: int = 16384
+    max_tokens: int = 1024
+    fixture: Path = DEFAULT_FIXTURE
+    out: Path = DEFAULT_OUT
+    allow_draft: bool = False
+    only_kb: str | None = None
+
+
+def score_question(
+    chunks: list[dict[str, Any]], question: dict[str, Any], top_k: int
+) -> dict[str, Any]:
+    """Retrieval metrics for one question; synthesis questions need every expected source."""
+    expected = question.get("expected_sources") or []
+    check = all_hit_at_k if question["category"] == "synthesis" else hit_at_k
+    return {
+        "hit1": check(chunks, expected, 1),
+        "hit3": check(chunks, expected, 3),
+        "hit5": check(chunks, expected, 5),
+        "hitk": check(chunks, expected, top_k),
+        "any_hitk": hit_at_k(chunks, expected, top_k),
+        "rank": first_hit_rank(chunks, expected),
+        "top1": chunks[0]["score"] if chunks else None,
+    }
+
+
+def _message_tokens(messages: list[dict[str, Any]]) -> int:
+    """Token count of all message contents."""
+    from agent.llm_client import count_tokens
+
+    return sum(count_tokens(str(message["content"])) for message in messages)
+
+
+def _cited_sources(answer: str, kept: list[dict[str, Any]]) -> list[str]:
+    """Map [N] markers in the answer to the fragments they point at."""
+    cited: list[str] = []
+    for marker in CITATION_RE.findall(answer):
+        index = int(marker)
+        if 1 <= index <= len(kept):
+            chunk = kept[index - 1]
+            label = chunk.get("section") or chunk.get("title") or ""
+            entry = f"[{index}] {chunk['source']} / {label}"
+            if entry not in cited:
+                cited.append(entry)
+    return cited
+
+
+async def _ask(client: Any, opts: EvalOptions, messages: list[dict[str, Any]]) -> dict[str, Any]:
+    """One completion at temperature 0 with reasoning spans stripped."""
+    import httpx
+
+    sent = [{"role": m["role"], "content": m["content"]} for m in messages]
+    try:
+        result = await client.complete_chat_detailed(
+            sent, opts.model, temperature=0.0, max_tokens=opts.max_tokens
+        )
+    except httpx.HTTPError as exc:
+        return {
+            "answer": "",
+            "error": f"{type(exc).__name__}: {exc}",
+            "finish_reason": None,
+            "has_reasoning": False,
+            "completion_tokens": None,
+            "sent": sent,
+        }
+    answer = THINK_RE.sub("", result.content or "").strip()
+    return {
+        "answer": answer,
+        "error": None,
+        "finish_reason": result.finish_reason,
+        "has_reasoning": result.has_reasoning,
+        "completion_tokens": result.completion_tokens,
+        "sent": sent,
+    }
+
+
+def _write_json(path: Path, data: dict[str, Any]) -> None:
+    """Write a UTF-8 JSON file."""
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _mean(values: list[bool | None]) -> float | None:
+    """Mean of the non-None flags, or None when there are none."""
+    flags = [value for value in values if value is not None]
+    return sum(1 for value in flags if value) / len(flags) if flags else None
+
+
+def _load_raw(raw_dir: Path) -> list[dict[str, Any]]:
+    """Read every raw answer file."""
+    return [json.loads(path.read_text(encoding="utf-8")) for path in sorted(raw_dir.glob("*.json"))]
+
+
+def _render_outputs(
+    opts: EvalOptions, fixture: dict[str, Any], kb_meta: dict[str, Any]
+) -> dict[str, Any]:
+    """Render tables and run_meta.json from the complete set of raw files."""
+    raws = _load_raw(opts.out / "raw")
+    by_key = {(raw["mode"], raw.get("kb") or "", raw["id"]): raw for raw in raws}
+    labels = sorted({raw["kb"] for raw in raws if raw["mode"] == "rag"})
+    retrieval_rows: list[dict[str, Any]] = []
+    answer_rows: list[dict[str, Any]] = []
+    for question in fixture["questions"]:
+        qid = question["id"]
+        entry: dict[str, Any] = {"id": qid, "category": question["category"], "kb": {}}
+        for mode, label in [("off", "")] + [("rag", name) for name in labels]:
+            raw = by_key.get((mode, label, qid))
+            if raw is None:
+                continue
+            if mode == "rag":
+                entry["kb"][label] = raw["retrieval"]
+            answer_rows.append(
+                {
+                    "id": qid,
+                    "category": question["category"],
+                    "mode": mode,
+                    "kb": label,
+                    "answer": raw["answer"],
+                    "cited_sources": "; ".join(raw.get("cited_sources") or []),
+                }
+            )
+        retrieval_rows.append(entry)
+    (opts.out / "retrieval.md").write_text(
+        render_retrieval_table(retrieval_rows, labels, opts.top_k), encoding="utf-8"
+    )
+    (opts.out / "answers.md").write_text(render_answers_table(answer_rows), encoding="utf-8")
+    (opts.out / "answers.csv").write_text(
+        render_answers_csv(answer_rows), encoding="utf-8", newline=""
+    )
+    meta_path = opts.out / "run_meta.json"
+    previous: dict[str, Any] = (
+        json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
+    )
+    kbs = {**previous.get("kbs", {}), **kb_meta}
+    shared = {(m["strategy"], m["chunk_size"], m["chunk_overlap"]) for m in kbs.values()}
+    meta = {
+        "fixture": opts.fixture.name,
+        "fixture_sha256": fixture_sha256(opts.fixture),
+        "provider": opts.provider,
+        "model": opts.model,
+        "top_k": opts.top_k,
+        "modes": sorted(set(previous.get("modes", [])) | set(opts.modes)),
+        "temperature": 0.0,
+        "context_length": opts.context_length,
+        "max_tokens": opts.max_tokens,
+        "identical_chunking": len(shared) <= 1,
+        "kbs": kbs,
+    }
+    _write_json(meta_path, meta)
+    summary: dict[str, Any] = {}
+    for label in labels:
+        stats = [
+            by_key[("rag", label, q["id"])]["retrieval"]
+            for q in fixture["questions"]
+            if ("rag", label, q["id"]) in by_key and q["category"] != "out_of_corpus"
+        ]
+        summary[label] = {f"hit{k}": _mean([stat[f"hit{k}"] for stat in stats]) for k in HIT_KS}
+    return summary
+
+
+async def run_eval(opts: EvalOptions, client: Any, session_factory: Any) -> dict[str, Any]:
+    """Answer every control-set question per mode and KB label and write all outputs."""
+    from agent.rag import RagFailure, build_rag_block, merge_rag_block, rag_budget, retrieve
+    from shared.models import KnowledgeBase
+
+    fixture = load_fixture(opts.fixture, require_frozen=not opts.allow_draft)
+    raw_dir = opts.out / "raw"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    labels = [label for label in opts.kb if opts.only_kb in (None, label)]
+    kb_meta: dict[str, Any] = {}
+    async with session_factory() as session:
+        kbs = {label: await session.get(KnowledgeBase, opts.kb[label]) for label in labels}
+        for label, kb in kbs.items():
+            if kb is not None:
+                kb_meta[label] = {
+                    "kb_id": kb.id,
+                    "strategy": getattr(kb.strategy, "value", kb.strategy),
+                    "chunk_size": kb.chunk_size,
+                    "chunk_overlap": kb.chunk_overlap,
+                    "embedding_model": kb.embedding_model,
+                    "dim": kb.dim,
+                    "chunk_count": kb.chunk_count,
+                }
+        for question in fixture["questions"]:
+            qid = question["id"]
+            base = [
+                {"role": "system", "content": EVAL_SYSTEM_PROMPT},
+                {"role": "user", "content": question["question"]},
+            ]
+            common = {"id": qid, "category": question["category"], "question": question["question"]}
+            if "off" in opts.modes:
+                reply = await _ask(client, opts, [dict(m) for m in base])
+                _write_json(
+                    raw_dir / f"off_none_{qid}.json",
+                    {
+                        **common,
+                        "mode": "off",
+                        "kb": "",
+                        "messages": reply.pop("sent"),
+                        "cited_sources": [],
+                        **reply,
+                    },
+                )
+            if "rag" not in opts.modes:
+                continue
+            for label in labels:
+                warning: str | None = None
+                try:
+                    chunks = await retrieve(session, kbs[label], question["question"], opts.top_k)
+                except RagFailure as failure:
+                    chunks, warning = [], failure.code
+                messages = [dict(m) for m in base]
+                budget = rag_budget(opts.context_length, _message_tokens(messages), opts.max_tokens)
+                block, kept, dropped = build_rag_block(chunks, budget)
+                if block:
+                    merge_rag_block(messages, block)
+                reply = await _ask(client, opts, messages)
+                retrieval = {
+                    **score_question(chunks, question, opts.top_k),
+                    "warning": warning,
+                    "dropped": dropped,
+                }
+                _write_json(
+                    raw_dir / f"rag_{label}_{qid}.json",
+                    {
+                        **common,
+                        "mode": "rag",
+                        "kb": label,
+                        "messages": reply.pop("sent"),
+                        "retrieval": retrieval,
+                        "chunks": [{k: v for k, v in c.items() if k != "text"} for c in chunks],
+                        "fragments": [c["text"] for c in kept],
+                        "cited_sources": _cited_sources(reply["answer"], kept),
+                        **reply,
+                    },
+                )
+    summary = _render_outputs(opts, fixture, kb_meta)
+    for label, stats in summary.items():
+        rendered = " ".join(
+            f"hit@{k}={'n/a' if stats[f'hit{k}'] is None else format(stats[f'hit{k}'], '.2f')}"
+            for k in HIT_KS
+        )
+        print(f"{label}: {rendered}")
+    return {"summary": summary, "out": str(opts.out)}
+
+
+def _parse_pairs(items: list[str], what: str) -> dict[str, str]:
+    """Parse repeated LABEL=VALUE arguments."""
+    pairs: dict[str, str] = {}
+    for item in items:
+        label, sep, value = item.partition("=")
+        if not sep or not label or not value:
+            print(f"preflight: bad {what} '{item}', expected LABEL=VALUE")
+            raise SystemExit(EXIT_PREFLIGHT)
+        pairs[label] = value
+    return pairs
+
+
+def _use_scratch_storage(db: Path) -> None:
+    """Point settings at a scratch database and KB storage before any project import."""
+    db.parent.mkdir(parents=True, exist_ok=True)
+    os.environ["DB_PATH"] = str(db)
+    os.environ["KB_STORAGE_DIR"] = str(db.with_name(f"{db.stem}_kb"))
+
+
+async def build_kbs(args: argparse.Namespace) -> int:
+    """Index the corpus once per embedder with identical chunking settings."""
+    import secrets
+
+    _use_scratch_storage(args.db)
+    pdfs = [Path(p) for p in (args.pdf or DEFAULT_PDFS)]
+    missing = [str(p) for p in pdfs if not p.is_file()]
+    if missing:
+        print(f"preflight: missing PDF files: {', '.join(missing)}")
+        return EXIT_PREFLIGHT
+    embedders = _parse_pairs(args.embedder or list(DEFAULT_EMBEDDERS), "--embedder")
+
+    from sqlmodel import select
+
+    from agent.kb_indexer import run_index_job
+    from shared.auth import hash_password
+    from shared.database import async_session_factory, init_db
+    from shared.kb_storage import uploads_dir
+    from shared.models import KbDocument, KbStatus, KbStrategy, KnowledgeBase, User
+
+    await init_db()
+    async with async_session_factory() as session:
+        user = (await session.exec(select(User).where(User.username == EVAL_USERNAME))).first()
+        if user is None:
+            user = User(
+                username=EVAL_USERNAME, password_hash=hash_password(secrets.token_urlsafe(16))
+            )
+            session.add(user)
+            await session.commit()
+            await session.refresh(user)
+        user_id: int = user.id
+    strategy = KbStrategy(args.strategy)
+    failed = False
+    for label, model_id in embedders.items():
+        async with async_session_factory() as session:
+            kb = KnowledgeBase(
+                user_id=user_id,
+                name=f"day22-{label}",
+                status=KbStatus.QUEUED,
+                strategy=strategy,
+                chunk_size=args.chunk_size,
+                chunk_overlap=args.chunk_overlap,
+                embedding_model=model_id,
+                file_count=len(pdfs),
+            )
+            session.add(kb)
+            await session.commit()
+            await session.refresh(kb)
+            target = uploads_dir(user_id, kb.id)
+            target.mkdir(parents=True, exist_ok=True)
+            for index, pdf in enumerate(pdfs):
+                data = pdf.read_bytes()
+                stored = f"{index}.bin"
+                (target / stored).write_bytes(data)
+                session.add(
+                    KbDocument(
+                        kb_id=kb.id,
+                        filename=pdf.name,
+                        sha256=hashlib.sha256(data).hexdigest(),
+                        size_bytes=len(data),
+                        stored_name=stored,
+                    )
+                )
+            await session.commit()
+            kb_id: int = kb.id
+        await run_index_job(kb_id, user_id)
+        async with async_session_factory() as session:
+            done = await session.get(KnowledgeBase, kb_id)
+        print(f"{label}={kb_id} {done.status.value} {done.chunk_count} {done.dim}")
+        failed = failed or done.status != KbStatus.READY
+    return EXIT_ERROR if failed else EXIT_OK
+
+
+async def run_command(args: argparse.Namespace) -> int:
+    """Preflight, then run the evaluation against LM Studio or DeepSeek."""
+    import httpx
+
+    _use_scratch_storage(args.db)
+    kb_ids = {label: int(value) for label, value in _parse_pairs(args.kb, "--kb").items()}
+    modes = [mode.strip() for mode in args.modes.split(",") if mode.strip()]
+    if not modes or any(mode not in ("off", "rag") for mode in modes):
+        print("preflight: --modes must be a comma list of off,rag")
+        return EXIT_PREFLIGHT
+    if args.only_kb and args.only_kb not in kb_ids:
+        print(f"preflight: --only-kb {args.only_kb} is not among --kb labels")
+        return EXIT_PREFLIGHT
+    opts = EvalOptions(
+        kb=kb_ids,
+        provider=args.provider,
+        model=args.model,
+        top_k=args.top_k,
+        modes=modes,
+        context_length=args.context_length,
+        max_tokens=args.max_tokens,
+        fixture=args.fixture,
+        out=args.out,
+        allow_draft=args.allow_draft,
+        only_kb=args.only_kb,
+    )
+    load_fixture(opts.fixture, require_frozen=not opts.allow_draft)
+
+    from agent.llm_client import LLMClient
+    from agent.providers import DEEPSEEK_BASE_URL
+    from shared.config import settings
+    from shared.database import async_session_factory
+    from shared.models import KbStatus, KnowledgeBase
+
+    if args.provider == "deepseek":
+        base_url = args.base_url or DEEPSEEK_BASE_URL
+        api_key = settings.DEEPSEEK_API_KEY
+        if not api_key:
+            print("preflight: DEEPSEEK_API_KEY is not set")
+            return EXIT_PREFLIGHT
+    else:
+        base_url = args.base_url or os.environ.get("LM_STUDIO_BASE_URL", "http://localhost:1234")
+        api_key = ""
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as http:
+                (await http.get(f"{base_url.rstrip('/')}/v1/models")).raise_for_status()
+        except httpx.HTTPError as exc:
+            print(f"preflight: LM Studio is not reachable at {base_url} ({type(exc).__name__})")
+            return EXIT_PREFLIGHT
+    async with async_session_factory() as session:
+        for label, kb_id in kb_ids.items():
+            if args.only_kb and label != args.only_kb:
+                continue
+            kb = await session.get(KnowledgeBase, kb_id)
+            if kb is None or kb.status != KbStatus.READY:
+                print(f"preflight: knowledge base {label}={kb_id} does not exist or is not ready")
+                return EXIT_PREFLIGHT
+    await run_eval(opts, LLMClient(base_url, api_key), async_session_factory)
+    return EXIT_OK
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Command-line interface."""
+    parser = argparse.ArgumentParser(description="Offline RAG evaluation runner.")
+    sub = parser.add_subparsers(dest="command", required=True)
+    build = sub.add_parser("build-kbs", help="index the corpus once per embedder")
+    build.add_argument("--db", type=Path, default=DEFAULT_DB)
+    build.add_argument("--strategy", default="structural")
+    build.add_argument("--chunk-size", type=int, default=1000)
+    build.add_argument("--chunk-overlap", type=int, default=150)
+    build.add_argument("--embedder", action="append", metavar="LABEL=MODEL_ID")
+    build.add_argument("--pdf", action="append", type=Path)
+    run = sub.add_parser("run", help="score retrieval and collect answers")
+    run.add_argument("--db", type=Path, default=DEFAULT_DB)
+    run.add_argument("--kb", action="append", required=True, metavar="LABEL=ID")
+    run.add_argument("--provider", choices=("lmstudio", "deepseek"), default="lmstudio")
+    run.add_argument("--model", default=DEFAULT_MODEL)
+    run.add_argument("--base-url", default="")
+    run.add_argument("--top-k", type=int, default=5)
+    run.add_argument("--modes", default="off,rag")
+    run.add_argument("--context-length", type=int, default=16384)
+    run.add_argument("--max-tokens", type=int, default=1024)
+    run.add_argument("--fixture", type=Path, default=DEFAULT_FIXTURE)
+    run.add_argument("--out", type=Path, default=DEFAULT_OUT)
+    run.add_argument("--allow-draft", action="store_true", help="testing only")
+    run.add_argument("--only-kb", metavar="LABEL", default=None)
+    return parser
+
+
+def main() -> int:
+    """Entry point."""
+    args = build_parser().parse_args()
+    handler = build_kbs if args.command == "build-kbs" else run_command
+    return asyncio.run(handler(args))
+
+
+if __name__ == "__main__":
+    sys.exit(main())
