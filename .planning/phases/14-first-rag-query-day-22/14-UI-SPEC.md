@@ -37,7 +37,13 @@ created: 2026-10-03
 | 2xl | 48px | reserved |
 | 3xl | 64px | reserved |
 
-Exceptions: badge/label padding `px-2 py-0.5` (2px vertical) inherited from existing chips; K input fixed width `w-16` (64px).
+Exceptions (exhaustive; every off-scale class used in this spec is listed here, all inherited from existing UI for visual consistency):
+- `py-1.5` (6px vertical) on `#rag-toggle`, `#rag-kb-select`, `#rag-k-input`: identical to existing `#model-select`, so header controls align at the same height.
+- `px-3` / `p-3` / `py-2` mix (12px) on the toggle, selects, source cards and sources `<details>` (`px-3 py-2`): identical to existing `.tool-call-card` and Phase 13 result cards (`p-3`).
+- `px-2 py-0.5` (8px / 2px) on badges: inherited from existing chips.
+- `px-2 py-1.5` on the K input (8px / 6px): compact numeric field, vertical matches `#model-select`.
+- `w-16` (64px) K input width; `max-w-[12rem]` (192px) on badge and KB select.
+- `gap-x-2`, `mt-2`, `space-y-2` (8px) and `mt-1` (4px) are on-scale.
 
 ---
 
@@ -64,13 +70,17 @@ Weights: exactly 2 (400, 600).
 | Destructive | `red-400` | error toast / error text only |
 | Warning (semantic) | `yellow-400` text on `bg-yellow-900/30`, border `yellow-700` | RAG-04 warning line only (matches existing `warning` toast `bg-yellow-900/90`) |
 
-Accent reserved for: RAG toggle in the "с RAG" (on) state, focus rings (`focus:ring-2 focus:ring-indigo-500`) on the new header controls. Nothing else (badge, labels, source scores stay slate; scores use `text-slate-200`).
+Accent reserved for: RAG toggle in the "с RAG" (on) state, focus rings (`focus:ring-2 focus:ring-indigo-500`) on the new header controls, and the focus-visible ring (`ring-indigo-500`) on the sources `<summary>`. Nothing else (badge, labels, source scores stay slate; scores use `text-slate-200`).
 
 RAG-off state: toggle track `bg-slate-700`, text `без RAG`.
 
 ---
 
 ## Interaction & Layout Contract
+
+### Focal points
+- Header: the accent-filled "с RAG" toggle is the focal point; badge, KB select and K input are subordinate (neutral slate).
+- Message area: the answer text is the focal point; the warning line, mode label and sources block are visually subordinate (12px, muted slate, collapsed by default). The warning line is the only exception when present, by design.
 
 ### Header controls (D-01, D-02, D-03)
 Placed in `<header>` between `#chat-title` block and `#model-select`, in this order, `flex items-center gap-2`:
