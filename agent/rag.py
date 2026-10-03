@@ -146,15 +146,16 @@ def build_rag_block(
     return block, kept, len(chunks) - len(kept)
 
 
-def merge_rag_block(llm_messages: list[dict[str, Any]], block: str) -> None:
-    """Prepend the fragments block to the last user message of the outbound list only."""
+def merge_rag_block(llm_messages: list[dict[str, Any]], block: str) -> bool:
+    """Prepend the fragments block to the last user message; False if there is none."""
     for position in range(len(llm_messages) - 1, -1, -1):
         message = llm_messages[position]
         if message.get("role") != "user":
             continue
         merged = f"{block}\n\n{QUESTION_PREFIX}{message['content']}"
         llm_messages[position] = {**message, "content": merged, "token_count": count_tokens(merged)}
-        return
+        return True
+    return False
 
 
 def sources_from_chunks(kept: list[dict[str, Any]]) -> list[dict[str, Any]]:

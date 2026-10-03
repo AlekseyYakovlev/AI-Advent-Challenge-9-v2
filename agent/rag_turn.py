@@ -120,7 +120,8 @@ async def prepare_rag_turn(
             raise RagFailure("context_full", MSG_CONTEXT_FULL)
         context_tokens = 0
         if block is not None:
-            merge_rag_block(llm_messages, block)
+            if not merge_rag_block(llm_messages, block):
+                raise RagFailure("retrieval_failed", MSG_RETRIEVAL_FAILED)
             context_tokens = count_tokens(block)
         turn = RagTurn(
             MODE_RAG,
