@@ -70,7 +70,10 @@ def test_modal_has_bound_x_button(modal_id: str) -> None:
 
 def test_escape_key_does_not_close_modals() -> None:
     """Encodes assumption A-01 of plan 10-01; deleting this one test allows an Escape closer again."""
-    src: str = _app_js()
+    # The Phase 15 search popover (non-modal, UI-SPEC) is the single allowed Escape closer.
+    src: str = "\n".join(
+        line for line in _app_js().splitlines() if "closeRagSearchPopover(true)" not in line
+    )
     assert not re.search(r"\.key\s*===\s*['\"](Escape|Esc)['\"]", src)
     assert not re.search(r"keyCode\s*===?\s*27", src)
     assert not re.search(r"\.code\s*===?\s*['\"](Escape|Esc)['\"]", src)
