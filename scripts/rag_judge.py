@@ -160,7 +160,7 @@ async def _judge_one(
             temperature=JUDGE_TEMPERATURE,
             max_tokens=max_tokens,
         )
-    except (httpx.HTTPError, asyncio.TimeoutError) as exc:
+    except (httpx.HTTPError, asyncio.TimeoutError, ValueError, KeyError, TypeError) as exc:
         return JUDGE_ERROR, f"запрос не удался: {type(exc).__name__}"
     verdict, reason = parse_judge_reply(result.content)
     if verdict is None:
