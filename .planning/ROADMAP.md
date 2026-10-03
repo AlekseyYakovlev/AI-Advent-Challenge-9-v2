@@ -190,19 +190,48 @@ Plans:
 
 Plans:
 
+**Wave 1**
+
 - [ ] 15-01-PLAN.md — pure ranking helpers: lexical score, fusion, RRF, FTS query builder, rewrite validator, rerank parser, calibration rule
 - [ ] 15-02-PLAN.md — ChatRagConfig search columns, FTS5 mirror with triggers/backfill, calibrated-threshold lookup, partial-update settings API
+- [ ] 15-13-PLAN.md — DeepSeek LLM-judge script with key/model `--check` (wave 1; split out of 15-06)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 15-03-PLAN.md — retrieval primitives: vector search with query vector, FTS5 search, non-streaming rewrite and rerank calls
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 15-04-PLAN.md — shared two-stage retrieval pipeline with optional stages and metadata-only trace
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
 - [ ] 15-05-PLAN.md — chat-turn integration: payload v2, below-threshold path, client/model wiring in ws
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
 - [ ] 15-06-PLAN.md — eval tooling: draft calibration fixture, calibrate and ablate subcommands (ablate at the Day 22 max_tokens 4096)
 - [ ] 15-07-PLAN.md — UI: "Поиск ⚙" popover, "Детали поиска" block, grey below-threshold line (requires Phase 14 plan 14-06)
+
+**Wave 6** *(blocked on Wave 5 completion)*
+
 - [ ] 15-08-PLAN.md — calibration set approval and freeze, live calibration for nomic and bge-m3 (checkpoint)
+
+**Wave 7** *(blocked on Wave 6 completion)*
+
 - [ ] 15-09-PLAN.md — user decisions on thresholds and FTS exemption, calibrated constants written (checkpoints)
+
+**Wave 8** *(blocked on Wave 7 completion)*
+
 - [ ] 15-10-PLAN.md — live 7-run ablation on the Day 22 winner and manual verdicts (requires Phase 14 plan 14-07)
+
+**Wave 9** *(blocked on Wave 8 completion)*
+
 - [ ] 15-11-PLAN.md — DeepSeek key + model check, judge column, Day23_report.md, user review (checkpoints)
+
+**Wave 10** *(blocked on Wave 9 completion)*
+
 - [ ] 15-12-PLAN.md — Playwright E2E on the isolated copy and docs sync
-- [ ] 15-13-PLAN.md — DeepSeek LLM-judge script with key/model `--check` (wave 1; split out of 15-06)
 
 ### Phase 16: Citations and anti-hallucination (Day 24)
 
