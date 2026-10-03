@@ -36,8 +36,9 @@ MSG_DIM_MISMATCH_WARNING = (
     "Проверьте модель эмбеддинга базы."
 )
 MSG_CONTEXT_FULL = (
-    "Контекст заполнен. Ответ дан без фрагментов базы знаний. "
-    "Выберите другую стратегию сжатия или начните новый чат."
+    "Не хватает места в контексте для фрагментов базы знаний (его занимают история, "
+    "системный промпт и схемы инструментов MCP). Ответ дан без фрагментов. "
+    "Увеличьте длину контекста, уменьшите max_tokens, отключите MCP-серверы или начните новый чат."
 )
 MSG_INDEX_CORRUPT_WARNING = (
     "Индекс базы знаний повреждён. Ответ дан без базы знаний. "
@@ -107,9 +108,12 @@ async def retrieve(
 
 def rag_budget(context_length: int, used_tokens: int, max_tokens: int) -> int:
     """Tokens available for the fragments block: 30% of the context, within free space."""
+    # max_tokens is a worst-case cap, not the expected reply size; when it equals the whole
+    # window (e.g. 32768/32768) reserving all of it would leave no room for fragments ever.
+    reserved = min(max_tokens, context_length // 2)
     return max(
         0,
-        min(int(context_length * RAG_BUDGET_RATIO), context_length - used_tokens - max_tokens),
+        min(int(context_length * RAG_BUDGET_RATIO), context_length - used_tokens - reserved),
     )
 
 

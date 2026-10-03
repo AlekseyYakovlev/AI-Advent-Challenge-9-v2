@@ -160,6 +160,13 @@ def test_rag_budget() -> None:
     assert rag.rag_budget(8000, 7000, 4096) == 0
 
 
+def test_rag_budget_max_tokens_equal_to_context_still_leaves_room() -> None:
+    # Global defaults 32768/32768 with ~10.7k of tools+history used must not yield 0.
+    budget = rag.rag_budget(32768, 10737, 32768)
+    assert budget == 5647
+    assert budget > 1274
+
+
 def test_build_rag_block_drops_lowest_scoring_tail() -> None:
     chunks = [_chunk(i, tokens=900) for i in range(1, 6)]
     block, kept, dropped = rag.build_rag_block(chunks, 4915)

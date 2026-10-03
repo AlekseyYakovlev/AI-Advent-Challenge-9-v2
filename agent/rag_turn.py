@@ -98,6 +98,7 @@ async def prepare_rag_turn(
     kb_id: int | None = None
     kb_name: str | None = None
     top_k: int | None = None
+    budget_info: dict[str, int] | None = None
     try:
         config = await session.get(ChatRagConfig, chat_id)
         if config is None:
@@ -116,6 +117,13 @@ async def prepare_rag_turn(
         chunks = await retrieve(session, kb, question, config.top_k)
         used = _message_tokens(llm_messages) + extra_tokens
         budget = rag_budget(context_length, used, max_tokens)
+        budget_info = {
+            "ctx": context_length,
+            "max_tokens": max_tokens,
+            "used": used,
+            "extra_tokens": extra_tokens,
+            "budget": budget,
+        }
         block, kept, dropped = build_rag_block(chunks, budget)
         if chunks and block is None:
             raise RagFailure("context_full", MSG_CONTEXT_FULL)
@@ -159,11 +167,11 @@ async def prepare_rag_turn(
                 warning={"code": "retrieval_failed", "text": MSG_RETRIEVAL_FAILED},
             ),
         )
-    _log(chat_id, turn)
+    _log(chat_id, turn, budget_info)
     return turn
 
 
-def _log(chat_id: int, turn: RagTurn) -> None:
+def _log(chat_id: int, turn: RagTurn, budget_info: dict[str, int] | None = None) -> None:
     """Log the turn outcome with ids and counts only."""
     payload = turn.payload
     warning = payload["warning"]
@@ -176,4 +184,5 @@ def _log(chat_id: int, turn: RagTurn) -> None:
         dropped=payload["dropped"],
         context_tokens=payload["context_tokens"],
         warning=warning["code"] if warning else None,
+        **(budget_info or {}),
     )

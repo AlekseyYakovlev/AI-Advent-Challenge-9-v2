@@ -3952,7 +3952,7 @@ function buildRagMeta(rag) {
         frag.appendChild(warn);
     }
     let label = 'без RAG';
-    if (rag.warning) label = 'без RAG (сбой поиска)';
+    if (rag.warning) label = rag.warning.code === 'context_full' ? 'без RAG (нет места в контексте)' : 'без RAG (сбой поиска)';
     else if (rag.mode === 'rag') label = `с RAG · K=${rag.top_k}`;
     frag.appendChild(mcpEl('div', 'mt-1 text-xs text-slate-500', label));
     if (rag.mode === 'rag' && !rag.warning && sources.length === 0) {

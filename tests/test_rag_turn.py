@@ -190,7 +190,7 @@ async def test_zero_budget_is_context_full(monkeypatch: pytest.MonkeyPatch) -> N
     user_id, kb_id = await _ready_kb(monkeypatch)
     chat_id = await _chat(user_id, kb_id)
     msgs = _messages()
-    turn = await _run(chat_id, msgs, ctx=1000, max_tokens=1000)
+    turn = await _run(chat_id, msgs, ctx=100, max_tokens=100)
     assert turn.payload["warning"]["code"] == "context_full"
     assert msgs == _messages()
 
