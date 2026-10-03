@@ -46,15 +46,15 @@
 
 ### Reranking and filtering (Day 23)
 
-- [ ] **RANK-01**: Retrieval is two-stage: a wider candidate top-K, then filtering/reranking down to a final top-K; both K values and the similarity cut-off threshold are configurable per chat
-- [ ] **RANK-02**: A lexical heuristic reranker (word and article-number overlap, e.g. "ст. 12.9") fused with the cosine score can be enabled
-- [ ] **RANK-03**: An LLM reranker can be enabled: one batched prompt scores the top candidates
-- [ ] **RANK-04**: Hybrid retrieval can be enabled: SQLite FTS5 full-text search fused with vector search via reciprocal rank fusion
-- [ ] **RANK-05**: Query rewrite can be toggled: one low-temperature LLM call turns the question into a standalone search query, falling back to the original on bad output
-- [ ] **RANK-06**: A collapsible "Детали поиска" block under each RAG answer shows the (rewritten) query, candidates before filtering with scores, what was cut and why, and the final chunks
-- [ ] **RANK-07**: The cut-off threshold is calibrated on the control set (score distributions of answerable vs out-of-corpus questions), per embedding model
-- [ ] **RANK-08**: `Day23_report.md` compares quality without filter/rewrite vs with filter, with each reranker and with rewrite, on the control set
-- [ ] **RANK-09**: An optional LLM-judge script (DeepSeek) scores answers as an extra column in the reports; the manual verdict stays primary
+- [x] **RANK-01**: Retrieval is two-stage: a wider candidate top-K, then filtering/reranking down to a final top-K; both K values and the similarity cut-off threshold are configurable per chat
+- [x] **RANK-02**: A lexical heuristic reranker (word and article-number overlap, e.g. "ст. 12.9") fused with the cosine score can be enabled
+- [x] **RANK-03**: An LLM reranker can be enabled: one batched prompt scores the top candidates
+- [x] **RANK-04**: Hybrid retrieval can be enabled: SQLite FTS5 full-text search fused with vector search via reciprocal rank fusion
+- [x] **RANK-05**: Query rewrite can be toggled: one low-temperature LLM call turns the question into a standalone search query, falling back to the original on bad output
+- [x] **RANK-06**: A collapsible "Детали поиска" block under each RAG answer shows the (rewritten) query, candidates before filtering with scores, what was cut and why, and the final chunks
+- [x] **RANK-07**: The cut-off threshold is calibrated on the control set (score distributions of answerable vs out-of-corpus questions), per embedding model
+- [x] **RANK-08**: `Day23_report.md` compares quality without filter/rewrite vs with filter, with each reranker and with rewrite, on the control set
+- [x] **RANK-09**: An optional LLM-judge script (DeepSeek) scores answers as an extra column in the reports; the manual verdict stays primary
 
 ### Citations and anti-hallucination (Day 24)
 
@@ -120,15 +120,15 @@
 | RAG-06 | Phase 14 | Complete |
 | RAG-07 | Phase 14 | Complete |
 | RAG-08 | Phase 14 | Complete |
-| RANK-01 | Phase 15 | Pending |
-| RANK-02 | Phase 15 | Pending |
-| RANK-03 | Phase 15 | Pending |
-| RANK-04 | Phase 15 | Pending |
-| RANK-05 | Phase 15 | Pending |
-| RANK-06 | Phase 15 | Pending |
-| RANK-07 | Phase 15 | Pending |
-| RANK-08 | Phase 15 | Pending |
-| RANK-09 | Phase 15 | Pending |
+| RANK-01 | Phase 15 | Complete |
+| RANK-02 | Phase 15 | Complete |
+| RANK-03 | Phase 15 | Complete |
+| RANK-04 | Phase 15 | Complete |
+| RANK-05 | Phase 15 | Complete |
+| RANK-06 | Phase 15 | Complete |
+| RANK-07 | Phase 15 | Complete |
+| RANK-08 | Phase 15 | Complete |
+| RANK-09 | Phase 15 | Complete |
 | CITE-01 | Phase 16 | Pending |
 | CITE-02 | Phase 16 | Pending |
 | CITE-03 | Phase 16 | Pending |
