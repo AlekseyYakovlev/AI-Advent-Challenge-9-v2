@@ -1,0 +1,57 @@
+{
+  "fixture": "control_set.json",
+  "fixture_sha256": "8c5b76a0590301ab496498b534802e92cbc82072841a188a4b08c19806ceebe2",
+  "calibration_fixture_sha256": "9435112f4e3421a96af029c194177879c89ac7ecadcb0f3fddf6cbc2c31f3407",
+  "provider": "lmstudio",
+  "model": "qwen/qwen3.5-9b",
+  "temperature": 0.0,
+  "max_tokens": 4096,
+  "context_length": 16384,
+  "top_k": 5,
+  "candidate_k": 20,
+  "threshold": 0.67,
+  "threshold_source": "calibrated",
+  "kb": {
+    "label": "bge",
+    "kb_id": 2,
+    "embedding_model": "text-embedding-bge-m3",
+    "strategy": "structural",
+    "chunk_size": 1000,
+    "chunk_overlap": 150
+  },
+  "timestamp": "2026-10-03T18:20:20.100051+00:00",
+  "runs": [
+    "baseline",
+    "threshold",
+    "lexical",
+    "llm_rerank",
+    "hybrid",
+    "rewrite",
+    "all"
+  ],
+  "incomplete_answers": {
+    "baseline": 1,
+    "threshold": 0,
+    "lexical": 0,
+    "llm_rerank": 0,
+    "hybrid": 0,
+    "rewrite": 0,
+    "all": 0
+  },
+  "winner": {
+    "label": "bge-m3",
+    "kb_label": "bge",
+    "kb_id": 2,
+    "source": "Day22_report.md",
+    "hit_at_1_mean": 0.75,
+    "hit_at_3_mean": 0.88,
+    "hit_at_5_mean": 0.88,
+    "loser": {
+      "label": "nomic",
+      "hit_at_1_mean": 0.12,
+      "hit_at_3_mean": 0.25,
+      "hit_at_5_mean": 0.25
+    },
+    "rule": "higher mean hit@5, ties by hit@3 then hit@1"
+  }
+}
