@@ -35,14 +35,14 @@
 
 ### First RAG query (Day 22)
 
-- [ ] **RAG-01**: User can attach one knowledge base to a chat and switch the chat between "без RAG" and "с RAG"; the current mode and KB are visibly indicated in the chat
-- [ ] **RAG-02**: With RAG on, each question is embedded with the KB's own model, the top-K relevant chunks are retrieved and merged with the question into the LLM request; the stored user message stays the raw question and retrieved text is never persisted into the message tree
-- [ ] **RAG-03**: The RAG context block has a token budget that coexists with the existing context-compression strategies (it never triggers deletion of the user message)
-- [ ] **RAG-04**: If retrieval fails (embedding model unavailable, KB deleted), the turn still answers without RAG and shows a visible warning
-- [ ] **RAG-05**: The sources used for an answer (file, section, chunk_id, score) are stored on the assistant message and shown under it
-- [ ] **RAG-06**: A frozen set of 10 control questions on the KB exists before any comparison run, each with the expected answer content and expected sources (including out-of-corpus questions)
-- [ ] **RAG-07**: `scripts/rag_eval.py` runs the control set across modes and embedding models and produces the tables (retrieval hit@k, answers, sources) used by the Day 22-25 reports
-- [ ] **RAG-08**: `Day22_report.md` lists the 10 questions with expectation and expected sources, and compares answers without RAG vs with RAG, plus an A/B of nomic vs bge-m3 embeddings on retrieval hit@k (giga is not available as an embedder — see Phase 13 spike / D-15)
+- [x] **RAG-01**: User can attach one knowledge base to a chat and switch the chat between "без RAG" and "с RAG"; the current mode and KB are visibly indicated in the chat
+- [x] **RAG-02**: With RAG on, each question is embedded with the KB's own model, the top-K relevant chunks are retrieved and merged with the question into the LLM request; the stored user message stays the raw question and retrieved text is never persisted into the message tree
+- [x] **RAG-03**: The RAG context block has a token budget that coexists with the existing context-compression strategies (it never triggers deletion of the user message)
+- [x] **RAG-04**: If retrieval fails (embedding model unavailable, KB deleted), the turn still answers without RAG and shows a visible warning
+- [x] **RAG-05**: The sources used for an answer (file, section, chunk_id, score) are stored on the assistant message and shown under it
+- [x] **RAG-06**: A frozen set of 10 control questions on the KB exists before any comparison run, each with the expected answer content and expected sources (including out-of-corpus questions)
+- [x] **RAG-07**: `scripts/rag_eval.py` runs the control set across modes and embedding models and produces the tables (retrieval hit@k, answers, sources) used by the Day 22-25 reports
+- [x] **RAG-08**: `Day22_report.md` lists the 10 questions with expectation and expected sources, and compares answers without RAG vs with RAG, plus an A/B of nomic vs bge-m3 embeddings on retrieval hit@k (giga is not available as an embedder — see Phase 13 spike / D-15)
 
 ### Reranking and filtering (Day 23)
 
@@ -112,14 +112,14 @@
 | KB-09 | Phase 13 | Pending |
 | KB-10 | Phase 13 | Pending |
 | KB-11 | Phase 13 | Pending |
-| RAG-01 | Phase 14 | Pending |
-| RAG-02 | Phase 14 | Pending |
-| RAG-03 | Phase 14 | Pending |
-| RAG-04 | Phase 14 | Pending |
-| RAG-05 | Phase 14 | Pending |
-| RAG-06 | Phase 14 | Pending |
-| RAG-07 | Phase 14 | Pending |
-| RAG-08 | Phase 14 | Pending |
+| RAG-01 | Phase 14 | Complete |
+| RAG-02 | Phase 14 | Complete |
+| RAG-03 | Phase 14 | Complete |
+| RAG-04 | Phase 14 | Complete |
+| RAG-05 | Phase 14 | Complete |
+| RAG-06 | Phase 14 | Complete |
+| RAG-07 | Phase 14 | Complete |
+| RAG-08 | Phase 14 | Complete |
 | RANK-01 | Phase 15 | Pending |
 | RANK-02 | Phase 15 | Pending |
 | RANK-03 | Phase 15 | Pending |

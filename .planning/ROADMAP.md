@@ -196,7 +196,7 @@ Plans:
 - [ ] 15-04-PLAN.md — shared two-stage retrieval pipeline with optional stages and metadata-only trace
 - [ ] 15-05-PLAN.md — chat-turn integration: payload v2, below-threshold path, client/model wiring in ws
 - [ ] 15-06-PLAN.md — eval tooling: draft calibration fixture, calibrate and ablate subcommands, DeepSeek judge script
-- [ ] 15-07-PLAN.md — UI: "Поиск ⚙" popover, "Детали поиска" block, grey below-threshold line (requires Phase 14 plan 14-06)
+- [x] 15-07-PLAN.md — UI: "Поиск ⚙" popover, "Детали поиска" block, grey below-threshold line (requires Phase 14 plan 14-06) (completed 2026-10-03)
 - [ ] 15-08-PLAN.md — calibration set approval and freeze, live calibration for nomic and bge-m3 (checkpoint)
 - [ ] 15-09-PLAN.md — user decisions on thresholds and FTS exemption, calibrated constants written (checkpoints)
 - [ ] 15-10-PLAN.md — live 7-run ablation on the Day 22 winner and manual verdicts (requires Phase 14 plan 14-07)
@@ -254,7 +254,7 @@ Plans:
 | 10. Modals close only via x button (Day 21) | v3.0 | 1/1 | Complete   | 2026-10-02 |
 | 11. Edit and delete long-term memory entries via UI (Day 21) | v3.0 | 4/4 | Complete    | 2026-10-03 |
 | 13. Knowledge base indexing (Day 21) | v3.0 | 8/8 | Complete   | 2026-10-03 |
-| 14. First RAG query (Day 22) | v3.0 | 8/8 | Complete   | 2026-10-03 |
+| 14. First RAG query (Day 22) | v3.0 | 8/8 | Complete    | 2026-10-03 |
 | 15. Reranking and filtering (Day 23) | v3.0 | 0/TBD | Not started | - |
 | 16. Citations and anti-hallucination (Day 24) | v3.0 | 0/TBD | Not started | - |
 | 17. Mini-chat with RAG and task memory (Day 25) | v3.0 | 0/TBD | Not started | - |
