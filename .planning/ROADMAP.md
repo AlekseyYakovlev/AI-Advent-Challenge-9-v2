@@ -381,6 +381,17 @@ Plans:
 
 - [ ] TBD (promote with /bm:review-backlog when ready)
 
+### Phase 999.12: MCP server disable toggle has no effect — servers auto-reconnect on request (BACKLOG)
+
+**Goal:** In Settings → MCP серверы, «Отключить» does not stick: on the next chat request the MCP servers are connected again automatically, so their tool schemas (~11k tokens for filesystem 17 + GitLab 20 + builtin) are still sent to the LLM. This eats the context window and starves RAG fragments (see 14-UAT.md gap, debug session `.planning/debug/rag-k15-context-full.md`). Investigate where the agent re-connects servers (ws.py tool collection / MCP manager) and make the disabled state persistent and respected; consider also excluding tool schemas from RAG turns or showing their tokens in the usage meter.
+**Refs:** .planning/debug/rag-k15-context-full.md; 14-UAT.md test 3
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /bm:review-backlog when ready)
+
 ---
 *Roadmap created: 2026-09-19*
 *Last updated: 2026-10-03 — v3.0 roadmap: Phases 13-17 (RAG, Days 21-25) added; earlier: 2026-10-02 — Phase 9 planned (4 plans, TITLE-01..06); backlog 999.4/999.5/999.6/999.11 promoted to Phases 9-12 (Day 21)*
