@@ -17,8 +17,9 @@ def _modal_ids() -> list[str]:
 
 
 def _app_js() -> str:
-    """Return app.js with full-line // comments removed."""
+    """Return app.js with block comments and full-line // comments removed."""
     src: str = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
     return "\n".join(
         line for line in src.splitlines() if not line.lstrip().startswith("//")
     )
@@ -45,6 +46,12 @@ def test_no_backdrop_click_closer(modal_id: str) -> None:
     assert not listener.search(src), f"{modal_id} has a pointer listener"
     target_check = re.compile(r"target\s*===\s*\$\(\s*['\"]" + re.escape(modal_id) + r"['\"]\s*\)")
     assert not target_check.search(src), f"{modal_id} has a backdrop target check"
+    by_id = re.compile(
+        r"getElementById\(\s*['\"]" + re.escape(modal_id) + r"['\"]\s*\)\s*\.(addEventListener|on\w+)"
+    )
+    assert not by_id.search(src), f"{modal_id} has a getElementById handler"
+    id_check = re.compile(r"\.id\s*===?\s*['\"]" + re.escape(modal_id) + r"['\"]")
+    assert not id_check.search(src), f"{modal_id} has a backdrop id check"
 
 
 @pytest.mark.parametrize("modal_id", _modal_ids(), ids=_modal_ids())
@@ -53,14 +60,20 @@ def test_modal_has_bound_x_button(modal_id: str) -> None:
     stem: str = modal_id[: -len("-modal")]
     html: str = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
     assert f'id="btn-close-{stem}"' in html
-    assert f"$('btn-close-{stem}').addEventListener('click'" in _app_js()
+    binding = re.compile(
+        r"\$\(\s*['\"]btn-close-" + re.escape(stem) + r"['\"]\s*\)\s*\.addEventListener\(\s*['\"]click['\"]"
+    )
+    assert binding.search(_app_js())
 
 
 def test_escape_key_does_not_close_modals() -> None:
     """Encodes assumption A-01 of plan 10-01; deleting this one test allows an Escape closer again."""
     src: str = _app_js()
     assert not re.search(r"\.key\s*===\s*['\"](Escape|Esc)['\"]", src)
-    assert not re.search(r"keyCode\s*===\s*27", src)
+    assert not re.search(r"keyCode\s*===?\s*27", src)
+    assert not re.search(r"\.code\s*===?\s*['\"](Escape|Esc)['\"]", src)
+    assert not re.search(r"\bEscape\b", src), "Escape handling found outside comments"
+    assert not re.search(r"\.on(click|mousedown|pointerdown)\s*=", src)
 
 
 def test_unrelated_handlers_survive() -> None:
