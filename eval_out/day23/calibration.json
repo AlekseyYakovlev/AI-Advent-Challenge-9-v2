@@ -1,0 +1,555 @@
+{
+  "fixtures": {
+    "calibration": {
+      "name": "calibration_set.json",
+      "sha256": "9435112f4e3421a96af029c194177879c89ac7ecadcb0f3fddf6cbc2c31f3407"
+    },
+    "control": {
+      "name": "control_set.json",
+      "sha256": "8c5b76a0590301ab496498b534802e92cbc82072841a188a4b08c19806ceebe2"
+    }
+  },
+  "candidate_k": 20,
+  "kbs": {
+    "nomic": {
+      "embedding_model": "text-embedding-nomic-embed-text-v1.5",
+      "marker": "nomic",
+      "gold_scores": [
+        0.7885,
+        0.853,
+        0.7762,
+        0.7863,
+        0.8122,
+        0.805
+      ],
+      "gold_missing": [
+        "C02",
+        "C04",
+        "C06",
+        "C08",
+        "C10",
+        "C12"
+      ],
+      "answerable_top1": [
+        0.8153,
+        0.7196,
+        0.853,
+        0.7714,
+        0.805,
+        0.7899,
+        0.8041,
+        0.7593,
+        0.8122,
+        0.7886,
+        0.8174,
+        0.7431
+      ],
+      "ooc_top1": [
+        0.7691,
+        0.7488,
+        0.777,
+        0.7975,
+        0.7872,
+        0.7796,
+        0.7652,
+        0.762
+      ],
+      "threshold": 0.79,
+      "stats": {
+        "gold_min": 0.7762,
+        "gold_median": 0.7967500000000001,
+        "gold_max": 0.853,
+        "ooc_min": 0.7488,
+        "ooc_median": 0.77305,
+        "ooc_max": 0.7975,
+        "n_gold": 6,
+        "n_ooc": 8,
+        "separable": false,
+        "method": "youden",
+        "youden_j": 0.5833
+      },
+      "rows": [
+        {
+          "id": "C01",
+          "category": "answerable",
+          "top1": 0.8153,
+          "gold": 0.7885
+        },
+        {
+          "id": "C02",
+          "category": "answerable",
+          "top1": 0.7196,
+          "gold": null
+        },
+        {
+          "id": "C03",
+          "category": "answerable",
+          "top1": 0.853,
+          "gold": 0.853
+        },
+        {
+          "id": "C04",
+          "category": "answerable",
+          "top1": 0.7714,
+          "gold": null
+        },
+        {
+          "id": "C05",
+          "category": "answerable",
+          "top1": 0.805,
+          "gold": 0.7762
+        },
+        {
+          "id": "C06",
+          "category": "answerable",
+          "top1": 0.7899,
+          "gold": null
+        },
+        {
+          "id": "C07",
+          "category": "answerable",
+          "top1": 0.8041,
+          "gold": 0.7863
+        },
+        {
+          "id": "C08",
+          "category": "answerable",
+          "top1": 0.7593,
+          "gold": null
+        },
+        {
+          "id": "C09",
+          "category": "answerable",
+          "top1": 0.8122,
+          "gold": 0.8122
+        },
+        {
+          "id": "C10",
+          "category": "answerable",
+          "top1": 0.7886,
+          "gold": null
+        },
+        {
+          "id": "C11",
+          "category": "answerable",
+          "top1": 0.8174,
+          "gold": 0.805
+        },
+        {
+          "id": "C12",
+          "category": "answerable",
+          "top1": 0.7431,
+          "gold": null
+        },
+        {
+          "id": "C13",
+          "category": "out_of_corpus",
+          "top1": 0.7691,
+          "gold": null
+        },
+        {
+          "id": "C14",
+          "category": "out_of_corpus",
+          "top1": 0.7488,
+          "gold": null
+        },
+        {
+          "id": "C15",
+          "category": "out_of_corpus",
+          "top1": 0.777,
+          "gold": null
+        },
+        {
+          "id": "C16",
+          "category": "out_of_corpus",
+          "top1": 0.7975,
+          "gold": null
+        },
+        {
+          "id": "C17",
+          "category": "out_of_corpus",
+          "top1": 0.7872,
+          "gold": null
+        },
+        {
+          "id": "C18",
+          "category": "out_of_corpus",
+          "top1": 0.7796,
+          "gold": null
+        },
+        {
+          "id": "C19",
+          "category": "out_of_corpus",
+          "top1": 0.7652,
+          "gold": null
+        },
+        {
+          "id": "C20",
+          "category": "out_of_corpus",
+          "top1": 0.762,
+          "gold": null
+        }
+      ],
+      "control_check": [
+        {
+          "id": "Q01",
+          "category": "direct",
+          "top1": 0.7757,
+          "gold": 0.7383,
+          "survivors": 0
+        },
+        {
+          "id": "Q02",
+          "category": "direct",
+          "top1": 0.8393,
+          "gold": 0.8205,
+          "survivors": 14
+        },
+        {
+          "id": "Q03",
+          "category": "direct",
+          "top1": 0.836,
+          "gold": 0.836,
+          "survivors": 14
+        },
+        {
+          "id": "Q04",
+          "category": "direct",
+          "top1": 0.7565,
+          "gold": 0.7363,
+          "survivors": 0
+        },
+        {
+          "id": "Q05",
+          "category": "direct",
+          "top1": 0.8373,
+          "gold": null,
+          "survivors": 20
+        },
+        {
+          "id": "Q06",
+          "category": "direct",
+          "top1": 0.7748,
+          "gold": 0.7628,
+          "survivors": 0
+        },
+        {
+          "id": "Q07",
+          "category": "synthesis",
+          "top1": 0.8011,
+          "gold": null,
+          "survivors": 2
+        },
+        {
+          "id": "Q08",
+          "category": "synthesis",
+          "top1": 0.7948,
+          "gold": 0.7922,
+          "survivors": 2
+        },
+        {
+          "id": "Q09",
+          "category": "out_of_corpus",
+          "top1": 0.7563,
+          "gold": null,
+          "survivors": 0
+        },
+        {
+          "id": "Q10",
+          "category": "out_of_corpus",
+          "top1": 0.7716,
+          "gold": null,
+          "survivors": 0
+        }
+      ],
+      "fts_probe": {
+        "ooc_total": 8,
+        "ooc_with_exempt": [
+          "C13",
+          "C14",
+          "C15",
+          "C16",
+          "C17",
+          "C18",
+          "C19",
+          "C20"
+        ],
+        "gold_rescued_by_fts": [
+          "C01",
+          "C02",
+          "C04",
+          "C05",
+          "C06",
+          "C07",
+          "C10",
+          "C12"
+        ]
+      }
+    },
+    "bge": {
+      "embedding_model": "text-embedding-bge-m3",
+      "marker": "bge-m3",
+      "gold_scores": [
+        0.6857,
+        0.6745,
+        0.779,
+        0.693,
+        0.7772,
+        0.716,
+        0.7617,
+        0.682,
+        0.7207,
+        0.7006,
+        0.7445,
+        0.6755
+      ],
+      "gold_missing": [],
+      "answerable_top1": [
+        0.6857,
+        0.6745,
+        0.779,
+        0.693,
+        0.7772,
+        0.716,
+        0.7617,
+        0.682,
+        0.7207,
+        0.7006,
+        0.7445,
+        0.6755
+      ],
+      "ooc_top1": [
+        0.5127,
+        0.5907,
+        0.6565,
+        0.6271,
+        0.5403,
+        0.5014,
+        0.552,
+        0.5155
+      ],
+      "threshold": 0.67,
+      "stats": {
+        "gold_min": 0.6745,
+        "gold_median": 0.7082999999999999,
+        "gold_max": 0.779,
+        "ooc_min": 0.5014,
+        "ooc_median": 0.54615,
+        "ooc_max": 0.6565,
+        "n_gold": 12,
+        "n_ooc": 8,
+        "separable": true,
+        "method": "midpoint",
+        "youden_j": 1.0
+      },
+      "rows": [
+        {
+          "id": "C01",
+          "category": "answerable",
+          "top1": 0.6857,
+          "gold": 0.6857
+        },
+        {
+          "id": "C02",
+          "category": "answerable",
+          "top1": 0.6745,
+          "gold": 0.6745
+        },
+        {
+          "id": "C03",
+          "category": "answerable",
+          "top1": 0.779,
+          "gold": 0.779
+        },
+        {
+          "id": "C04",
+          "category": "answerable",
+          "top1": 0.693,
+          "gold": 0.693
+        },
+        {
+          "id": "C05",
+          "category": "answerable",
+          "top1": 0.7772,
+          "gold": 0.7772
+        },
+        {
+          "id": "C06",
+          "category": "answerable",
+          "top1": 0.716,
+          "gold": 0.716
+        },
+        {
+          "id": "C07",
+          "category": "answerable",
+          "top1": 0.7617,
+          "gold": 0.7617
+        },
+        {
+          "id": "C08",
+          "category": "answerable",
+          "top1": 0.682,
+          "gold": 0.682
+        },
+        {
+          "id": "C09",
+          "category": "answerable",
+          "top1": 0.7207,
+          "gold": 0.7207
+        },
+        {
+          "id": "C10",
+          "category": "answerable",
+          "top1": 0.7006,
+          "gold": 0.7006
+        },
+        {
+          "id": "C11",
+          "category": "answerable",
+          "top1": 0.7445,
+          "gold": 0.7445
+        },
+        {
+          "id": "C12",
+          "category": "answerable",
+          "top1": 0.6755,
+          "gold": 0.6755
+        },
+        {
+          "id": "C13",
+          "category": "out_of_corpus",
+          "top1": 0.5127,
+          "gold": null
+        },
+        {
+          "id": "C14",
+          "category": "out_of_corpus",
+          "top1": 0.5907,
+          "gold": null
+        },
+        {
+          "id": "C15",
+          "category": "out_of_corpus",
+          "top1": 0.6565,
+          "gold": null
+        },
+        {
+          "id": "C16",
+          "category": "out_of_corpus",
+          "top1": 0.6271,
+          "gold": null
+        },
+        {
+          "id": "C17",
+          "category": "out_of_corpus",
+          "top1": 0.5403,
+          "gold": null
+        },
+        {
+          "id": "C18",
+          "category": "out_of_corpus",
+          "top1": 0.5014,
+          "gold": null
+        },
+        {
+          "id": "C19",
+          "category": "out_of_corpus",
+          "top1": 0.552,
+          "gold": null
+        },
+        {
+          "id": "C20",
+          "category": "out_of_corpus",
+          "top1": 0.5155,
+          "gold": null
+        }
+      ],
+      "control_check": [
+        {
+          "id": "Q01",
+          "category": "direct",
+          "top1": 0.6387,
+          "gold": 0.6387,
+          "survivors": 0
+        },
+        {
+          "id": "Q02",
+          "category": "direct",
+          "top1": 0.7582,
+          "gold": 0.7582,
+          "survivors": 1
+        },
+        {
+          "id": "Q03",
+          "category": "direct",
+          "top1": 0.7576,
+          "gold": 0.7576,
+          "survivors": 4
+        },
+        {
+          "id": "Q04",
+          "category": "direct",
+          "top1": 0.6979,
+          "gold": 0.6979,
+          "survivors": 1
+        },
+        {
+          "id": "Q05",
+          "category": "direct",
+          "top1": 0.7065,
+          "gold": 0.7065,
+          "survivors": 4
+        },
+        {
+          "id": "Q06",
+          "category": "direct",
+          "top1": 0.6835,
+          "gold": 0.6835,
+          "survivors": 1
+        },
+        {
+          "id": "Q07",
+          "category": "synthesis",
+          "top1": 0.6526,
+          "gold": 0.6526,
+          "survivors": 0
+        },
+        {
+          "id": "Q08",
+          "category": "synthesis",
+          "top1": 0.6341,
+          "gold": 0.6341,
+          "survivors": 0
+        },
+        {
+          "id": "Q09",
+          "category": "out_of_corpus",
+          "top1": 0.54,
+          "gold": null,
+          "survivors": 0
+        },
+        {
+          "id": "Q10",
+          "category": "out_of_corpus",
+          "top1": 0.517,
+          "gold": null,
+          "survivors": 0
+        }
+      ],
+      "fts_probe": {
+        "ooc_total": 8,
+        "ooc_with_exempt": [
+          "C13",
+          "C14",
+          "C15",
+          "C16",
+          "C17",
+          "C18",
+          "C19",
+          "C20"
+        ],
+        "gold_rescued_by_fts": []
+      }
+    }
+  }
+}

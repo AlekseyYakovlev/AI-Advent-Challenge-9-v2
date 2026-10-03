@@ -715,7 +715,12 @@ class KbChunk(SQLModel, table=True):
 
 
 class ChatRagConfig(SQLModel, table=True):
-    """Per-chat RAG settings; an absent row means RAG is off."""
+    """Per-chat RAG settings; an absent row means RAG is off.
+
+    The four stage flags (lexical, llm_rerank, hybrid, rewrite) are independent
+    switches, not a mode ladder. A None threshold means the calibrated value of
+    the attached KB's embedding model; a number is a user override.
+    """
 
     chat_id: int = Field(
         sa_column=Column(
@@ -730,4 +735,10 @@ class ChatRagConfig(SQLModel, table=True):
     )
     mode: str = Field(default="off", max_length=20)
     top_k: int = Field(default=5)
+    candidate_k: int = Field(default=20)
+    threshold: float | None = Field(default=None)
+    lexical: bool = Field(default=False)
+    llm_rerank: bool = Field(default=False)
+    hybrid: bool = Field(default=False)
+    rewrite: bool = Field(default=False)
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

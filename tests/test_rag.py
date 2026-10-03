@@ -1,6 +1,8 @@
 """Tests for the shared RAG helpers: retrieval wrapper, budget, block, merge, payload."""
 
 import asyncio
+import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -246,3 +248,92 @@ def test_parse_rag_payload_tolerates_garbage() -> None:
     assert rag.parse_rag_payload("not json") is None
     assert rag.parse_rag_payload(None) is None
     assert rag.parse_rag_payload("[1]") is None
+
+
+def test_calibrated_threshold_matches_by_lowercase_substring(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(rag, "CALIBRATED_THRESHOLDS", {"bge-m3": 0.59})
+    assert rag.calibrated_threshold("text-embedding-BGE-M3") == 0.59
+    assert rag.calibrated_threshold("other-model") is None
+    assert rag.calibrated_threshold(None) is None
+    assert rag.calibrated_threshold("") is None
+
+
+def test_resolve_threshold_sources(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(rag, "CALIBRATED_THRESHOLDS", {"bge-m3": 0.59})
+    assert rag.resolve_threshold(None, "text-embedding-bge-m3") == (0.59, "calibrated")
+    assert rag.resolve_threshold(0.7, "text-embedding-bge-m3") == (0.7, "user")
+    assert rag.resolve_threshold(0.7, None) == (0.7, "user")
+    assert rag.resolve_threshold(None, "unknown-model") == (0.0, "none")
+
+
+def test_shipped_calibrated_thresholds_are_valid_cosines() -> None:
+    for marker, value in rag.CALIBRATED_THRESHOLDS.items():
+        assert marker == marker.lower()
+        assert isinstance(value, float)
+        assert 0.0 <= value <= 1.0
+
+
+CALIBRATION_REPORT = Path(__file__).resolve().parent.parent / "eval_out" / "day23" / "calibration.json"
+
+
+def test_shipped_thresholds_match_calibration_report() -> None:
+    report = json.loads(CALIBRATION_REPORT.read_text(encoding="utf-8"))
+    for label, entry in report["kbs"].items():
+        marker = entry["embedding_model"].lower()
+        matching = [key for key in rag.CALIBRATED_THRESHOLDS if key in marker]
+        if entry["stats"]["separable"]:
+            assert len(matching) == 1, label
+            assert rag.CALIBRATED_THRESHOLDS[matching[0]] == entry["threshold"], label
+        else:
+            assert matching == [], label
+            assert rag.calibrated_threshold(entry["embedding_model"]) is None, label
+
+
+def test_payload_defaults_are_v2_ok_without_search() -> None:
+    payload = rag.build_rag_payload(
+        mode="rag",
+        kb_id=1,
+        kb_name="n",
+        top_k=3,
+        sources=[],
+        dropped=0,
+        context_tokens=0,
+        warning=None,
+    )
+    assert payload["v"] == 2
+    assert payload["verdict"] == "ok"
+    assert payload["search"] is None
+
+
+def test_parse_stored_v1_payload_still_works() -> None:
+    raw = (
+        '{"v": 1, "mode": "rag", "kb_id": 1, "kb_name": "n", "top_k": 3, "sources": [],'
+        ' "dropped": 0, "context_tokens": 0, "warning": null}'
+    )
+    parsed = rag.parse_rag_payload(raw)
+    assert parsed is not None
+    assert parsed["v"] == 1
+    assert "verdict" not in parsed and "search" not in parsed
+
+
+def test_merge_no_fragments_note_changes_only_last_user_message() -> None:
+    llm = [
+        {"role": "system", "content": "sys", "token_count": 1},
+        {"role": "user", "content": "старый", "token_count": 1},
+        {"role": "assistant", "content": "ответ", "token_count": 1},
+        {"role": "user", "content": "новый вопрос", "token_count": 3},
+    ]
+    originals = list(llm)
+    rag.merge_no_fragments_note(llm)
+    assert llm[3]["content"] == (
+        f"{rag.NO_FRAGMENTS_INSTRUCTION}\n\nВопрос: новый вопрос"
+    )
+    assert llm[3]["token_count"] == count_tokens(llm[3]["content"])
+    for position in range(3):
+        assert llm[position] is originals[position]
+
+
+def test_merge_no_fragments_note_without_user_message_is_noop() -> None:
+    llm = [{"role": "system", "content": "sys", "token_count": 1}]
+    rag.merge_no_fragments_note(llm)
+    assert llm == [{"role": "system", "content": "sys", "token_count": 1}]

@@ -11,12 +11,15 @@ from sqlmodel import select
 from shared.database import (
     async_session_factory,
     engine,
+    ensure_kb_chunk_fts,
     init_db,
+    migrate_add_chatragconfig_rank_columns,
     migrate_add_message_rag_sources,
     migrate_add_task_transition_rejection_columns,
     retry_on_locked_db,
 )
-from shared.models import Chat, ContextStrategy, Message, Settings, TokenUsage
+from kb_helpers import seed_kb, seed_user
+from shared.models import Chat, ContextStrategy, KbChunk, KbDocument, Message, Settings, TokenUsage
 
 
 @pytest.mark.asyncio
@@ -60,7 +63,11 @@ async def test_init_db_creates_all_tables() -> None:
                 "WHERE type='table' AND name NOT LIKE 'sqlite_%'"
             ),
         )
-        tables = {row[0] for row in result.fetchall()}
+        tables = {
+            row[0]
+            for row in result.fetchall()
+            if not row[0].startswith("kb_chunk_fts")
+        }
 
     assert tables == {
         "chat",
@@ -216,3 +223,128 @@ async def test_migrate_add_message_rag_sources_is_idempotent(tmp_path) -> None:
 
     assert columns.count("rag_sources") == 1
     assert legacy_value is None
+
+
+_RANK_COLUMNS = ("candidate_k", "threshold", "lexical", "llm_rerank", "hybrid", "rewrite")
+
+
+@pytest.mark.asyncio
+async def test_migrate_add_chatragconfig_rank_columns_is_idempotent(tmp_path) -> None:
+    """The rank-column migration adds six columns once to a Phase 14 chatragconfig table."""
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    legacy = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'legacy.db'}")
+    async with legacy.begin() as conn:
+        await conn.execute(
+            text(
+                "CREATE TABLE chatragconfig (chat_id INTEGER PRIMARY KEY, kb_id INTEGER, "
+                "mode VARCHAR, top_k INTEGER, updated_at DATETIME)"
+            )
+        )
+        await conn.execute(
+            text("INSERT INTO chatragconfig (chat_id, mode, top_k) VALUES (1, 'off', 5)")
+        )
+        await migrate_add_chatragconfig_rank_columns(conn)
+        await migrate_add_chatragconfig_rank_columns(conn)
+    async with legacy.connect() as conn:
+        columns = [
+            row[1] for row in (await conn.execute(text("PRAGMA table_info(chatragconfig)"))).fetchall()
+        ]
+        row = (
+            await conn.execute(
+                text(
+                    "SELECT candidate_k, threshold, lexical, llm_rerank, hybrid, rewrite "
+                    "FROM chatragconfig"
+                )
+            )
+        ).one()
+    await legacy.dispose()
+
+    for name in _RANK_COLUMNS:
+        assert columns.count(name) == 1
+    assert tuple(row) == (20, None, 0, 0, 0, 0)
+
+
+@pytest.mark.asyncio
+async def test_migrate_add_chatragconfig_rank_columns_without_table(tmp_path) -> None:
+    """A database without chatragconfig is left untouched."""
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    legacy = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'empty.db'}")
+    async with legacy.begin() as conn:
+        await migrate_add_chatragconfig_rank_columns(conn)
+    await legacy.dispose()
+
+
+def test_chatragconfig_model_defaults() -> None:
+    """A fresh config row defaults to a threshold-only pipeline with 20 candidates."""
+    from shared.config import settings
+    from shared.models import ChatRagConfig
+
+    cfg = ChatRagConfig(chat_id=1)
+    assert (cfg.candidate_k, cfg.threshold, cfg.lexical, cfg.llm_rerank, cfg.hybrid, cfg.rewrite) == (
+        20,
+        None,
+        False,
+        False,
+        False,
+        False,
+    )
+    assert settings.RAG_LLM_STAGE_TIMEOUT == 45.0
+
+
+async def _fts_state() -> tuple[set[str], int]:
+    async with engine.connect() as conn:
+        names = {
+            row[0]
+            for row in (
+                await conn.execute(
+                    text("SELECT name FROM sqlite_master WHERE name LIKE 'kb%fts%'")
+                )
+            ).fetchall()
+        }
+        count = (await conn.execute(text("SELECT count(*) FROM kb_chunk_fts"))).scalar()
+    return names, count
+
+
+@pytest.mark.asyncio
+async def test_ensure_kb_chunk_fts_is_idempotent_and_backfills() -> None:
+    """FTS table and triggers exist after init_db; missing rows are backfilled once."""
+    names, _ = await _fts_state()
+    assert {"kb_chunk_fts", "kbchunk_fts_ai", "kbchunk_fts_ad"} <= names
+
+    async with engine.begin() as conn:
+        await conn.execute(text("DROP TRIGGER kbchunk_fts_ai"))
+        await conn.execute(text("DROP TRIGGER kbchunk_fts_ad"))
+    user_id = await seed_user()
+    kb_id = await seed_kb(user_id)
+    async with async_session_factory() as session:
+        doc = (await session.exec(select(KbDocument).where(KbDocument.kb_id == kb_id))).first()
+        for i in range(2):
+            session.add(
+                KbChunk(
+                    kb_id=kb_id,
+                    document_id=doc.id,
+                    chunk_index=i,
+                    chunk_id=f"c{i}",
+                    text=f"text {i}",
+                    source="s",
+                    title="t",
+                    char_start=0,
+                    char_end=1,
+                )
+            )
+        await session.commit()
+    _, before = await _fts_state()
+    assert before == 0
+
+    async with engine.begin() as conn:
+        await ensure_kb_chunk_fts(conn)
+    names, after = await _fts_state()
+    assert {"kbchunk_fts_ai", "kbchunk_fts_ad"} <= names
+    assert after == 2
+
+    async with engine.begin() as conn:
+        await ensure_kb_chunk_fts(conn)
+    _, again = await _fts_state()
+    assert again == 2

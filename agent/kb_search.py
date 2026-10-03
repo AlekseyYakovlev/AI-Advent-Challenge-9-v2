@@ -62,10 +62,10 @@ async def load_index_cached(kb: KnowledgeBase) -> faiss.Index:
     return index
 
 
-async def search_kb(
+async def search_kb_vectors(
     session: AsyncSession, kb: KnowledgeBase, query: str, top_k: int
-) -> list[dict[str, Any]]:
-    """Return the top_k chunks most similar to the query, best first."""
+) -> tuple[list[dict[str, Any]], np.ndarray]:
+    """Return the top_k chunks (with row ids) and the normalised query vector."""
     if kb.status != KbStatus.READY:
         raise KbNotReadyError()
     index = await load_index_cached(kb)
@@ -99,6 +99,7 @@ async def search_kb(
         results.append(
             {
                 "rank": len(results) + 1,
+                "row_id": row.id,
                 "score": round(score, 4),
                 "chunk_id": row.chunk_id,
                 "source": row.source,
@@ -109,4 +110,36 @@ async def search_kb(
             }
         )
     logger.info("kb_search", kb_id=kb.id, top_k=top_k, results=len(results))
-    return results
+    return results, array[0]
+
+
+async def search_kb(
+    session: AsyncSession, kb: KnowledgeBase, query: str, top_k: int
+) -> list[dict[str, Any]]:
+    """Return the top_k chunks most similar to the query, best first."""
+    results, _ = await search_kb_vectors(session, kb, query, top_k)
+    return [{key: value for key, value in item.items() if key != "row_id"} for item in results]
+
+
+def _reconstruct_cosines(
+    index: faiss.Index, query_vector: np.ndarray, row_ids: list[int]
+) -> dict[int, float]:
+    """Dot product of the query with each stored (already normalised) vector."""
+    cosines: dict[int, float] = {}
+    for row_id in row_ids:
+        try:
+            stored = index.reconstruct(int(row_id))
+        except RuntimeError:
+            continue
+        cosines[int(row_id)] = round(float(np.dot(stored, query_vector)), 4)
+    return cosines
+
+
+async def cosine_for_ids(
+    kb: KnowledgeBase, query_vector: np.ndarray, row_ids: list[int]
+) -> dict[int, float]:
+    """Cosine of the query against the given chunk row ids, omitting ids absent from the index."""
+    if not row_ids:
+        return {}
+    index = await load_index_cached(kb)
+    return await asyncio.to_thread(_reconstruct_cosines, index, query_vector, row_ids)

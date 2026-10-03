@@ -4,14 +4,14 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictBool
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from agent.dependencies import get_current_user, require_allowed_origin, require_json_content_type
 from agent.kb_api import MSG_KB_NOT_FOUND, _get_owned_kb, _unprocessable
-from agent.rag import MODE_OFF
+from agent.rag import DEFAULT_CANDIDATE_K, MODE_OFF, calibrated_threshold, resolve_threshold
 from shared.database import get_session
 from shared.logger import get_logger
 from shared.models import Chat, ChatRagConfig, KbChunk, KbStatus, KnowledgeBase, User
@@ -31,6 +31,12 @@ class RagConfigIn(BaseModel):
     mode: Literal["off", "rag"]
     kb_id: int | None = None
     top_k: int = Field(default=DEFAULT_TOP_K, ge=1, le=20)
+    candidate_k: int | None = Field(default=None, ge=1, le=50)
+    threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    lexical: StrictBool | None = None
+    llm_rerank: StrictBool | None = None
+    hybrid: StrictBool | None = None
+    rewrite: StrictBool | None = None
 
 
 class RagConfigOut(BaseModel):
@@ -42,6 +48,15 @@ class RagConfigOut(BaseModel):
     kb_name: str | None
     kb_status: str | None
     top_k: int
+    candidate_k: int
+    threshold: float | None
+    calibrated_threshold: float | None
+    effective_threshold: float
+    threshold_source: str
+    lexical: bool
+    llm_rerank: bool
+    hybrid: bool
+    rewrite: bool
 
 
 async def _get_owned_chat(session: AsyncSession, chat_id: int, user_id: int) -> Chat:
@@ -63,13 +78,18 @@ async def _config_out(
     if row is None:
         return RagConfigOut(
             chat_id=chat.id, mode=MODE_OFF, kb_id=None, kb_name=None,
-            kb_status=None, top_k=DEFAULT_TOP_K,
+            kb_status=None, top_k=DEFAULT_TOP_K, candidate_k=DEFAULT_CANDIDATE_K,
+            threshold=None, calibrated_threshold=None, effective_threshold=0.0,
+            threshold_source="none", lexical=False, llm_rerank=False, hybrid=False,
+            rewrite=False,
         )
     kb: KnowledgeBase | None = None
     if row.kb_id is not None:
         kb = await session.get(KnowledgeBase, row.kb_id)
         if kb is not None and kb.user_id != chat.user_id:
             kb = None
+    model_id = kb.embedding_model if kb is not None else None
+    effective, source = resolve_threshold(row.threshold, model_id)
     return RagConfigOut(
         chat_id=chat.id,
         mode=row.mode,
@@ -77,7 +97,30 @@ async def _config_out(
         kb_name=kb.name if kb is not None else None,
         kb_status=kb.status.value if kb is not None else None,
         top_k=row.top_k,
+        candidate_k=row.candidate_k if row.candidate_k is not None else DEFAULT_CANDIDATE_K,
+        threshold=row.threshold,
+        calibrated_threshold=calibrated_threshold(model_id),
+        effective_threshold=effective,
+        threshold_source=source,
+        lexical=bool(row.lexical),
+        llm_rerank=bool(row.llm_rerank),
+        hybrid=bool(row.hybrid),
+        rewrite=bool(row.rewrite),
     )
+
+
+def _apply_search_settings(row: ChatRagConfig, body: RagConfigIn) -> None:
+    """Apply only the search fields the client sent; an explicit null threshold resets it."""
+    sent = body.model_fields_set
+    if "threshold" in sent:
+        row.threshold = body.threshold
+    if body.candidate_k is not None:
+        row.candidate_k = body.candidate_k
+    for name in ("lexical", "llm_rerank", "hybrid", "rewrite"):
+        value = getattr(body, name)
+        if value is not None:
+            setattr(row, name, value)
+    row.candidate_k = max(row.candidate_k or DEFAULT_CANDIDATE_K, row.top_k)
 
 
 @router.get("/api/v1/chats/{chat_id}/rag")
@@ -86,7 +129,7 @@ async def get_rag_config(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> RagConfigOut:
-    """Return the chat's RAG settings; defaults (off, no KB, top_k 5) when never configured."""
+    """Return the chat's RAG settings; defaults (off, no KB, top_k 5, threshold only) when never configured."""
     chat = await _get_owned_chat(session, chat_id, current_user.id)
     row = await session.get(ChatRagConfig, chat_id)
     return await _config_out(session, chat, row)
@@ -102,7 +145,7 @@ async def put_rag_config(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> RagConfigOut:
-    """Store the chat's RAG mode, knowledge base and top_k."""
+    """Store the chat's RAG mode, KB, top_k and search settings; omitted search fields stay unchanged."""
     chat = await _get_owned_chat(session, chat_id, current_user.id)
     mode = body.mode
     if body.kb_id is not None:
@@ -119,6 +162,7 @@ async def put_rag_config(
         row.mode = mode
         row.kb_id = body.kb_id
         row.top_k = body.top_k
+        _apply_search_settings(row, body)
         row.updated_at = datetime.now(timezone.utc)
         await session.commit()
         await session.refresh(row)
@@ -126,7 +170,17 @@ async def put_rag_config(
         await session.rollback()
         raise
     logger.info(
-        "rag_config_updated", chat_id=chat_id, mode=mode, kb_id=body.kb_id, top_k=body.top_k
+        "rag_config_updated",
+        chat_id=chat_id,
+        mode=mode,
+        kb_id=body.kb_id,
+        top_k=row.top_k,
+        candidate_k=row.candidate_k,
+        threshold=row.threshold,
+        lexical=row.lexical,
+        llm_rerank=row.llm_rerank,
+        hybrid=row.hybrid,
+        rewrite=row.rewrite,
     )
     return await _config_out(session, chat, row)
 

@@ -14,14 +14,22 @@ from agent.rag import (
     MODE_RAG,
     MSG_CONTEXT_FULL,
     MSG_RETRIEVAL_FAILED,
+    VERDICT_KB_UNAVAILABLE,
+    VERDICT_OFF,
     RagFailure,
     build_rag_block,
     build_rag_payload,
+    merge_no_fragments_note,
     merge_rag_block,
     rag_budget,
-    retrieve,
     serialize_rag_payload,
     sources_from_chunks,
+)
+from agent.rag_pipeline import (
+    VERDICT_BELOW_THRESHOLD,
+    config_from_row,
+    mark_over_budget,
+    run_retrieval_pipeline,
 )
 from shared.logger import get_logger
 from shared.models import Chat, ChatRagConfig, KnowledgeBase
@@ -57,6 +65,8 @@ def _payload(
     dropped: int = 0,
     context_tokens: int = 0,
     warning: dict[str, str] | None = None,
+    verdict: str = "ok",
+    search: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a RAG payload with metadata-only sources."""
     return build_rag_payload(
@@ -68,6 +78,8 @@ def _payload(
         dropped=dropped,
         context_tokens=context_tokens,
         warning=warning,
+        verdict=verdict,
+        search=search,
     )
 
 
@@ -92,6 +104,8 @@ async def prepare_rag_turn(
     context_length: int,
     max_tokens: int,
     extra_tokens: int = 0,
+    client: Any | None = None,
+    model: str | None = None,
 ) -> RagTurn:
     """Retrieve and merge fragments into the outbound list; never raises except on cancel."""
     chat_id = chat.id
@@ -102,7 +116,7 @@ async def prepare_rag_turn(
     try:
         config = await session.get(ChatRagConfig, chat_id)
         if config is None:
-            turn = RagTurn(MODE_OFF, _payload(MODE_OFF, None, None, None))
+            turn = RagTurn(MODE_OFF, _payload(MODE_OFF, None, None, None, verdict=VERDICT_OFF))
             _log(chat_id, turn)
             return turn
         kb_id, top_k = config.kb_id, config.top_k
@@ -111,10 +125,22 @@ async def prepare_rag_turn(
         if kb is None and config.kb_id is not None:
             kb_id = None
         if config.mode != MODE_RAG:
-            turn = RagTurn(MODE_OFF, _payload(MODE_OFF, kb_id, kb_name, None))
+            turn = RagTurn(MODE_OFF, _payload(MODE_OFF, kb_id, kb_name, None, verdict=VERDICT_OFF))
             _log(chat_id, turn)
             return turn
-        chunks = await retrieve(session, kb, question, config.top_k)
+        pipeline_config = config_from_row(config, kb)
+        chunks, trace = await run_retrieval_pipeline(
+            session, kb, question, pipeline_config, client, model
+        )
+        verdict = trace.pop("verdict")
+        if verdict == VERDICT_BELOW_THRESHOLD:
+            merge_no_fragments_note(llm_messages)
+            turn = RagTurn(
+                MODE_RAG,
+                _payload(MODE_RAG, kb_id, kb_name, top_k, verdict=verdict, search=trace),
+            )
+            _log(chat_id, turn)
+            return turn
         used = _message_tokens(llm_messages) + extra_tokens
         budget = rag_budget(context_length, used, max_tokens)
         budget_info = {
@@ -132,6 +158,7 @@ async def prepare_rag_turn(
             if not merge_rag_block(llm_messages, block):
                 raise RagFailure("retrieval_failed", MSG_RETRIEVAL_FAILED)
             context_tokens = count_tokens(block)
+        mark_over_budget(trace, len(kept))
         turn = RagTurn(
             MODE_RAG,
             _payload(
@@ -142,6 +169,8 @@ async def prepare_rag_turn(
                 sources=sources_from_chunks(kept),
                 dropped=dropped,
                 context_tokens=context_tokens,
+                verdict=verdict,
+                search=trace,
             ),
         )
     except asyncio.CancelledError:
@@ -149,7 +178,14 @@ async def prepare_rag_turn(
     except RagFailure as exc:
         turn = RagTurn(
             MODE_RAG,
-            _payload(MODE_RAG, kb_id, kb_name, top_k, warning={"code": exc.code, "text": exc.text}),
+            _payload(
+                MODE_RAG,
+                kb_id,
+                kb_name,
+                top_k,
+                warning={"code": exc.code, "text": exc.text},
+                verdict=VERDICT_KB_UNAVAILABLE,
+            ),
         )
     except Exception as exc:
         logger.error("rag_turn_failed", chat_id=chat_id, error=type(exc).__name__)
@@ -165,6 +201,7 @@ async def prepare_rag_turn(
                 kb_name,
                 top_k,
                 warning={"code": "retrieval_failed", "text": MSG_RETRIEVAL_FAILED},
+                verdict=VERDICT_KB_UNAVAILABLE,
             ),
         )
     _log(chat_id, turn, budget_info)
@@ -175,6 +212,7 @@ def _log(chat_id: int, turn: RagTurn, budget_info: dict[str, int] | None = None)
     """Log the turn outcome with ids and counts only."""
     payload = turn.payload
     warning = payload["warning"]
+    search = payload.get("search") or {}
     logger.info(
         "rag_turn_prepared",
         chat_id=chat_id,
@@ -184,5 +222,8 @@ def _log(chat_id: int, turn: RagTurn, budget_info: dict[str, int] | None = None)
         dropped=payload["dropped"],
         context_tokens=payload["context_tokens"],
         warning=warning["code"] if warning else None,
+        verdict=payload["verdict"],
+        candidates=len(search.get("candidates", [])),
+        skipped=len(search.get("skipped", [])),
         **(budget_info or {}),
     )

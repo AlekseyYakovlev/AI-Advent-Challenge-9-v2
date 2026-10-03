@@ -8,7 +8,9 @@ from agent.kb_search import (
     EmbeddingDimMismatchError,
     KbIndexCorruptError,
     KbNotReadyError,
+    cosine_for_ids,
     search_kb,
+    search_kb_vectors,
 )
 from agent.state import cleanup_kb_caches, kb_index_cache
 from kb_helpers import (
@@ -164,3 +166,63 @@ async def test_wrong_query_dimension_raises_dim_mismatch(monkeypatch: pytest.Mon
             await search_kb(session, kb, "q", 3)
     assert isinstance(info.value, KbIndexCorruptError)
     assert info.value.message == kb_search.MSG_DIM_MISMATCH
+
+
+async def test_search_kb_vectors_returns_row_ids_and_unit_vector(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, kb_id = await _ready_kb(monkeypatch)
+    chunks = await chunk_rows(kb_id)
+    target = chunks[3]
+    _patch_query(monkeypatch, target.text, [])
+    async with async_session_factory() as session:
+        kb = await session.get(KnowledgeBase, kb_id)
+        results, vector = await search_kb_vectors(session, kb, "q", 5)
+        plain = await search_kb(session, kb, "q", 5)
+    assert results[0]["row_id"] == target.id
+    assert all("row_id" not in item for item in plain)
+    assert [{k: v for k, v in r.items() if k != "row_id"} for r in results] == plain
+    assert vector.shape == (kb.dim,)
+    assert vector.dtype == np.float32
+    assert float(np.linalg.norm(vector)) == pytest.approx(1.0, abs=1e-5)
+
+
+async def test_search_kb_vectors_not_ready_raises() -> None:
+    user_id = await seed_user()
+    kb_id = await seed_kb(user_id)
+    async with async_session_factory() as session:
+        kb = await session.get(KnowledgeBase, kb_id)
+        with pytest.raises(KbNotReadyError):
+            await search_kb_vectors(session, kb, "q", 5)
+
+
+async def test_cosine_for_ids_matches_scores_and_covers_outside_top_k(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, kb_id = await _ready_kb(monkeypatch)
+    chunks = await chunk_rows(kb_id)
+    _patch_query(monkeypatch, chunks[3].text, [])
+    async with async_session_factory() as session:
+        kb = await session.get(KnowledgeBase, kb_id)
+        results, vector = await search_kb_vectors(session, kb, "q", 3)
+    cosines = await cosine_for_ids(kb, vector, [r["row_id"] for r in results])
+    for item in results:
+        assert cosines[item["row_id"]] == pytest.approx(item["score"], abs=1e-3)
+    top_ids = {r["row_id"] for r in results}
+    outside = [c.id for c in chunks if c.id not in top_ids]
+    assert outside
+    assert set(await cosine_for_ids(kb, vector, outside)) == set(outside)
+
+
+async def test_cosine_for_ids_skips_unknown_and_handles_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, kb_id = await _ready_kb(monkeypatch)
+    chunks = await chunk_rows(kb_id)
+    _patch_query(monkeypatch, "x", [])
+    async with async_session_factory() as session:
+        kb = await session.get(KnowledgeBase, kb_id)
+        _, vector = await search_kb_vectors(session, kb, "q", 1)
+    assert await cosine_for_ids(kb, vector, []) == {}
+    got = await cosine_for_ids(kb, vector, [chunks[0].id, 10_000_000])
+    assert set(got) == {chunks[0].id}

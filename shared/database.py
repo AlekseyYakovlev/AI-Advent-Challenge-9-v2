@@ -140,6 +140,79 @@ async def migrate_add_message_rag_sources(conn: Any) -> None:
         await conn.execute(text("ALTER TABLE message ADD COLUMN rag_sources TEXT"))
 
 
+_CHATRAGCONFIG_RANK_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("candidate_k", "INTEGER DEFAULT 20"),
+    ("threshold", "REAL"),
+    ("lexical", "BOOLEAN DEFAULT 0"),
+    ("llm_rerank", "BOOLEAN DEFAULT 0"),
+    ("hybrid", "BOOLEAN DEFAULT 0"),
+    ("rewrite", "BOOLEAN DEFAULT 0"),
+)
+
+
+async def migrate_add_chatragconfig_rank_columns(conn: Any) -> None:
+    """Add the two-stage retrieval setting columns to chatragconfig (idempotent)."""
+    table_check = await conn.execute(
+        text(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='table' AND name='chatragconfig'",
+        ),
+    )
+    if table_check.fetchone() is None:
+        return
+
+    result = await conn.execute(text("PRAGMA table_info(chatragconfig)"))
+    existing = {row[1] for row in result.fetchall()}
+    for name, definition in _CHATRAGCONFIG_RANK_COLUMNS:
+        if name in existing:
+            continue
+        logger.info("migrating_chatragconfig_add_column", column=name)
+        await conn.execute(
+            text(f"ALTER TABLE chatragconfig ADD COLUMN {name} {definition}"),
+        )
+
+
+async def ensure_kb_chunk_fts(conn: Any) -> None:
+    """Create the FTS5 mirror of kbchunk, its sync triggers and backfill missing rows (idempotent)."""
+    table_check = await conn.execute(
+        text(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='table' AND name='kbchunk'",
+        ),
+    )
+    if table_check.fetchone() is None:
+        return
+
+    await conn.exec_driver_sql(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS kb_chunk_fts USING fts5("
+        "text, section, kb_id UNINDEXED, tokenize='unicode61 remove_diacritics 2')",
+    )
+    await conn.exec_driver_sql(
+        "CREATE TRIGGER IF NOT EXISTS kbchunk_fts_ai AFTER INSERT ON kbchunk BEGIN "
+        "INSERT INTO kb_chunk_fts(rowid, text, section, kb_id) "
+        "VALUES (new.id, new.text, new.section, new.kb_id); END",
+    )
+    # Chunk text is never updated in place (re-index deletes and re-inserts), so no UPDATE trigger.
+    await conn.exec_driver_sql(
+        "CREATE TRIGGER IF NOT EXISTS kbchunk_fts_ad AFTER DELETE ON kbchunk BEGIN "
+        "DELETE FROM kb_chunk_fts WHERE rowid = old.id; END",
+    )
+
+    chunk_count = (await conn.exec_driver_sql("SELECT count(*) FROM kbchunk")).scalar()
+    fts_count = (await conn.exec_driver_sql("SELECT count(*) FROM kb_chunk_fts")).scalar()
+    if chunk_count == fts_count:
+        return
+    await conn.exec_driver_sql(
+        "DELETE FROM kb_chunk_fts WHERE rowid NOT IN (SELECT id FROM kbchunk)",
+    )
+    inserted = await conn.exec_driver_sql(
+        "INSERT INTO kb_chunk_fts(rowid, text, section, kb_id) "
+        "SELECT id, text, section, kb_id FROM kbchunk "
+        "WHERE id NOT IN (SELECT rowid FROM kb_chunk_fts)",
+    )
+    logger.info("kb_chunk_fts_backfilled", inserted=inserted.rowcount)
+
+
 async def migrate_add_scheduledtask_provider_id(conn: Any) -> None:
     """Add provider_id column to scheduledtask when missing (idempotent)."""
     table_check = await conn.execute(
@@ -278,7 +351,9 @@ async def init_db() -> None:
         await migrate_add_message_tool_trace(conn)
         await migrate_add_message_rag_sources(conn)
         await migrate_add_scheduledtask_provider_id(conn)
+        await migrate_add_chatragconfig_rank_columns(conn)
         await conn.run_sync(SQLModel.metadata.create_all)
+        await ensure_kb_chunk_fts(conn)
         await _migrate_legacy_strategies(conn)
 
 

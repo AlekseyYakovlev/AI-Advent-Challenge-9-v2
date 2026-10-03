@@ -3,6 +3,7 @@
 import asyncio
 
 import pytest
+from sqlalchemy import text
 from sqlmodel import select
 from starlette.testclient import TestClient
 
@@ -169,3 +170,57 @@ def test_lifespan_recovers_orphaned_kb() -> None:
         kb = client.portal.call(get_kb, kb_id)
         assert kb.status == KbStatus.FAILED
         assert kb.error == MSG_INTERRUPTED_RESTART
+
+
+async def _fts_rowids(kb_id: int) -> list[int]:
+    async with engine.connect() as conn:
+        rows = await conn.execute(
+            text("SELECT rowid FROM kb_chunk_fts WHERE kb_id = :kb ORDER BY rowid"),
+            {"kb": kb_id},
+        )
+        return [row[0] for row in rows.fetchall()]
+
+
+async def test_fts_rows_follow_chunks(monkeypatch: pytest.MonkeyPatch) -> None:
+    install_fake_embedder(monkeypatch)
+    user_id = await seed_user()
+    kb_id = await seed_kb(user_id)
+    await run_index_job(kb_id, user_id)
+
+    chunk_ids = [chunk.id for chunk in await chunk_rows(kb_id)]
+    assert chunk_ids
+    assert await _fts_rowids(kb_id) == chunk_ids
+
+    await _delete(kb_id)
+
+    assert await _fts_rowids(kb_id) == []
+
+
+async def test_fts_rows_removed_on_fk_cascade(monkeypatch: pytest.MonkeyPatch) -> None:
+    install_fake_embedder(monkeypatch)
+    user_id = await seed_user()
+    kb_id = await seed_kb(user_id)
+    await run_index_job(kb_id, user_id)
+    assert await _fts_rowids(kb_id)
+
+    async with async_session_factory() as session:
+        await session.exec(text("DELETE FROM knowledgebase WHERE id = :kb").bindparams(kb=kb_id))
+        await session.commit()
+
+    assert await _fts_rowids(kb_id) == []
+
+
+async def test_fts_matches_cyrillic_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
+    install_fake_embedder(monkeypatch)
+    user_id = await seed_user()
+    kb_id = await seed_kb(user_id, files={"a.txt": "Каталог товаров содержит Описание изделий."})
+    await run_index_job(kb_id, user_id)
+
+    async with engine.connect() as conn:
+        rows = await conn.execute(
+            text("SELECT rowid FROM kb_chunk_fts WHERE kb_chunk_fts MATCH :q AND kb_id = :kb"),
+            {"q": '"описан"*', "kb": kb_id},
+        )
+        found = [row[0] for row in rows.fetchall()]
+
+    assert found == [chunk.id for chunk in await chunk_rows(kb_id)]
