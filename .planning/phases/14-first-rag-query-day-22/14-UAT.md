@@ -1,5 +1,5 @@
 ---
-status: complete
+status: diagnosed
 phase: 14-first-rag-query-day-22
 source: [14-01-SUMMARY.md, 14-02-SUMMARY.md, 14-03-SUMMARY.md, 14-04-SUMMARY.md, 14-05-SUMMARY.md, 14-06-SUMMARY.md, 14-07-SUMMARY.md, 14-08-SUMMARY.md]
 started: 2026-10-03T12:00:00Z
@@ -59,7 +59,12 @@ blocked: 0
   reason: "User reported: K=5 works; K=15 gives 'Контекст заполнен. Ответ дан без фрагментов базы знаний. Выберите другую стратегию сжатия или начните новый чат.' (context_full warning, answer without fragments). Screenshot evidence: context usage only 499 / 16384 (3%) when the warning appeared, label 'без RAG (сбой поиска)'."
   severity: major
   test: 3
-  root_cause: ""
-  artifacts: []
-  missing: []
+  root_cause: "NOT CONFIRMED. context_full is raised only at agent/rag_turn.py:121 when build_rag_block (agent/rag.py:134) keeps zero chunks, i.e. even the rank-1 chunk exceeds rag_budget = min(30% ctx, ctx - used - max_tokens). Settings for this chat: ctx 16384, max_tokens 4096. Rank-1 is identical for K=5 and K=15, so a plain size overflow does not explain the K-dependent behaviour; check logs (rag_turn_prepared / rag_retrieve_failed) and the actual used/extra_tokens/budget values for the failing turn. Also: the UI label says 'сбой поиска' for a budget condition, and the message advises 'change compression strategy' which is irrelevant here."
+  artifacts:
+    - path: "agent/rag_turn.py"
+      issue: "context_full raised when block is None (line ~121)"
+    - path: "agent/rag.py"
+      issue: "rag_budget / build_rag_block prefix fitting, CYRILLIC_SAFETY"
+  missing:
+    - "Reproduce with K=15 and log used/extra_tokens/budget/first-chunk tokens"
   debug_session: ""
