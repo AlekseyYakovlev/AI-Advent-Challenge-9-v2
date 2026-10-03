@@ -109,7 +109,11 @@ def _embedding_http_error(exc: EmbeddingError) -> HTTPException:
 async def _require_content_length_within_cap(request: Request) -> None:
     """Reject a declared request size above the upload cap before reading the body."""
     declared = request.headers.get("content-length")
-    if declared is not None and declared.isdigit() and int(declared) > MAX_REQUEST_BYTES:
+    if declared is None:
+        raise HTTPException(411, detail="Length Required")
+    if not declared.isdigit():
+        raise HTTPException(400, detail="Invalid Content-Length")
+    if int(declared) > MAX_REQUEST_BYTES:
         raise HTTPException(413, detail=MSG_TOTAL_TOO_LARGE)
 
 
@@ -318,10 +322,11 @@ async def create_kb(
             await asyncio.to_thread(remove_kb_dir, user_id, kb_id)
         logger.warning("kb_create_rejected", user_id=user_id, reason="upload_rule")
         raise _unprocessable(exc.message) from exc
-    except Exception:
-        await session.rollback()
+    except BaseException:
+        # BaseException so a client disconnect (CancelledError) still cleans up files.
+        await asyncio.shield(session.rollback())
         if kb_id is not None:
-            await asyncio.to_thread(remove_kb_dir, user_id, kb_id)
+            remove_kb_dir(user_id, kb_id)
         raise
     await session.refresh(kb)
     kb_indexer.spawn_index_job(kb.id, user_id)
