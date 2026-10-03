@@ -353,7 +353,11 @@ async def init_db() -> None:
         await migrate_add_scheduledtask_provider_id(conn)
         await migrate_add_chatragconfig_rank_columns(conn)
         await conn.run_sync(SQLModel.metadata.create_all)
-        await ensure_kb_chunk_fts(conn)
+        try:
+            async with conn.begin_nested():
+                await ensure_kb_chunk_fts(conn)
+        except OperationalError as exc:
+            logger.warning("kb_chunk_fts_unavailable", error=str(exc))
         await _migrate_legacy_strategies(conn)
 
 
