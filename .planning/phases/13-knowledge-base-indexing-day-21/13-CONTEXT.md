@@ -50,6 +50,10 @@ Users build a knowledge base (KB) from PDF/TXT/MD files in the sidebar "База
 - **D-22:** Indexing is a background asyncio task (`Semaphore(1)`, `to_thread` for parse/FAISS, async batched embeddings 16-32 with concurrency 1), progress via `/ws/events` with REST fallback; DB status row is source of truth; upload returns 202.
 - **D-23:** KB write routes use the existing Origin allow-list (multipart POST with cookie); all KB data is scoped by `user_id`, foreign KB returns 404.
 
+### Post-research amendments (2026-10-03, confirmed by user after the spike in 13-RESEARCH.md)
+- **D-24:** Supersedes the giga default in D-07/D-09. The spike showed LM Studio's `/v1/embeddings` ignores the `model` field and giga (typed `llm`) cannot embed: its "vectors" came from nomic. Before indexing (and in "Проверить эмбеддинг"), a pre-flight guard requires the selected model to have `type == "embeddings"` and `state == "loaded"` in `/api/v0/models` (after the D-08 explicit-load attempt). Otherwise the KB goes to `failed` with a Russian message. The dropdown defaults to the first model that passes the guard (nomic in the current setup). giga stays selectable and fails clearly.
+- **D-25:** Extends D-11/D-13. LM Studio silently truncates embedding input after about 2500 Cyrillic characters, so embedded text, breadcrumb included, is hard-capped at 2000 characters and the fixed strategy also validates `size <= 2000` with a Russian message.
+
 ### Claude's Discretion
 - Exact progress throttling interval, batch size within 16-32, button/chip styling, retry/backoff on embedding HTTP errors, module split within `agent/kb_*.py`, and Windows non-ASCII FAISS path handling (serialize to bytes).
 
