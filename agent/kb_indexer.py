@@ -319,6 +319,10 @@ async def delete_kb(session: AsyncSession, kb: KnowledgeBase) -> None:
         await session.rollback()
         raise
     await asyncio.to_thread(remove_kb_dir, user_id, kb_id)
+    if job is not None and not job.done():
+        # Job outlived the timeout: sweep again once it really finishes so a late
+        # index write cannot resurrect files for the deleted KB.
+        job.add_done_callback(lambda _task: remove_kb_dir(user_id, kb_id))
     hub.publish(user_id, kb_deleted_frame(kb_id))
     logger.info("kb_deleted", kb_id=kb_id, user_id=user_id)
 
