@@ -28,6 +28,9 @@ const state = {
     isStatsLocal: false,
     statsAbortController: null,
     lastMemory: null,
+    editingMemory: null,
+    savingMemory: false,
+    deletingMemoryId: null,
     lastProfile: null,
     lastTasks: null,
     lastGlobalInvariants: null,
@@ -295,7 +298,223 @@ async function loadChatMemory(chatId) {
     }
 }
 
-function renderMemoryEntries(container, entries) {
+function memoryErrorText(err, fallback) {
+    const text = err && typeof err.message === 'string' ? err.message : '';
+    if (text && !text.startsWith('[') && !text.startsWith('{')) return text;
+    return fallback;
+}
+
+function patchLongTermMemoryLocally(entryId, updatedEntry) {
+    if (!state.lastMemory) return;
+    const current = state.lastMemory.long_term;
+    state.lastMemory.long_term = updatedEntry === null
+        ? current.filter((item) => item.id !== entryId)
+        : current.map((item) => (item.id === entryId ? updatedEntry : item));
+}
+
+async function refreshMemoryPanel() {
+    renderMemoryPanel();
+    if (state.currentChatId !== null) {
+        await loadChatMemory(state.currentChatId);
+    }
+}
+
+function startMemoryEdit(entry) {
+    state.editingMemory = { id: entry.id, key: entry.key, value: entry.value };
+    renderMemoryPanel();
+}
+
+function cancelMemoryEdit() {
+    state.editingMemory = null;
+    renderMemoryPanel();
+}
+
+async function saveLongTermMemory() {
+    const draft = state.editingMemory;
+    if (!draft || state.savingMemory) return;
+    const key = draft.key.trim();
+    const value = draft.value;
+    if (!key || !value.trim()) {
+        showToast('Заполните ключ и значение', 'error');
+        return;
+    }
+    state.savingMemory = true;
+    renderMemoryPanel();
+    try {
+        const updated = await apiFetch(`/api/v1/memory/long-term/${draft.id}`, {
+            method: 'PUT',
+            body: JSON.stringify({ key, value }),
+        });
+        if (updated !== undefined) {
+            if (state.editingMemory && state.editingMemory.id === draft.id) {
+                state.editingMemory = null;
+            }
+            patchLongTermMemoryLocally(draft.id, updated);
+            showToast('Запись памяти обновлена', 'success');
+        }
+    } catch (err) {
+        showToast(memoryErrorText(err, 'Не удалось сохранить запись памяти.'), 'error');
+    } finally {
+        state.savingMemory = false;
+    }
+    await refreshMemoryPanel();
+}
+
+async function deleteLongTermMemory(entry) {
+    if (state.deletingMemoryId !== null) return;
+    if (!confirm(`Удалить запись «${entry.key}» из долговременной памяти? Это действие нельзя отменить.`)) return;
+    state.deletingMemoryId = entry.id;
+    renderMemoryPanel();
+    try {
+        const result = await apiFetch(`/api/v1/memory/long-term/${entry.id}`, { method: 'DELETE' });
+        if (result !== undefined) {
+            patchLongTermMemoryLocally(entry.id, null);
+            if (state.editingMemory && state.editingMemory.id === entry.id) {
+                state.editingMemory = null;
+            }
+            showToast('Запись памяти удалена', 'success');
+        }
+    } catch (err) {
+        showToast(memoryErrorText(err, 'Не удалось удалить запись памяти.'), 'error');
+    } finally {
+        state.deletingMemoryId = null;
+    }
+    await refreshMemoryPanel();
+}
+
+function buildMemoryButton(label, className, action, handler) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = className;
+    button.textContent = label;
+    button.dataset.memoryAction = action;
+    button.addEventListener('click', handler);
+    return button;
+}
+
+function buildMemoryEntryRow(entry, editable) {
+    const row = document.createElement('div');
+    row.className = 'rounded-lg bg-slate-800 px-2 py-1';
+    row.dataset.memoryEntryId = String(entry.id);
+
+    const keyEl = document.createElement('div');
+    keyEl.className = 'text-slate-300 font-semibold';
+    keyEl.textContent = entry.key;
+
+    const valueEl = document.createElement('div');
+    valueEl.className = 'text-slate-400 truncate';
+    const truncated = entry.value.length > 160 ? `${entry.value.slice(0, 160)}…` : entry.value;
+    valueEl.textContent = truncated;
+    valueEl.title = entry.value;
+
+    row.appendChild(keyEl);
+    row.appendChild(valueEl);
+    if (!editable) return row;
+
+    const actions = document.createElement('div');
+    actions.className = 'flex items-center gap-2 mt-1';
+    actions.appendChild(buildMemoryButton(
+        'Редактировать',
+        'text-slate-400 hover:text-white',
+        'edit',
+        () => startMemoryEdit(entry),
+    ));
+    const deleteBtn = buildMemoryButton(
+        'Удалить',
+        'text-red-400 hover:text-red-300 disabled:opacity-50',
+        'delete',
+        () => {
+            deleteLongTermMemory(entry).catch((err) => showToast(err.message, 'error'));
+        },
+    );
+    deleteBtn.disabled = state.deletingMemoryId === entry.id;
+    actions.appendChild(deleteBtn);
+    row.appendChild(actions);
+    return row;
+}
+
+function buildMemoryEditForm(entry) {
+    const draft = state.editingMemory;
+    const fieldClass = 'w-full min-w-0 rounded bg-slate-900 border border-slate-700 px-2 py-1 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500';
+
+    const form = document.createElement('div');
+    form.className = 'rounded-lg bg-slate-800 px-2 py-2 space-y-1';
+    form.dataset.memoryEntryId = String(entry.id);
+
+    const keyInput = document.createElement('input');
+    keyInput.type = 'text';
+    keyInput.maxLength = 200;
+    keyInput.placeholder = 'Ключ';
+    keyInput.value = draft.key;
+    keyInput.dataset.memoryField = 'key';
+    keyInput.setAttribute('aria-label', 'Ключ записи памяти');
+    keyInput.className = fieldClass;
+    keyInput.addEventListener('input', () => {
+        if (state.editingMemory) state.editingMemory.key = keyInput.value;
+    });
+
+    const valueInput = document.createElement('textarea');
+    valueInput.rows = 4;
+    valueInput.maxLength = 50000;
+    valueInput.placeholder = 'Значение';
+    valueInput.value = draft.value;
+    valueInput.dataset.memoryField = 'value';
+    valueInput.setAttribute('aria-label', 'Значение записи памяти');
+    valueInput.className = `${fieldClass} resize-y`;
+    valueInput.addEventListener('input', () => {
+        if (state.editingMemory) state.editingMemory.value = valueInput.value;
+    });
+
+    const actions = document.createElement('div');
+    actions.className = 'flex items-center gap-2';
+    const saveBtn = buildMemoryButton(
+        'Сохранить',
+        'text-indigo-400 hover:text-indigo-300 disabled:opacity-50',
+        'save',
+        () => {
+            saveLongTermMemory().catch((err) => showToast(err.message, 'error'));
+        },
+    );
+    saveBtn.disabled = state.savingMemory;
+    const cancelBtn = buildMemoryButton(
+        'Отмена',
+        'text-slate-400 hover:text-white disabled:opacity-50',
+        'cancel',
+        cancelMemoryEdit,
+    );
+    cancelBtn.disabled = state.savingMemory;
+    actions.appendChild(saveBtn);
+    actions.appendChild(cancelBtn);
+
+    form.appendChild(keyInput);
+    form.appendChild(valueInput);
+    form.appendChild(actions);
+    return form;
+}
+
+function captureMemoryFocus(container) {
+    const active = document.activeElement;
+    if (!active || !container.contains(active) || !active.dataset.memoryField) return null;
+    return {
+        field: active.dataset.memoryField,
+        start: active.selectionStart,
+        end: active.selectionEnd,
+    };
+}
+
+function restoreMemoryFocus(container, snapshot) {
+    if (!snapshot) return;
+    const field = snapshot.field === 'key' ? 'key' : 'value';
+    const target = container.querySelector(`[data-memory-field="${field}"]`);
+    if (!target) return;
+    target.focus();
+    if (snapshot.start !== null && snapshot.end !== null) {
+        target.setSelectionRange(snapshot.start, snapshot.end);
+    }
+}
+
+function renderMemoryEntries(container, entries, { editable = false } = {}) {
+    const focus = editable ? captureMemoryFocus(container) : null;
     container.replaceChildren();
     if (!entries.length) {
         const empty = document.createElement('div');
@@ -305,23 +524,10 @@ function renderMemoryEntries(container, entries) {
         return;
     }
     entries.forEach((entry) => {
-        const row = document.createElement('div');
-        row.className = 'rounded-lg bg-slate-800 px-2 py-1';
-
-        const keyEl = document.createElement('div');
-        keyEl.className = 'text-slate-300 font-semibold';
-        keyEl.textContent = entry.key;
-
-        const valueEl = document.createElement('div');
-        valueEl.className = 'text-slate-400 truncate';
-        const truncated = entry.value.length > 160 ? `${entry.value.slice(0, 160)}…` : entry.value;
-        valueEl.textContent = truncated;
-        valueEl.title = entry.value;
-
-        row.appendChild(keyEl);
-        row.appendChild(valueEl);
-        container.appendChild(row);
+        const editing = editable && state.editingMemory !== null && state.editingMemory.id === entry.id;
+        container.appendChild(editing ? buildMemoryEditForm(entry) : buildMemoryEntryRow(entry, editable));
     });
+    restoreMemoryFocus(container, focus);
 }
 
 function renderMemoryPanel() {
@@ -332,12 +538,15 @@ function renderMemoryPanel() {
     const workingEl = $('memory-working');
     const longTermEl = $('memory-long-term');
     if (!data) return;
+    if (state.editingMemory && !data.long_term.some((item) => item.id === state.editingMemory.id)) {
+        state.editingMemory = null;
+    }
 
     if (shortTermEl) shortTermEl.textContent = String(data.short_term_message_count);
     if (workingCountEl) workingCountEl.textContent = String(data.working.length);
     if (longTermCountEl) longTermCountEl.textContent = String(data.long_term.length);
     if (workingEl) renderMemoryEntries(workingEl, data.working);
-    if (longTermEl) renderMemoryEntries(longTermEl, data.long_term);
+    if (longTermEl) renderMemoryEntries(longTermEl, data.long_term, { editable: true });
 }
 
 async function loadChatTasks(chatId) {
