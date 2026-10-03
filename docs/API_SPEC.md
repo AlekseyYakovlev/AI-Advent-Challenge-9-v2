@@ -514,8 +514,8 @@ with no row behaves as `off`.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/v1/chats/{chat_id}/rag` | Current setting: `{chat_id, mode, kb_id, kb_name, kb_status, top_k}`; defaults `off`, `null`, `5` |
-| PUT | `/api/v1/chats/{chat_id}/rag` | Body `{"mode": "off" or "rag", "kb_id": int or null, "top_k": 1..20 = 5}`; answers the same object |
+| GET | `/api/v1/chats/{chat_id}/rag` | Current setting: `{chat_id, mode, kb_id, kb_name, kb_status, top_k, candidate_k, threshold, calibrated_threshold, effective_threshold, threshold_source, lexical, llm_rerank, hybrid, rewrite}`; defaults `off`, `null`, `5`, `20`, `null`, `null`, `0.0`, `none`, four `false` |
+| PUT | `/api/v1/chats/{chat_id}/rag` | Body `{"mode": "off" or "rag", "kb_id": int or null, "top_k": 1..20 = 5, "candidate_k"?, "threshold"?, "lexical"?, "llm_rerank"?, "hybrid"?, "rewrite"?}`; answers the same object |
 | GET | `/api/v1/kb/{kb_id}/chunks/{chunk_id}?file=` | Text of one chunk: `{chunk_id, source, section, title, text}` |
 
 - `PUT` requires an allowed `Origin` and `Content-Type: application/json`. A chat or knowledge base
@@ -526,6 +526,25 @@ with no row behaves as `off`.
 - The chunk route answers `404` when the knowledge base is not the caller's, the chunk does not
   exist, or `file` is given and differs from the chunk's source (guards a stale citation against a
   reused `kb_id`).
+
+### Search settings (Day 23)
+
+All search fields of `PUT` are optional; a field that is omitted stays unchanged.
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `candidate_k` | int 1..50 | Candidates fetched before the cut and rerank; clamped to at least `top_k`; default 20 |
+| `threshold` | float 0..1 or `null` | Raw-cosine cut-off. An explicit `null` resets to the calibrated value; omitted leaves it as is |
+| `lexical` | bool | Lexical rerank fused with cosine |
+| `llm_rerank` | bool | One batched LLM rerank of the top 10 survivors (one extra model call) |
+| `hybrid` | bool | FTS5 keyword search merged by RRF, with the FTS exemption |
+| `rewrite` | bool | Query rewrite by the chat model (one extra model call) |
+
+Response fields: `candidate_k`; `threshold` (the stored override or `null`); `calibrated_threshold`
+(the value for the KB's embedding model or `null` when the model has no calibration);
+`effective_threshold` (what the next turn uses); `threshold_source` (`user`, `calibrated` or `none`);
+and the four flags. Non-boolean flags, `candidate_k` outside 1..50 and `threshold` outside 0..1
+answer `422`. Changes apply from the next message.
 
 ### Message.rag_sources
 
@@ -558,6 +577,48 @@ The final WebSocket `done` frame carries the same payload under `rag`:
 - `warning` is `{code, text}` when retrieval failed and the answer was produced without fragments
   (the turn never fails because of RAG). Codes: `kb_deleted`, `kb_not_ready`, `embedder_unavailable`,
   `dim_mismatch`, `index_corrupt`, `context_full`, `retrieval_failed`. `text` is a Russian message.
+
+### Payload v2 (Day 23)
+
+Messages written by Day 23 carry `"v": 2`, a `verdict` and a `search` trace next to the fields above
+(`sources` keeps its shape and lists the final answer chunks):
+
+```json
+{
+  "v": 2, "mode": "rag", "kb_id": 3, "kb_name": "fz196", "top_k": 5,
+  "sources": [{"rank": 1, "chunk_id": "c-12", "file": "FZ_196.pdf", "section": "Статья 26", "page": "1-74", "score": 0.804}],
+  "dropped": 0, "context_tokens": 1450, "warning": null,
+  "verdict": "ok",
+  "search": {
+    "query": "…", "rewritten": null, "rewrite_cosine": null,
+    "config": {"candidate_k": 20, "top_k": 5, "threshold": 0.67, "threshold_source": "calibrated",
+               "lexical": true, "llm": false, "hybrid": false, "rewrite": false},
+    "stages": ["threshold", "lexical"], "stage_ms": {"lexical": 3}, "skipped": [],
+    "latency_ms": 412, "best_cosine": 0.804,
+    "candidates": [{"chunk_id": "c-12", "file": "FZ_196.pdf", "section": "Статья 26", "page": "1-74",
+                    "rank_before": 2, "rank_after": 1, "cos": 0.804, "lex": 0.71, "fts_rank": null,
+                    "llm": null, "found_by": "original", "fts_exempt": false, "status": "in_answer"}]
+  }
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `verdict` | `ok`, `below_threshold`, `kb_unavailable` or `off` |
+| `search.query` / `rewritten` / `rewrite_cosine` | The question, the accepted rewrite (or `null`) and the cosine between the two query vectors |
+| `search.config` | Effective settings of the turn (`llm` is the `llm_rerank` flag) |
+| `search.stages` | Stages that ran, in order: `threshold` always, then `rewrite`, `hybrid`, `lexical`, `llm` as applicable |
+| `search.skipped` | `{stage, reason}` for each optional stage that was skipped; reasons `timeout`, `http_error`, `bad_output`, `no_llm`, `search_failed`, `fts_error`, `stage_error` |
+| `search.latency_ms` / `stage_ms` | Total and per-stage time |
+| `search.best_cosine` | Highest raw cosine among the candidates (`null` when there are none) |
+| `candidates[].rank_before` / `rank_after` | Position before the cut/rerank and in the final list (`null` when not in it) |
+| `candidates[].cos` / `lex` / `fts_rank` / `llm` | Raw cosine, lexical score, FTS5 rank, LLM score (`null` when the stage did not run) |
+| `candidates[].found_by` | `original`, `rewritten` or `both` |
+| `candidates[].fts_exempt` | `true` when the chunk is below the threshold but kept as an FTS keyword match |
+| `candidates[].status` | `in_answer`, `below_threshold`, `outside_top_k`, `over_budget` |
+
+The trace never contains chunk text. Payloads of older messages are `v: 1` with no `verdict` or
+`search`; the UI shows them as before, without a details block.
 
 ## Environment Settings
 

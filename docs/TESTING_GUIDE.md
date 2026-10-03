@@ -309,6 +309,31 @@ Title tests must create chats titled `New Chat` and classify mocked LLM requests
   sources; KB deleted mid-chat: answer with the yellow warning, toast and «без RAG (сбой поиска)»,
   warning persists after reload; no console errors.
 
+## Two-stage retrieval (Day 23)
+
+- `test_rag_rank.py`: lexical score, cosine/lexical fusion, RRF, FTS query builder safety (no raw operators reach FTS5), rewrite validator rules, rerank output parser, threshold choice (`choose_threshold`).
+- `test_rag_fts.py`: FTS5 search scoped to one KB, error mapping to a skip.
+- `test_rag_llm.py`: reasoning-off request with one retry on HTTP 400/422, timeout becomes a reason code, a single batched rerank call.
+- `test_rag_pipeline.py`: threshold on raw cosine, FTS exemption (article number or lexical overlap >= 0.5), merge of original and rewritten results, per-stage skip, all stages failing soft, no chunk text in the trace.
+- `test_rag_turn.py` / `test_rag_ws.py` additions: payload v2, the `below_threshold` path (LLM still called with the no-fragments note), `over_budget` marking, client and model pass-through to the stages.
+- `test_rag_api.py` additions: a partial PUT keeps the search settings, `threshold: null` resets, `candidate_k` clamped to `top_k`, 422 cases.
+- `test_database.py` / `test_kb_lifecycle.py` additions: column migration idempotency, FTS5 triggers, backfill, FK cascade.
+- `test_rag_search_static.py`: frontend source guard for the popover, details block and grey line (DOM builders only).
+- `test_rag_calibration_fixture.py`: the calibration set is frozen and well formed.
+- `test_rag_eval.py` additions: `calibrate` and `ablate` outputs and preflight; the scratch DB is never `app.db`.
+- `test_rag_judge.py`: `scripts/rag_judge.py` verdict handling and idempotency; `test_rag_report_day23.py`: structure of `Day23_report.md`.
+
+### Day 23 eval commands (not part of pytest)
+- `python scripts/rag_eval.py build-kbs` reuses the Day 22 per-embedder evaluation KBs (separate DB, never `app.db`).
+- `python scripts/rag_eval.py calibrate --kb LABEL=ID ...` measures the score distributions on `tests/fixtures/rag/calibration_set.json` and derives a threshold per embedder; the calibration fixture must be frozen (`status: frozen`) before a real run.
+- `python scripts/rag_eval.py ablate --kb LABEL=ID ...` compares `baseline`, `threshold`, `lexical`, `llm_rerank`, `hybrid`, `rewrite` and `all`.
+- `python scripts/rag_judge.py` fills the judge column of the answers table with a DeepSeek verdict.
+- Outputs land in `eval_out/day23/`; the report is `Day23_report.md`.
+
+### scripts/e2e_rag_search_playwright.py (browser UAT, not part of pytest)
+- Runs a temporary copy of the app at UI :18000 / Agent :18001 with a scratch database and KB storage against the real LM Studio (nomic embedder and a chat model, `qwen/qwen3.5-9b` preferred) and the real ФЗ-196 PDF; never touches :8000/:8001. Exit codes as for `e2e_rag_playwright.py`.
+- Scenarios: S1 «Поиск ⚙» only with RAG on; S2 popover defaults (K=20, threshold and note from the API, switches off); S3 Escape and outside click; S4 K and lexical persist across reload; S5 threshold override and «сбросить»; S6 «Детали поиска» table with status chips and no chunk text; S7 details survive reload; S8 hybrid adds the FTS column; S9 threshold 0.99 gives the grey line, no sources, no toast; S10 rewrite and LLM rerank ran or show a «↷» skip line; S11 RAG off hides the button.
+
 ## Long-term memory editing (Day 21)
 
 ### test_memory.py (CRUD helpers)

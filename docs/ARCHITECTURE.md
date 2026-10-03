@@ -442,3 +442,62 @@ yields `index_corrupt`; an unloaded embedder yields `embedder_unavailable`.
 **Fragment safety.** Runs of three or more `=` inside document text are collapsed so a document
 cannot close the fragments block (prompt-injection guard); the frontend renders everything with
 `textContent`.
+
+## Two-stage retrieval (Day 23)
+
+Day 22 fetched the top-K chunks by cosine and stopped. Day 23 splits retrieval into candidate search
+and a filter/rerank stage; every optional step is a per-chat switch and every step fails soft.
+
+**Stage order.** rewrite (optional) -> vector candidates per query (`candidate_k`, default 20) ->
+hybrid FTS5 + RRF (optional) -> raw-cosine threshold with the FTS exemption -> lexical fusion
+(optional) -> LLM rerank of the top 10 survivors (optional) -> final top-K -> the 30% context budget
+of the pre-step above.
+
+**Module map.**
+- `agent/rag_pipeline.py`: `run_retrieval_pipeline` is the single pipeline used by both the chat turn
+  (`agent/rag_turn.py`) and the eval script (`scripts/rag_eval.py`); it returns the final chunks and a
+  metadata-only trace.
+- `agent/rag_rank.py`: pure functions (lexical score, min-max fusion 0.6 cosine / 0.4 lexical, RRF with
+  k=60, FTS query builder, rewrite validator, rerank parser).
+- `agent/rag_fts.py`: FTS5 search scoped by `kb_id`; `agent/rag_llm.py`: the rewrite and rerank model
+  calls (reasoning off, one retry on HTTP 400/422, per-stage timeout, one batched rerank call).
+- `agent/kb_search.py`: `search_kb_vectors` (vectors plus row ids) and `cosine_for_ids` (exact cosine
+  for FTS-only hits); `agent/rag.py` holds `CALIBRATED_THRESHOLDS` and `resolve_threshold`.
+- `agent/rag_api.py`: GET/PUT of the new per-chat fields.
+
+**FTS5 mirror.** `ensure_kb_chunk_fts` (`shared/database.py`) creates the virtual table
+`kb_chunk_fts(text, section, kb_id UNINDEXED)` with the `unicode61 remove_diacritics 2` tokenizer, two
+triggers (`kbchunk_fts_ai` after insert, `kbchunk_fts_ad` after delete; chunk text is never updated in
+place) and, on startup, a backfill of any `kbchunk` rows missing from the mirror. It is idempotent.
+The `ChatRagConfig` columns `candidate_k`, `threshold`, `lexical`, `llm_rerank`, `hybrid`, `rewrite`
+are added by an idempotent `ALTER TABLE` migration.
+
+**Threshold.** The cut is applied to the raw cosine of the original or rewritten query, never to a fused
+score. `threshold = NULL` means "use the calibrated value for this embedding model":
+`CALIBRATED_THRESHOLDS = {"bge-m3": 0.67}` (keys are substrings of the KB's embedding model id, from
+the frozen calibration set in `eval_out/day23/calibration.json`). `nomic-embed-text` has no entry
+because its answerable and out-of-corpus score distributions are not separable (any cut that removed
+the out-of-corpus questions also removed answerable chunks); it resolves to threshold 0, so the UI
+shows «(нет калибровки)» and the user may still set a threshold by hand. `threshold_source` is `user`,
+`calibrated` or `none`.
+
+**FTS exemption (D-08 as amended).** With hybrid on, a chunk below the threshold survives only if it is
+an FTS hit and either its section or text matches an article number named in the question or its
+lexical overlap with the question is at least 0.5 (`FTS_EXEMPT_MIN_LEXICAL`). Without this guard every
+out-of-corpus question received an exempt chunk and `below_threshold` was unreachable. Such rows carry
+`fts_exempt: true`.
+
+**Fail-soft per stage.** A failing optional stage is skipped and recorded in `search.skipped` as
+`{stage, reason}` while the rest of the pipeline continues. Reason codes: `timeout`, `http_error`,
+`bad_output` (unusable model output), `no_llm`, `search_failed` (search of the rewritten query),
+`fts_error`, `stage_error` (unexpected exception). A rewrite equal to the question is not a skip.
+
+**Verdicts.** `ok`; `below_threshold` (candidates existed but none passed the cut); `kb_unavailable`
+(retrieval failed, the Day 22 warning applies); `off`. On `below_threshold` the turn still calls the
+LLM, with a no-fragments note instead of the fragments block (a later phase will change this
+behaviour); the UI shows the grey line «Фрагменты не прошли порог (лучший X < Y)» and no «Источники».
+
+**Payload v2.** `Message.rag_sources` and `done.rag` carry `v: 2`, `verdict` and a `search` object (see
+`docs/API_SPEC.md`). It is metadata only: scores, ranks, chunk ids, file and section, never chunk text.
+Candidates that do not fit the context budget are marked `over_budget` after the fact
+(`mark_over_budget`).
