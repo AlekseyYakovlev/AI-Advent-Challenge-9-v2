@@ -12,9 +12,11 @@ MSG_BAD_OVERLAP = "Перекрытие должно быть меньше ра�
 
 MAX_BREADCRUMB_CHARS = 300
 PREAMBLE_LABEL = "Преамбула"
+# A heading line longer than this is a heading merged with its first body paragraph.
+MAX_HEADING_TITLE_CHARS = 150
 
 # Line-anchored with bounded classes: `[ \t]+` never crosses a newline, no nested quantifiers.
-ARTICLE_RE = re.compile(r"^Статья[ \t]+(\d+(?:\.\d+)*(?:-\d+)?)\.[ \t]*(.*)$", re.M)
+ARTICLE_RE = re.compile(r"^Статья[ \t]+(\d+(?:[._-]\d+)*)\.[ \t]*(.*)$", re.M)
 CHAPTER_RE = re.compile(r"^(Глава|Раздел)[ \t]+([\dIVXLC]+)\.?[ \t]*(.*)$", re.M)
 MD_HEADING_RE = re.compile(r"^(#{1,6})[ \t]+(.*)$", re.M)
 PARA_SEP_RE = re.compile(r"\n[ \t]*\n\s*")
@@ -149,6 +151,17 @@ def _make_breadcrumb(doc_title: str, tail: list[str]) -> str:
     return crumb
 
 
+def _split_merged_heading(title: str, title_start: int, line_end: int) -> tuple[str, int]:
+    """Cut a heading that absorbed its first body paragraph; returns (title, body_start)."""
+    sentence = SENTENCE_END_RE.search(title)
+    if sentence is not None and 0 < sentence.start() <= MAX_HEADING_TITLE_CHARS:
+        return title[: sentence.start()], title_start + sentence.end()
+    cut = title.rfind(" ", 0, MAX_HEADING_TITLE_CHARS)
+    if cut <= 0:
+        return title, line_end
+    return title[:cut], title_start + cut + 1
+
+
 def _legal_sections(text: str) -> list[_Section]:
     """Sections for Раздел/Глава/Статья structured text."""
     events: list[tuple[int, int, str, re.Match[str]]] = []
@@ -178,6 +191,8 @@ def _legal_sections(text: str) -> list[_Section]:
         else:
             label = f"Статья {m.group(1)}"
             title = m.group(2).strip()
+            if len(title) > MAX_HEADING_TITLE_CHARS:
+                title, line_end = _split_merged_heading(title, m.start(2), line_end)
             tail_last = f"{label}. {title}" if title else f"{label}."
             path = [p for p in (razdel, glava) if p]
             sections.append(
