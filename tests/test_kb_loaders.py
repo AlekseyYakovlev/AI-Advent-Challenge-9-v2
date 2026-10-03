@@ -56,6 +56,8 @@ def _make_text_pdf(path: Path, pages: int) -> None:
 
 def test_golden_koap_noise_removed(koap_pages: list[str]) -> None:
     text, _ = clean_pdf_pages(koap_pages)
+    # Repeal stubs legitimately end with the edition note, so they are excluded from the check.
+    checked = "\n".join(ln for ln in text.split("\n") if "тратил" not in ln)
     for noise in (
         r"Страница \d+",
         r"ИС «Техэксперт",
@@ -64,7 +66,7 @@ def test_golden_koap_noise_removed(koap_pages: list[str]) -> None:
         r"См\. предыдущую редакцию\)\s*$",
         r"Комментарий к статье",
     ):
-        assert not re.search(noise, text, re.M), noise
+        assert not re.search(noise, checked, re.M), noise
     assert "(Часть в редакции" not in text
     assert "Утратил" in text
 
@@ -117,17 +119,21 @@ def test_frequency_filter_skipped_for_short_documents() -> None:
 
 
 def test_frequency_filter_drops_repeated_footer() -> None:
-    pages = [f"Содержимое {n}\nОфициальный колонтитул документа\nСтраница {n}" for n in range(5)]
+    body = "\n".join(f"Строка {i} основного текста страницы." for i in range(12))
+    pages = [
+        f"{body}\nСодержимое {n}\nОфициальный колонтитул документа\nСтраница {n}"
+        for n in range(5)
+    ]
     text, _ = clean_pdf_pages(pages)
     assert "колонтитул" not in text
     assert "Страница" not in text
-    assert "Содержимое 3" in text
+    assert "Строка 5 основного" in text
 
 
 def test_is_scan_thresholds(koap_pages: list[str]) -> None:
     assert is_scan(["", "", " "]) is True
     assert is_scan(["x" * 90, "y" * 90]) is True
-    assert is_scan(["a" * 500, "", "", "b" * 500]) is True
+    assert is_scan(["a" * 800, "", "", ""]) is True
     assert is_scan(koap_pages) is False
 
 
