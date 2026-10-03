@@ -96,6 +96,8 @@ Phase 7 (MCP Connection, Day 16) complete (2026-09-24): user-scoped MCP server c
 
 Phase 8 (Scheduler, Day 18) complete (2026-09-26): jobs stored per user, poll loop with atomic claim in the Agent lifespan, headless LLM+MCP runner, REST API, LLM tools, live sidebar panel; 928 tests; demo run end to end through Playwright with real LM Studio and MCP. Accepted limitation: the local qwen3.5-9b may execute a "через минуту …" request immediately instead of calling `schedule_task` (an explicit "запланируй …" works). Review findings CR-01, WR-01/02/03/08 fixed in gap-closure plan 08-09; WR-04..07 and INFO items parked as backlog 999.7–999.10 (see .planning/phases/08-scheduler-day-18/08-REVIEW.md).
 
+Phase 15 (Reranking and Filtering, Day 23) complete (2026-10-03): two-stage retrieval with per-chat candidate K, top-K and cosine threshold; lexical, LLM, hybrid (FTS5 + RRF) and rewrite stages, each fail-soft; collapsible «Детали поиска» block; thresholds calibrated per embedder on a frozen set (only bge-m3 = 0.67 — nomic is not separable and has no cut); the FTS exemption requires an article-number match or lexical overlap >= 0.5 (D-08 amended by user decision); 7-run ablation and DeepSeek-judge column in `Day23_report.md`. Honest result: on the 10 control questions no stage beat the baseline (hit@5 0.88 vs 0.62-0.75). Advisory review findings WR-01..05 are in .planning/phases/15-reranking-and-filtering-day-23/15-REVIEW.md.
+
 ## Context
 
 - This extends the existing `AiAdventAgentV2` app (see `.planning/codebase/` for full architecture, stack, conventions, testing, and known concerns — notably CONCERNS.md flags stubbed summarization, context-overflow message deletion, and missing DB indexes, which are pre-existing and out of scope here unless a Week-3 phase touches that code directly).
@@ -143,4 +145,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-10-03 — Milestone v3.0 Week 5: RAG started*
+*Last updated: 2026-10-03 — Phase 15 complete*
