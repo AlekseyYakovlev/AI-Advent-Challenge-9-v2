@@ -1,0 +1,23 @@
+{
+  "id": "Q07",
+  "category": "synthesis",
+  "question": "Можно ли эксплуатировать автомобиль без полиса ОСАГО и какой штраф за это предусмотрен?",
+  "mode": "off",
+  "kb": "",
+  "messages": [
+    {
+      "role": "system",
+      "content": "Ты — ассистент. Отвечай по-русски кратко и по существу."
+    },
+    {
+      "role": "user",
+      "content": "Можно ли эксплуатировать автомобиль без полиса ОСАГО и какой штраф за это предусмотрен?"
+    }
+  ],
+  "cited_sources": [],
+  "answer": "",
+  "error": null,
+  "finish_reason": "length",
+  "has_reasoning": true,
+  "completion_tokens": 1024
+}

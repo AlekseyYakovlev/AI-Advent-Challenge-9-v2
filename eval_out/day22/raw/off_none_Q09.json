@@ -1,0 +1,23 @@
+{
+  "id": "Q09",
+  "category": "out_of_corpus",
+  "question": "Какова ставка транспортного налога на легковой автомобиль мощностью 150 лошадиных сил?",
+  "mode": "off",
+  "kb": "",
+  "messages": [
+    {
+      "role": "system",
+      "content": "Ты — ассистент. Отвечай по-русски кратко и по существу."
+    },
+    {
+      "role": "user",
+      "content": "Какова ставка транспортного налога на легковой автомобиль мощностью 150 лошадиных сил?"
+    }
+  ],
+  "cited_sources": [],
+  "answer": "",
+  "error": null,
+  "finish_reason": "length",
+  "has_reasoning": true,
+  "completion_tokens": 1024
+}

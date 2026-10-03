@@ -1,0 +1,35 @@
+{
+  "fixture": "control_set.json",
+  "fixture_sha256": "8c5b76a0590301ab496498b534802e92cbc82072841a188a4b08c19806ceebe2",
+  "provider": "lmstudio",
+  "model": "qwen/qwen3.5-9b",
+  "top_k": 5,
+  "modes": [
+    "off",
+    "rag"
+  ],
+  "temperature": 0.0,
+  "context_length": 16384,
+  "max_tokens": 1024,
+  "identical_chunking": true,
+  "kbs": {
+    "nomic": {
+      "kb_id": 1,
+      "strategy": "structural",
+      "chunk_size": 1000,
+      "chunk_overlap": 150,
+      "embedding_model": "text-embedding-nomic-embed-text-v1.5",
+      "dim": 768,
+      "chunk_count": 2424
+    },
+    "bge": {
+      "kb_id": 2,
+      "strategy": "structural",
+      "chunk_size": 1000,
+      "chunk_overlap": 150,
+      "embedding_model": "text-embedding-bge-m3",
+      "dim": 1024,
+      "chunk_count": 2424
+    }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "id": "Q06",
+  "category": "direct",
+  "question": "Какой штраф положен водителю за непристегнутый ремень безопасности?",
+  "mode": "off",
+  "kb": "",
+  "messages": [
+    {
+      "role": "system",
+      "content": "Ты — ассистент. Отвечай по-русски кратко и по существу."
+    },
+    {
+      "role": "user",
+      "content": "Какой штраф положен водителю за непристегнутый ремень безопасности?"
+    }
+  ],
+  "cited_sources": [],
+  "answer": "",
+  "error": null,
+  "finish_reason": "length",
+  "has_reasoning": true,
+  "completion_tokens": 1024
+}
