@@ -246,9 +246,34 @@ Plans:
   3. An out-of-corpus question gets "не знаю" plus a clarifying question, enforced in code when best relevance is below the threshold
   4. The Day 24 report section records, per control question, sources present, quotes present, meaning matches quotes, and correct "не знаю" on out-of-corpus questions
 
-**Plans**: TBD
+**Plans**: 8 plans
 **UI hint**: yes
 **Research flag**: needs deeper research (local-model compliance with `[n]` citations and verbatim quotes)
+
+Plans:
+
+**Wave 1**
+
+- [ ] 16-01-PLAN.md — pure citation rules in `agent/rag_cite.py`: strict instruction, quote-tail parser, normalization, exact + fuzzy verification, re-attach, auto quotes, code-built "не знаю" reply
+- [ ] 16-02-PLAN.md — per-chat `strict` flag (default on): model column, idempotent migration, REST in/out
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 16-03-PLAN.md — RAG pre-step wiring: strict block rendering, payload v3, code gate in `prepare_rag_turn`, `finalize_rag_turn`
+- [ ] 16-06-PLAN.md — UI: strict switch, «Цитаты (N)» block, answer lines, cited-source marks
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 16-04-PLAN.md — chat-turn integration in `agent/ws.py`: gated reply with no LLM call, post-stream citation processing before persist
+- [ ] 16-05-PLAN.md — eval tooling: `cite` subcommand in `scripts/rag_eval.py`, faithfulness rubric in `scripts/rag_judge.py`
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 16-07-PLAN.md — live Day 24 run on the 10 control questions, manual verdicts, optional DeepSeek judge, Day24_report.md, user review (checkpoints)
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [ ] 16-08-PLAN.md — Playwright E2E on the isolated copy, Phase 14/15 E2E scripts pinned to strict off, docs sync, full-suite gate
 
 ### Phase 17: Mini-chat with RAG and task memory (Day 25)
 
