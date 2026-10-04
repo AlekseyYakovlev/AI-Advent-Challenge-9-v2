@@ -199,6 +199,8 @@ function renderMessages() {
         }
         container.appendChild(wrapper);
         const rag = msg.rag_sources;
+        const quotesBlock = isUser ? null : buildRagQuotesBlock(rag);
+        if (quotesBlock) container.appendChild(wrapToolCard(quotesBlock));
         if (!isUser && rag && rag.mode === 'rag' && !rag.warning
             && Array.isArray(rag.sources) && rag.sources.length > 0) {
             container.appendChild(wrapToolCard(buildRagSourcesBlock(rag)));
@@ -3961,6 +3963,9 @@ function renderRagSearchPopover() {
         'rag-stage-rewrite': cfg.rewrite,
     };
     Object.entries(flags).forEach(([id, value]) => { $(id).checked = Boolean(value); });
+    const strict = $('rag-strict');
+    strict.checked = cfg.strict !== false;
+    strict.setAttribute('aria-checked', String(strict.checked));
     const anyOn = Object.values(flags).some(Boolean);
     ['border-indigo-500', 'text-white'].forEach((c) => btn.classList.toggle(c, anyOn));
     ['border-slate-700', 'text-slate-300'].forEach((c) => btn.classList.toggle(c, !anyOn));
@@ -4007,6 +4012,7 @@ function bindRagSearchUi() {
         saveRagSearchSetting({ threshold: value });
     });
     $('rag-threshold-reset').addEventListener('click', () => saveRagSearchSetting({ threshold: null }));
+    $('rag-strict').addEventListener('change', (e) => saveRagSearchSetting({ strict: e.target.checked }));
     [
         ['rag-stage-lexical', 'lexical'],
         ['rag-stage-llm', 'llm_rerank'],
@@ -4026,7 +4032,7 @@ async function saveChatRag(patch, errorText) {
         kb_id: prev.kb_id,
         top_k: prev.top_k,
     };
-    ['mode', 'kb_id', 'top_k', 'candidate_k', 'threshold', 'lexical', 'llm_rerank', 'hybrid', 'rewrite']
+    ['mode', 'kb_id', 'top_k', 'candidate_k', 'threshold', 'lexical', 'llm_rerank', 'hybrid', 'rewrite', 'strict']
         .forEach((key) => {
             if (key in patch) body[key] = patch[key];
         });
@@ -4050,6 +4056,35 @@ function buildRagMeta(rag) {
     const sources = Array.isArray(rag.sources) ? rag.sources : [];
     const thresholdLine = buildRagThresholdLine(rag);
     if (thresholdLine) frag.appendChild(thresholdLine);
+    if (rag.verdict === 'model_idk') {
+        const idk = mcpEl('div', 'mt-2 text-xs text-slate-500', 'Модель ответила «не знаю»: фрагменты не содержат ответа');
+        idk.setAttribute('role', 'status');
+        frag.appendChild(idk);
+    }
+    if (rag.strict === true && rag.answer_supported === false) {
+        const unsupported = mcpEl(
+            'div',
+            'mt-2 rounded-lg border border-yellow-700 bg-yellow-900/30 px-3 py-2 text-xs text-yellow-400',
+            '⚠ ответ не подтверждён фрагментами',
+        );
+        unsupported.setAttribute('role', 'status');
+        unsupported.title = 'В ответе нет ссылки [N] на фрагмент и ни одной подтверждённой цитаты. Проверьте ответ по источникам';
+        frag.appendChild(unsupported);
+    }
+    if (rag.invalid_refs > 0) {
+        frag.appendChild(mcpEl(
+            'div',
+            'mt-1 text-xs text-slate-500',
+            `Несуществующих ссылок на источники в ответе: ${rag.invalid_refs}`,
+        ));
+    }
+    if (rag.answer_empty === true) {
+        frag.appendChild(mcpEl(
+            'div',
+            'mt-1 text-xs text-slate-500',
+            'Модель не вернула текст ответа (вероятно, исчерпан лимит max_tokens)',
+        ));
+    }
     if (rag.warning) {
         const warn = mcpEl(
             'div',
@@ -4073,6 +4108,7 @@ function buildRagMeta(rag) {
 
 function buildRagThresholdLine(rag) {
     if (!rag || rag.verdict !== 'below_threshold' || !rag.search) return null;
+    if (!Number.isFinite(rag.search.best_cosine)) return null;
     const best = Number(rag.search.best_cosine).toFixed(2);
     const threshold = Number((rag.search.config || {}).threshold).toFixed(2);
     const line = mcpEl('div', 'mt-2 text-xs text-slate-500', `Фрагменты не прошли порог (лучший ${best} < ${threshold})`);
@@ -4253,6 +4289,89 @@ function buildRagDetailsBlock(rag) {
     return details;
 }
 
+const RAG_CHIP_BASE = 'inline-block rounded-full border px-2 py-0.5 font-semibold';
+const RAG_CHIP_NEUTRAL = `${RAG_CHIP_BASE} bg-slate-800 text-slate-300 border-slate-700`;
+
+function buildRagQuoteChip(quote) {
+    let text = '✗ не подтверждена';
+    let tone = 'border-red-700 bg-red-900/30 text-red-400';
+    let title = 'Цитата не найдена ни в одном из фрагментов, отправленных модели';
+    if (quote.state === 'exact') {
+        text = '✓ подтверждена';
+        tone = 'border-emerald-700 bg-emerald-900/30 text-emerald-400';
+        title = 'Цитата дословно найдена в указанном фрагменте';
+    } else if (quote.state === 'fuzzy') {
+        text = '≈ почти дословно';
+        tone = 'bg-slate-700 text-slate-100 border-slate-600';
+        title = 'Цитата совпадает с фрагментом с мелкими отличиями (сходство не ниже 0.9)';
+    } else if (quote.bad_ref) {
+        text = '✗ не подтверждена (нет такого источника)';
+    }
+    const chip = mcpEl('span', `${RAG_CHIP_BASE} ${tone}`, text);
+    chip.title = title;
+    return chip;
+}
+
+function buildRagQuoteRow(quote) {
+    const card = mcpEl('div', 'rag-quote-row bg-slate-800 border border-slate-700 rounded-lg p-3 space-y-1');
+    const head = mcpEl('div', 'text-xs flex flex-wrap items-center gap-x-2 gap-y-1');
+    head.appendChild(buildRagQuoteChip(quote));
+    if (quote.auto) {
+        const chip = mcpEl('span', RAG_CHIP_NEUTRAL, 'подобрана автоматически');
+        chip.title = 'Модель не дала подтверждённых цитат; предложение выбрано кодом из фрагмента по совпадению слов';
+        head.appendChild(chip);
+    } else if (quote.rebound) {
+        const chip = mcpEl('span', RAG_CHIP_NEUTRAL, 'источник исправлен');
+        chip.title = 'Цитата не нашлась в указанном фрагменте, но найдена в другом; источник заменён';
+        head.appendChild(chip);
+    }
+    if (typeof quote.rank === 'number') {
+        head.appendChild(mcpEl('span', 'font-mono text-slate-500', `[${quote.rank}]`));
+        const file = mcpEl('span', 'truncate', quote.file || '');
+        file.title = quote.file || '';
+        head.appendChild(file);
+        if (quote.section) head.appendChild(mcpEl('span', 'truncate', quote.section));
+    }
+    card.appendChild(head);
+    const body = String(quote.text || '');
+    const tone = quote.state === 'unverified' ? 'text-slate-400' : 'text-slate-200';
+    const para = mcpEl('p', `text-sm ${tone} line-clamp-4 whitespace-pre-wrap`, `«${body}»`);
+    card.appendChild(para);
+    if (body.length > 300) {
+        const toggle = mcpEl('button', 'text-xs text-indigo-400 hover:text-indigo-300', 'показать полностью');
+        toggle.type = 'button';
+        toggle.setAttribute('aria-expanded', 'false');
+        toggle.addEventListener('click', () => {
+            const expanded = !para.classList.toggle('line-clamp-4');
+            toggle.textContent = expanded ? 'свернуть' : 'показать полностью';
+            toggle.setAttribute('aria-expanded', String(expanded));
+        });
+        card.appendChild(toggle);
+    }
+    return card;
+}
+
+function buildRagQuotesBlock(rag) {
+    if (!rag || typeof rag !== 'object' || rag.strict !== true || rag.gated === true
+        || rag.verdict === 'model_idk' || !Array.isArray(rag.quotes) || rag.quotes.length === 0) {
+        return null;
+    }
+    const details = mcpEl(
+        'details',
+        'rag-quotes rounded-lg border border-slate-700 bg-slate-900 text-xs text-slate-300 px-3 py-2 mt-2 max-w-[75%]',
+    );
+    details.open = true;
+    details.appendChild(mcpEl(
+        'summary',
+        'cursor-pointer select-none font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500',
+        `Цитаты (${rag.quotes.length})`,
+    ));
+    const body = mcpEl('div', 'mt-2 space-y-2');
+    rag.quotes.forEach((quote) => body.appendChild(buildRagQuoteRow(quote)));
+    details.appendChild(body);
+    return details;
+}
+
 function buildRagSourcesBlock(rag) {
     const details = mcpEl(
         'details',
@@ -4264,7 +4383,10 @@ function buildRagSourcesBlock(rag) {
         `Источники (${rag.sources.length})`,
     ));
     const body = mcpEl('div', 'mt-2 space-y-2');
-    rag.sources.forEach((src) => body.appendChild(buildRagSourceRow(rag.kb_id, src)));
+    const cited = new Set(Array.isArray(rag.cited_ranks) ? rag.cited_ranks : []);
+    const isCited = (src) => cited.has(src.rank);
+    [...rag.sources.filter(isCited), ...rag.sources.filter((src) => !isCited(src))]
+        .forEach((src) => body.appendChild(buildRagSourceRow(rag.kb_id, src, isCited(src))));
     details.appendChild(body);
     details.addEventListener('toggle', () => {
         if (!details.open || details.dataset.loaded === '1') return;
@@ -4274,13 +4396,14 @@ function buildRagSourcesBlock(rag) {
     return details;
 }
 
-function buildRagSourceRow(kbId, src) {
+function buildRagSourceRow(kbId, src, isCited) {
     const card = mcpEl('div', 'rag-source-row bg-slate-800 border border-slate-700 rounded-lg p-3 space-y-1');
     card.dataset.kbId = kbId === null || kbId === undefined ? '' : String(kbId);
     card.dataset.chunkId = String(src.chunk_id);
     card.dataset.file = src.file || '';
     const head = mcpEl('div', 'text-xs flex flex-wrap gap-x-2 text-slate-400');
     head.appendChild(mcpEl('span', '', `#${src.rank}`));
+    if (isCited) head.appendChild(mcpEl('span', RAG_CHIP_NEUTRAL, 'цитируется'));
     head.appendChild(mcpEl('span', 'text-slate-200', Number(src.score).toFixed(3)));
     const file = mcpEl('span', 'truncate', src.file || '');
     file.title = src.file || '';
