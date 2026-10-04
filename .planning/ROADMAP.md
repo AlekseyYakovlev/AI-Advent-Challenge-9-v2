@@ -264,8 +264,8 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 16-04-PLAN.md — chat-turn integration in `agent/ws.py`: gated reply with no LLM call, post-stream citation processing before persist
-- [ ] 16-05-PLAN.md — eval tooling: `cite` subcommand in `scripts/rag_eval.py`, faithfulness rubric in `scripts/rag_judge.py`
+- [x] 16-04-PLAN.md — chat-turn integration in `agent/ws.py`: gated reply with no LLM call, post-stream citation processing before persist
+- [x] 16-05-PLAN.md — eval tooling: `cite` subcommand in `scripts/rag_eval.py`, faithfulness rubric in `scripts/rag_judge.py`
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -311,7 +311,7 @@ Plans:
 | 13. Knowledge base indexing (Day 21) | v3.0 | 8/8 | Complete   | 2026-10-03 |
 | 14. First RAG query (Day 22) | v3.0 | 8/8 | Complete    | 2026-10-03 |
 | 15. Reranking and filtering (Day 23) | v3.0 | 13/13 | Complete    | 2026-10-03 |
-| 16. Citations and anti-hallucination (Day 24) | v3.0 | 4/8 | In Progress|  |
+| 16. Citations and anti-hallucination (Day 24) | v3.0 | 6/8 | In Progress|  |
 | 17. Mini-chat with RAG and task memory (Day 25) | v3.0 | 0/TBD | Not started | - |
 
 ## Backlog
