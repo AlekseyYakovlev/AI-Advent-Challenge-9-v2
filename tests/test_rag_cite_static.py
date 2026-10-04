@@ -57,3 +57,51 @@ def test_strict_switch_does_not_light_search_button() -> None:
 def test_strict_is_saved_through_rag_put() -> None:
     assert "'strict'" in _function_source("saveChatRag")
     assert "strict: e.target.checked" in _function_source("bindRagSearchUi")
+
+
+QUOTE_FUNCTIONS: list[str] = [
+    "buildRagQuotesBlock",
+    "buildRagQuoteRow",
+    "buildRagQuoteChip",
+]
+
+
+@pytest.mark.parametrize("name", QUOTE_FUNCTIONS)
+def test_quote_functions_have_no_html_injection(name: str) -> None:
+    src = _function_source(name)
+    for forbidden in ("innerHTML", "insertAdjacentHTML", "outerHTML"):
+        assert forbidden not in src
+
+
+@pytest.mark.parametrize("name", QUOTE_FUNCTIONS)
+def test_quote_functions_do_not_strike_through(name: str) -> None:
+    assert "line-through" not in _function_source(name)
+
+
+@pytest.mark.parametrize(
+    "copy",
+    [
+        "Цитаты (",
+        "✓ подтверждена",
+        "≈ почти дословно",
+        "✗ не подтверждена",
+        "(нет такого источника)",
+        "источник исправлен",
+        "подобрана автоматически",
+    ],
+)
+def test_quote_copy_present(copy: str) -> None:
+    assert copy in APP_JS
+
+
+def test_quotes_block_conditions() -> None:
+    src = _function_source("buildRagQuotesBlock")
+    assert "'open'" in src or ".open = true" in src
+    assert "rag.strict" in src
+    assert "model_idk" in src
+
+
+def test_quotes_block_precedes_sources_in_render_messages() -> None:
+    src = _function_source("renderMessages")
+    assert "buildRagQuotesBlock(rag)" in src
+    assert src.index("buildRagQuotesBlock(rag)") < src.index("buildRagSourcesBlock(rag)")
