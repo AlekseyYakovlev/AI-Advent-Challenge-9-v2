@@ -14,7 +14,7 @@ from agent import kb_search
 from agent.embeddings import EmbeddingError
 from agent.kb_indexer import run_index_job
 from agent.main import app
-from agent.rag import NO_FRAGMENTS_INSTRUCTION
+from agent.rag import BLOCK_CLOSE, NO_FRAGMENTS_INSTRUCTION
 from kb_helpers import DIM, get_kb, install_fake_embedder, seed_kb, vector_for
 from shared.config import settings
 from shared.database import async_session_factory
@@ -369,3 +369,172 @@ def test_rag_off_turn_has_off_verdict_and_no_search() -> None:
             frames = _send_and_drain(ws, "привет")
         assert frames[-1]["rag"]["verdict"] == "off"
         assert frames[-1]["rag"]["search"] is None
+
+
+def _stream_requests(captured: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return only the streaming completion requests; background calls are non-streaming."""
+    return [body for body in captured if body.get("stream")]
+
+
+@respx.mock
+def test_strict_gate_sends_template_without_llm_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: list[dict[str, Any]] = []
+    _stage_route(captured, stage_ok=True)
+    with TestClient(app) as client:
+        chat_id = _open_rag_chat(client, monkeypatch, threshold=0.99, strict=True)
+        with client.websocket_connect(
+            f"/ws/chat/{chat_id}", headers={"Origin": WS_ORIGIN}
+        ) as ws:
+            frames = _send_and_drain(ws, QUESTION)
+        assert [f["type"] for f in frames] == ["token", "done"]
+        assert frames[0]["content"].startswith("Не знаю")
+        assert [r for r in captured if r.get("stream")] == []
+        rag = frames[-1]["rag"]
+        assert rag["verdict"] == "below_threshold"
+        assert rag["gated"] is True
+        assert rag["sources"] == []
+        assert rag["search"]["candidates"]
+        assert rag["quotes"] == []
+
+
+@respx.mock
+def test_strict_gate_persists_reply_and_trace(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: list[dict[str, Any]] = []
+    _stage_route(captured, stage_ok=True)
+    with TestClient(app) as client:
+        chat_id = _open_rag_chat(client, monkeypatch, threshold=0.99, strict=True)
+        with client.websocket_connect(
+            f"/ws/chat/{chat_id}", headers={"Origin": WS_ORIGIN}
+        ) as ws:
+            frames = _send_and_drain(ws, QUESTION)
+        rows = client.portal.call(_messages, chat_id)
+        assert [m.role for m in rows] == ["user", "assistant"]
+        assert rows[0].content == QUESTION
+        assert rows[1].content == frames[0]["content"]
+        stored = json.loads(rows[1].rag_sources)
+        assert stored["gated"] is True
+        assert stored == frames[-1]["rag"]
+
+
+@respx.mock
+def test_strict_gate_then_next_message_works(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: list[dict[str, Any]] = []
+    _stage_route(captured, stage_ok=True)
+    with TestClient(app) as client:
+        chat_id = _open_rag_chat(client, monkeypatch, threshold=0.99, strict=True)
+        with client.websocket_connect(
+            f"/ws/chat/{chat_id}", headers={"Origin": WS_ORIGIN}
+        ) as ws:
+            first = _send_and_drain(ws, QUESTION)
+            second = _send_and_drain(ws, QUESTION)
+        assert first[-1]["type"] == "done"
+        assert second[-1]["type"] == "done"
+        assert len(client.portal.call(_messages, chat_id)) == 4
+
+
+def _fragment_one(body: dict[str, Any]) -> str:
+    """Extract the text of fragment 1 from the merged user message of a recorded request."""
+    lines = _last_user_content(body).splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith("[1] "))
+    collected: list[str] = []
+    for line in lines[start + 1 :]:
+        if line.startswith("[2] ") or line == BLOCK_CLOSE:
+            break
+        collected.append(line)
+    return " ".join(collected).strip()
+
+
+def _reply_route(
+    captured: list[dict[str, Any]], make_reply: Any
+) -> respx.Route:
+    """Answer streaming requests with make_reply(body); serve other calls as short JSON."""
+
+    def _side_effect(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        captured.append(body)
+        if body.get("stream") is False:
+            return httpx.Response(
+                200, json={"choices": [{"message": {"content": "{}"}, "finish_reason": "stop"}]}
+            )
+        return _plain_content_response(make_reply(body))
+
+    return respx.post(f"{BASE_URL}/v1/chat/completions").mock(side_effect=_side_effect)
+
+
+def _strict_turn(
+    monkeypatch: pytest.MonkeyPatch, make_reply: Any, *, strict: bool = True
+) -> tuple[list[dict[str, Any]], dict[str, Any], Message]:
+    captured: list[dict[str, Any]] = []
+    _reply_route(captured, make_reply)
+    with TestClient(app) as client:
+        chat_id = _open_rag_chat(client, monkeypatch, strict=strict)
+        with client.websocket_connect(
+            f"/ws/chat/{chat_id}", headers={"Origin": WS_ORIGIN}
+        ) as ws:
+            frames = _send_and_drain(ws, QUESTION)
+        assistant = client.portal.call(_messages, chat_id)[-1]
+    return frames, frames[-1], assistant
+
+
+@respx.mock
+def test_strict_answer_is_cut_and_quotes_verified(monkeypatch: pytest.MonkeyPatch) -> None:
+    def reply(body: dict[str, Any]) -> str:
+        quote = _fragment_one(body)[:60]
+        return f"Ответ [1].\n\nЦитаты:\n[1] «{quote}»"
+
+    frames, done, assistant = _strict_turn(monkeypatch, reply)
+    assert done["type"] == "done"
+    assert assistant.content == "Ответ [1]."
+    assert "Цитаты" not in assistant.content
+    streamed = "".join(f["content"] for f in frames if f["type"] == "token")
+    assert "Цитаты" in streamed
+    rag = done["rag"]
+    assert len(rag["quotes"]) == 1
+    quote = rag["quotes"][0]
+    assert quote["state"] == "exact"
+    assert quote["rank"] == 1
+    assert quote["auto"] is False
+    assert quote["file"] == rag["sources"][0]["file"]
+    assert rag["cited_ranks"] == [1]
+    assert rag["answer_supported"] is True
+    assert json.loads(assistant.rag_sources) == rag
+
+
+@respx.mock
+def test_strict_unverified_quote_kept_and_turn_completes(monkeypatch: pytest.MonkeyPatch) -> None:
+    def reply(body: dict[str, Any]) -> str:
+        return "Ответ [1].\n\nЦитаты:\n[1] «Этой фразы нет ни в одном фрагменте вообще»"
+
+    frames, done, assistant = _strict_turn(monkeypatch, reply)
+    assert frames[-1]["type"] == "done"
+    quotes = done["rag"]["quotes"]
+    assert quotes[0]["state"] == "unverified"
+    assert quotes[0]["auto"] is False
+    assert any(q["auto"] for q in quotes[1:])
+    assert assistant.content == "Ответ [1]."
+
+
+@respx.mock
+def test_strict_answer_without_refs_is_unsupported(monkeypatch: pytest.MonkeyPatch) -> None:
+    frames, done, assistant = _strict_turn(monkeypatch, lambda body: "Ответ готов.")
+    assert assistant.content == "Ответ готов."
+    assert done["rag"]["answer_supported"] is False
+    assert any(q["auto"] for q in done["rag"]["quotes"])
+
+
+@respx.mock
+def test_strict_model_idk_has_no_quotes(monkeypatch: pytest.MonkeyPatch) -> None:
+    text = "Не знаю, во фрагментах этого нет. Что именно вас интересует?"
+    frames, done, assistant = _strict_turn(monkeypatch, lambda body: text)
+    assert done["rag"]["verdict"] == "model_idk"
+    assert done["rag"]["quotes"] == []
+    assert done["rag"]["sources"]
+    assert assistant.content == text
+
+
+@respx.mock
+def test_strict_off_keeps_tail_and_has_no_quotes(monkeypatch: pytest.MonkeyPatch) -> None:
+    text = "Ответ [1].\n\nЦитаты:\n[1] «что-то»"
+    frames, done, assistant = _strict_turn(monkeypatch, lambda body: text, strict=False)
+    assert assistant.content == text
+    assert done["rag"].get("quotes", []) == []
