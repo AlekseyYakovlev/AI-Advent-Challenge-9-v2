@@ -259,8 +259,8 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 16-03-PLAN.md — RAG pre-step wiring: strict block rendering, payload v3, code gate in `prepare_rag_turn`, `finalize_rag_turn`
-- [ ] 16-06-PLAN.md — UI: strict switch, «Цитаты (N)» block, answer lines, cited-source marks
+- [x] 16-03-PLAN.md — RAG pre-step wiring: strict block rendering, payload v3, code gate in `prepare_rag_turn`, `finalize_rag_turn`
+- [x] 16-06-PLAN.md — UI: strict switch, «Цитаты (N)» block, answer lines, cited-source marks
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -311,7 +311,7 @@ Plans:
 | 13. Knowledge base indexing (Day 21) | v3.0 | 8/8 | Complete   | 2026-10-03 |
 | 14. First RAG query (Day 22) | v3.0 | 8/8 | Complete    | 2026-10-03 |
 | 15. Reranking and filtering (Day 23) | v3.0 | 13/13 | Complete    | 2026-10-03 |
-| 16. Citations and anti-hallucination (Day 24) | v3.0 | 2/8 | In Progress|  |
+| 16. Citations and anti-hallucination (Day 24) | v3.0 | 4/8 | In Progress|  |
 | 17. Mini-chat with RAG and task memory (Day 25) | v3.0 | 0/TBD | Not started | - |
 
 ## Backlog
