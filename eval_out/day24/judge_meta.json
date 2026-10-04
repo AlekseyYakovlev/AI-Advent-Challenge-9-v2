@@ -1,0 +1,19 @@
+{
+  "rubric": "faithfulness",
+  "model": "deepseek-flash",
+  "base_url": "https://api.deepseek.com",
+  "temperature": 0.0,
+  "max_tokens": 200,
+  "rows": 30,
+  "judge_verdicts": {
+    "": 19,
+    "да": 7,
+    "ошибка": 3,
+    "частично": 1
+  },
+  "agreement": {
+    "matching": 8,
+    "compared": 8
+  },
+  "timestamp": "2026-10-04T17:06:47.052632+00:00"
+}
