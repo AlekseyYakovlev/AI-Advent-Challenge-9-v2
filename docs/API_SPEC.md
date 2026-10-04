@@ -514,8 +514,8 @@ with no row behaves as `off`.
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/v1/chats/{chat_id}/rag` | Current setting: `{chat_id, mode, kb_id, kb_name, kb_status, top_k, candidate_k, threshold, calibrated_threshold, effective_threshold, threshold_source, lexical, llm_rerank, hybrid, rewrite}`; defaults `off`, `null`, `5`, `20`, `null`, `null`, `0.0`, `none`, four `false` |
-| PUT | `/api/v1/chats/{chat_id}/rag` | Body `{"mode": "off" or "rag", "kb_id": int or null, "top_k": 1..20 = 5, "candidate_k"?, "threshold"?, "lexical"?, "llm_rerank"?, "hybrid"?, "rewrite"?}`; answers the same object |
+| GET | `/api/v1/chats/{chat_id}/rag` | Current setting: `{chat_id, mode, kb_id, kb_name, kb_status, top_k, candidate_k, threshold, calibrated_threshold, effective_threshold, threshold_source, lexical, llm_rerank, hybrid, rewrite, strict}`; defaults `off`, `null`, `5`, `20`, `null`, `null`, `0.0`, `none`, four `false`, `strict` `true` |
+| PUT | `/api/v1/chats/{chat_id}/rag` | Body `{"mode": "off" or "rag", "kb_id": int or null, "top_k": 1..20 = 5, "candidate_k"?, "threshold"?, "lexical"?, "llm_rerank"?, "hybrid"?, "rewrite"?, "strict"?}`; answers the same object |
 | GET | `/api/v1/kb/{kb_id}/chunks/{chunk_id}?file=` | Text of one chunk: `{chunk_id, source, section, title, text}` |
 
 - `PUT` requires an allowed `Origin` and `Content-Type: application/json`. A chat or knowledge base
@@ -539,11 +539,12 @@ All search fields of `PUT` are optional; a field that is omitted stays unchanged
 | `llm_rerank` | bool | One batched LLM rerank of the top 10 survivors (one extra model call) |
 | `hybrid` | bool | FTS5 keyword search merged by RRF, with the FTS exemption |
 | `rewrite` | bool | Query rewrite by the chat model (one extra model call) |
+| `strict` | bool, default `true` | Strict mode (Day 24): quotes verified by code and the «не знаю» gate; optional in `PUT`; a non-boolean value answers `422`; omitted leaves it unchanged. Existing chats read `true` after the migration |
 
 Response fields: `candidate_k`; `threshold` (the stored override or `null`); `calibrated_threshold`
 (the value for the KB's embedding model or `null` when the model has no calibration);
 `effective_threshold` (what the next turn uses); `threshold_source` (`user`, `calibrated` or `none`);
-and the four flags. Non-boolean flags, `candidate_k` outside 1..50 and `threshold` outside 0..1
+the four flags and `strict`. Non-boolean flags, `candidate_k` outside 1..50 and `threshold` outside 0..1
 answer `422`. Changes apply from the next message.
 
 ### Message.rag_sources
@@ -619,6 +620,44 @@ Messages written by Day 23 carry `"v": 2`, a `verdict` and a `search` trace next
 
 The trace never contains chunk text. Payloads of older messages are `v: 1` with no `verdict` or
 `search`; the UI shows them as before, without a details block.
+
+### Payload v3 (Day 24)
+
+Messages written by Day 24 carry `"v": 3`: everything of v2 plus the keys below. Payloads of version 1 and
+2 stay valid for old messages and the UI renders them as before.
+
+```json
+{
+  "v": 3, "mode": "rag", "kb_id": 3, "kb_name": "fz196", "top_k": 5,
+  "sources": [{"rank": 1, "chunk_id": "c-12", "file": "FZ_196.pdf", "section": "Статья 26", "page": "1-74", "score": 0.804}],
+  "verdict": "ok", "search": {"...": "as in v2"},
+  "strict": true, "gated": false,
+  "quotes": [{"text": "…", "state": "exact", "rank": 1, "chunk_id": "c-12", "file": "FZ_196.pdf",
+              "section": "Статья 26", "rebound": false, "bad_ref": false, "auto": false}],
+  "cited_ranks": [1], "invalid_refs": 0, "answer_supported": true, "answer_empty": false
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `strict` | Strict mode was on for this turn |
+| `gated` | `true` when the code refused without calling the model (`verdict` is `below_threshold`); the stored reply is the fixed «Не знаю: ...» text with a clarifying question |
+| `quotes[]` | Quotes of the answer; empty when strict is off, the turn was gated or the model answered «не знаю» |
+| `quotes[].text` | Quote string, capped at 1000 characters (model output, or a sentence the code picked for an auto quote); the only text stored in the payload |
+| `quotes[].state` | `exact`, `fuzzy` (similarity at least 0.9) or `unverified` |
+| `quotes[].rank` / `chunk_id` / `file` / `section` | The fragment the quote belongs to; `null` when the reference is invalid. Metadata is copied from the fragment, so `file` equals the `file` of the source with that rank |
+| `quotes[].rebound` | The quote was not in the named fragment but was found in another one and was re-attached |
+| `quotes[].bad_ref` | The named fragment number does not exist |
+| `quotes[].auto` | Picked by the code because no model quote was verified |
+| `cited_ranks` | Ranks referenced by `[N]` in the body or by a quote |
+| `invalid_refs` | Count of references to a non-existent fragment |
+| `answer_supported` | `true` when the body has a valid `[N]` reference or a quote is verified, `false` otherwise, `null` when not evaluated |
+| `answer_empty` | The model returned no text |
+
+The `verdict` set gains `model_idk` (the model itself answered «Не знаю» without quotes). A gated turn
+sends over the WebSocket exactly one `token` frame with the whole reply, followed by `done` with the same
+payload under `rag`; no completion request is made to the model. The streamed text of a normal strict
+turn still contains the «Цитаты:» tail; the stored `Message.content` and the history do not.
 
 ## Environment Settings
 

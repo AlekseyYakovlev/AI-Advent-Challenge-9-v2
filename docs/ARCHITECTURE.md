@@ -501,3 +501,63 @@ behaviour); the UI shows the grey line «Фрагменты не прошли п
 `docs/API_SPEC.md`). It is metadata only: scores, ranks, chunk ids, file and section, never chunk text.
 Candidates that do not fit the context budget are marked `over_budget` after the fact
 (`mark_over_budget`).
+
+## Citations and the «не знаю» gate (Day 24)
+
+Day 24 adds a per-chat **strict mode** (`ChatRagConfig.strict`, on by default; existing rows become on
+through the idempotent `ALTER TABLE ... DEFAULT 1` migration). With strict on, the model must answer only
+from the fragments, cite them, and say «Не знаю» when they do not contain the answer; the code, not the
+model, verifies the citations and decides when to refuse.
+
+**Module.** `agent/rag_cite.py` is a pure module with no I/O. It holds the strict instruction, the fixed
+refusal texts, the quote verifier and the payload fields. The chat turn (`agent/rag_turn.py`,
+`agent/ws.py`) and the eval script (`scripts/rag_eval.py cite`) both import it, so the report measures
+exactly what the application does.
+
+**Turn flow.**
+1. `prepare_rag_turn` runs the Day 23 pipeline. With strict on and a `below_threshold` verdict (or no
+   candidates at all) it returns a **gated** turn: `reply_text` is built by `build_idk_reply` (the fixed
+   sentence «Не знаю: ...» plus a clarifying question naming the nearest sections), `gated: true`.
+2. `agent/ws.py::_complete_gated_turn` sends and stores that reply. **No LLM call is made**: one `token`
+   frame with the whole reply, then `done`.
+3. Otherwise the fragments block ends with `STRICT_INSTRUCTION` (answer only from fragments, `[N]`
+   references, a «Цитаты:» tail of 1-3 lines `[N] «...»`, or a reply starting with «Не знаю»).
+4. The answer streams to the client as written, so the «Цитаты:» tail is visible while it streams.
+5. After the stream, `finalize_rag_turn` runs `process_answer` in a thread (`asyncio.to_thread`)
+   **before** the message is persisted. It strips the tail, so `Message.content` is the clean answer, and
+   adds the citation fields to the payload. The client re-renders the bubble without the tail on `done`.
+6. An exception inside finalization is logged (`rag_cite_failed`) and the raw answer is kept: a citation
+   failure never fails the turn.
+
+**Verification rules.** `normalize` applies NFKC, removes soft hyphens, maps dash variants to `-`, joins
+words split by a hyphen at a line break, casefolds and maps `ё` to `е`, drops quote marks, markdown
+emphasis characters and runs of `=`, collapses whitespace and trims edge punctuation. `match_quote` splits
+the quote at ellipses (parts shorter than 8 characters are ignored) and looks for the parts in order in
+the normalized chunk text: all found is `exact`. Otherwise, when every part has at least 25 characters, at
+least half of the quote's word stems occur in the chunk and a sliding `difflib` window over the chunk
+reaches a ratio of 0.9 for every part, the quote is `fuzzy`; anything else is `unverified`. A quote is
+checked against the fragment it names; when it fails there but is found in another fragment it is
+**re-attached** to that one (`rebound: true`). A reference outside the fragment range is an invalid
+reference (`bad_ref: true`; counted in `invalid_refs` together with invalid `[N]` references in the body).
+When no quote is verified, up to three **auto quotes** (`auto: true`) are picked by the code from the
+cited fragments, or else the top two, by word-stem overlap with the question (at most 300 characters
+each).
+
+**Outcomes.** `gated` (code refusal, no model call); `model_idk` (the reply starts with «Не знаю» and has
+no quotes: the verdict becomes `model_idk` and there is no quotes block); `answer_supported` (`true` when
+the body has a valid `[N]` reference or at least one quote is verified, otherwise `false`, shown as an
+amber line); `answer_empty` (the model returned no text, usually because `max_tokens` was spent on
+reasoning).
+
+**Storage.** Chunk text still never enters the payload, with one documented exception to the Day 22
+metadata-only rule: `quotes[].text` holds the quote string, capped at 1000 characters. It is model output
+(or, for auto quotes, a sentence the code cut from a fragment). The other quote fields (`rank`,
+`chunk_id`, `file`, `section`) are copied from the fragment's metadata. The payload version is 3 (see
+`docs/API_SPEC.md`).
+
+**Strict off.** The turn is the Day 23 one: the Day 22 instruction, no gate, no verification, payload with
+`strict: false`, `gated: false` and empty `quotes`.
+
+**Threshold.** The gate uses the Day 23 threshold unchanged (calibrated 0.67 for bge-m3, 0 without a
+calibration, or the user's override). `Day24_report.md` measures the cost: at the calibrated threshold
+some answerable questions are refused.

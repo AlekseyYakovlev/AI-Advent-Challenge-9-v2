@@ -308,6 +308,7 @@ Title tests must create chats titled `New Chat` and classify mocked LLM requests
   stored question equals the raw one with no fragments block in history; «без RAG» answer without
   sources; KB deleted mid-chat: answer with the yellow warning, toast and «без RAG (сбой поиска)»,
   warning persists after reload; no console errors.
+- The script switches strict mode off for its chat (PUT `/rag`) because it checks the Day 22 behaviour; strict-on behaviour is covered by `scripts/e2e_rag_cite_playwright.py`.
 
 ## Two-stage retrieval (Day 23)
 
@@ -333,6 +334,25 @@ Title tests must create chats titled `New Chat` and classify mocked LLM requests
 ### scripts/e2e_rag_search_playwright.py (browser UAT, not part of pytest)
 - Runs a temporary copy of the app at UI :18000 / Agent :18001 with a scratch database and KB storage against the real LM Studio (nomic embedder and a chat model, `qwen/qwen3.5-9b` preferred) and the real ФЗ-196 PDF; never touches :8000/:8001. Exit codes as for `e2e_rag_playwright.py`.
 - Scenarios: S1 «Поиск ⚙» only with RAG on; S2 popover defaults (K=20, threshold and note from the API, switches off); S3 Escape and outside click; S4 K and lexical persist across reload; S5 threshold override and «сбросить»; S6 «Детали поиска» table with status chips and no chunk text; S7 details survive reload; S8 hybrid adds the FTS column; S9 threshold 0.99 gives the grey line, no sources, no toast; S10 rewrite and LLM rerank ran or show a «↷» skip line; S11 RAG off hides the button.
+- The script switches strict mode off for its chat in the setup because it checks the Day 23 behaviour; strict-on behaviour is covered by `scripts/e2e_rag_cite_playwright.py`.
+
+## Citations and gate (Day 24)
+
+- `test_rag_cite.py`: the pure module `agent/rag_cite.py`: normalization, exact and fuzzy quote matching, tail parsing, re-attachment, invalid references, auto quotes, «не знаю» detection, the code-built refusal reply, payload fields.
+- `test_rag_turn.py` / `test_rag_ws.py` strict cases: the gate on `below_threshold` and on no candidates (including the assertion that the gate makes no streaming completion request and sends one `token` frame then `done`), strict instruction in the fragments block, `finalize_rag_turn` before persist (clean `Message.content`, payload v3), strict off keeps the Phase 15 turn, fail-soft on a citation error.
+- `test_rag_cite_static.py`: frontend source guard for the quotes block, chips, amber and grey lines and the strict switch (DOM builders and `textContent` only).
+- `test_rag_eval_cite.py`: `scripts/rag_eval.py cite` run structure, output files and preflight; the scratch DB is never `app.db`.
+- `test_rag_judge.py` faithfulness cases: the `faithfulness` rubric skips rows without quotes and keeps relevance results.
+- `test_rag_report_day24.py`: structure of `Day24_report.md`.
+
+### Day 24 eval commands (not part of pytest)
+- `python scripts/rag_eval.py cite` runs the control questions in `strict`, `strict_off` and `strict_baseline` modes and writes `eval_out/day24/`; `--render-only` rebuilds the tables from the stored raw results without calling the models.
+- `python scripts/rag_judge.py --rubric faithfulness --answers eval_out/day24/answers.csv --meta eval_out/day24/judge_meta.json` fills the judge column with a DeepSeek faithfulness verdict.
+- The report is `Day24_report.md`.
+
+### scripts/e2e_rag_cite_playwright.py (browser UAT, not part of pytest)
+- Runs a temporary copy of the app at UI :18000 / Agent :18001 with a scratch database and KB storage against the real LM Studio (nomic embedder and a chat model) and the real ФЗ-196 PDF; never touches :8000/:8001. Exit codes as for `e2e_rag_playwright.py` (0 passed, 1 a check failed, 2 blocked by preflight, 4 Playwright missing). The nomic embedder has no calibrated threshold, so the gate is forced with a threshold of 0.99.
+- Scenarios: S1 setup (KB «готово», chat with the KB, RAG on); S2 the strict switch is first in «Поиск ⚙», on by default, no indigo border; S3 strict answer without the «Цитаты:» tail, open «Цитаты (N)» with status chips, collapsed «Источники» and «Детали поиска», in that order (an empty or «не знаю» model answer is retried up to three times because the model is not deterministic); S4 stored payload v3 with quote states and files matching the source of their rank; S5 «цитируется» on the first source row (skipped when nothing is cited); S6 gate at threshold 0.99: «Не знаю:» with «Уточните», grey line, no quotes or sources, `gated` and `below_threshold` in the payload; S7 the same blocks after a reload; S8 strict off: model text, `strict: false`, no quotes block, then threshold reset and strict back on; S9 no page errors and no script or img in quote rows.
 
 ## Long-term memory editing (Day 21)
 
