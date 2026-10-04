@@ -143,6 +143,7 @@ This document evolves at phase transitions and milestone boundaries.
 2. Core Value check — still the right priority?
 3. Audit Out of Scope — reasons still valid?
 4. Update Context with current state
+Phase 16 (Citations and Anti-Hallucination, Day 24) complete (2026-10-04): per-chat strict mode (on by default, existing RAG chats migrate to on); answers carry quotes verified on the server (exact, fuzzy, unverified, auto) with source rows built from chunk metadata only; when no fragment passes the threshold the code answers «Не знаю» with a clarifying question and makes no model call; quotes block and strict switch in the chat UI; `Day24_report.md` with a live run on the 10 control questions. Honest result: the unchanged 0.67 threshold falsely refused 3 of 8 answerable questions (Q01, Q07, Q08); out-of-corpus 2/2 refused. Review findings WR-01..04 and IN-01..03 parked as backlog 999.13-999.17 (see .planning/phases/16-citations-and-anti-hallucination-day-24/16-REVIEW.md). Open: 16-HUMAN-UAT.md (supervisor restart test never run).
 
 ---
-*Last updated: 2026-10-03 — Phase 15 complete*
+*Last updated: 2026-10-04 — Phase 16 complete*
