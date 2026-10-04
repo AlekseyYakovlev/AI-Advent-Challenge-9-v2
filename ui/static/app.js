@@ -4056,6 +4056,35 @@ function buildRagMeta(rag) {
     const sources = Array.isArray(rag.sources) ? rag.sources : [];
     const thresholdLine = buildRagThresholdLine(rag);
     if (thresholdLine) frag.appendChild(thresholdLine);
+    if (rag.verdict === 'model_idk') {
+        const idk = mcpEl('div', 'mt-2 text-xs text-slate-500', 'Модель ответила «не знаю»: фрагменты не содержат ответа');
+        idk.setAttribute('role', 'status');
+        frag.appendChild(idk);
+    }
+    if (rag.strict === true && rag.answer_supported === false) {
+        const unsupported = mcpEl(
+            'div',
+            'mt-2 rounded-lg border border-yellow-700 bg-yellow-900/30 px-3 py-2 text-xs text-yellow-400',
+            '⚠ ответ не подтверждён фрагментами',
+        );
+        unsupported.setAttribute('role', 'status');
+        unsupported.title = 'В ответе нет ссылки [N] на фрагмент и ни одной подтверждённой цитаты. Проверьте ответ по источникам';
+        frag.appendChild(unsupported);
+    }
+    if (rag.invalid_refs > 0) {
+        frag.appendChild(mcpEl(
+            'div',
+            'mt-1 text-xs text-slate-500',
+            `Несуществующих ссылок на источники в ответе: ${rag.invalid_refs}`,
+        ));
+    }
+    if (rag.answer_empty === true) {
+        frag.appendChild(mcpEl(
+            'div',
+            'mt-1 text-xs text-slate-500',
+            'Модель не вернула текст ответа (вероятно, исчерпан лимит max_tokens)',
+        ));
+    }
     if (rag.warning) {
         const warn = mcpEl(
             'div',
@@ -4079,6 +4108,7 @@ function buildRagMeta(rag) {
 
 function buildRagThresholdLine(rag) {
     if (!rag || rag.verdict !== 'below_threshold' || !rag.search) return null;
+    if (!Number.isFinite(rag.search.best_cosine)) return null;
     const best = Number(rag.search.best_cosine).toFixed(2);
     const threshold = Number((rag.search.config || {}).threshold).toFixed(2);
     const line = mcpEl('div', 'mt-2 text-xs text-slate-500', `Фрагменты не прошли порог (лучший ${best} < ${threshold})`);
@@ -4353,7 +4383,10 @@ function buildRagSourcesBlock(rag) {
         `Источники (${rag.sources.length})`,
     ));
     const body = mcpEl('div', 'mt-2 space-y-2');
-    rag.sources.forEach((src) => body.appendChild(buildRagSourceRow(rag.kb_id, src)));
+    const cited = new Set(Array.isArray(rag.cited_ranks) ? rag.cited_ranks : []);
+    const isCited = (src) => cited.has(src.rank);
+    [...rag.sources.filter(isCited), ...rag.sources.filter((src) => !isCited(src))]
+        .forEach((src) => body.appendChild(buildRagSourceRow(rag.kb_id, src, isCited(src))));
     details.appendChild(body);
     details.addEventListener('toggle', () => {
         if (!details.open || details.dataset.loaded === '1') return;
@@ -4363,13 +4396,14 @@ function buildRagSourcesBlock(rag) {
     return details;
 }
 
-function buildRagSourceRow(kbId, src) {
+function buildRagSourceRow(kbId, src, isCited) {
     const card = mcpEl('div', 'rag-source-row bg-slate-800 border border-slate-700 rounded-lg p-3 space-y-1');
     card.dataset.kbId = kbId === null || kbId === undefined ? '' : String(kbId);
     card.dataset.chunkId = String(src.chunk_id);
     card.dataset.file = src.file || '';
     const head = mcpEl('div', 'text-xs flex flex-wrap gap-x-2 text-slate-400');
     head.appendChild(mcpEl('span', '', `#${src.rank}`));
+    if (isCited) head.appendChild(mcpEl('span', RAG_CHIP_NEUTRAL, 'цитируется'));
     head.appendChild(mcpEl('span', 'text-slate-200', Number(src.score).toFixed(3)));
     const file = mcpEl('span', 'truncate', src.file || '');
     file.title = src.file || '';

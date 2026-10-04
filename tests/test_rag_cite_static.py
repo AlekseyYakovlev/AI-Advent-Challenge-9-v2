@@ -105,3 +105,39 @@ def test_quotes_block_precedes_sources_in_render_messages() -> None:
     src = _function_source("renderMessages")
     assert "buildRagQuotesBlock(rag)" in src
     assert src.index("buildRagQuotesBlock(rag)") < src.index("buildRagSourcesBlock(rag)")
+
+
+@pytest.mark.parametrize(
+    "copy",
+    [
+        "цитируется",
+        "⚠ ответ не подтверждён фрагментами",
+        "Модель ответила «не знаю»: фрагменты не содержат ответа",
+        "Несуществующих ссылок на источники в ответе: ",
+        "Модель не вернула текст ответа",
+    ],
+)
+def test_answer_line_copy_present(copy: str) -> None:
+    assert copy in APP_JS
+
+
+def test_sources_block_orders_cited_first() -> None:
+    assert "cited_ranks" in _function_source("buildRagSourcesBlock")
+
+
+def test_meta_renders_answer_lines() -> None:
+    src = _function_source("buildRagMeta")
+    assert "buildRagThresholdLine(rag)" in src
+    for token in ("model_idk", "answer_supported", "invalid_refs", "answer_empty"):
+        assert token in src
+
+
+def test_threshold_line_skips_missing_cosine() -> None:
+    assert "best_cosine" in _function_source("buildRagThresholdLine")
+
+
+@pytest.mark.parametrize("name", ["buildRagMeta", "buildRagSourcesBlock", "buildRagSourceRow"])
+def test_answer_line_functions_have_no_html_injection(name: str) -> None:
+    src = _function_source(name)
+    for forbidden in ("innerHTML", "insertAdjacentHTML", "outerHTML"):
+        assert forbidden not in src
