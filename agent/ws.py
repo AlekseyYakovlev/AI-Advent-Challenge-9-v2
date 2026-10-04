@@ -25,7 +25,7 @@ from agent.dependencies import get_current_user_ws
 from agent import invariants, tasks
 from agent.llm_client import LLMClient, count_tokens
 from agent.mcp_tools import McpToolset, build_mcp_toolset
-from agent.rag_turn import RagTurn, prepare_rag_turn
+from agent.rag_turn import RagTurn, finalize_rag_turn, prepare_rag_turn
 from agent.providers import ProviderUnavailableError, resolve_client
 from agent.state import (
     CORS_ORIGINS,
@@ -697,6 +697,57 @@ async def _send_fallback_summary(
     return summary
 
 
+async def _complete_gated_turn(
+    websocket: WebSocket,
+    session: AsyncSession,
+    chat: Chat,
+    chat_id: int,
+    user_msg: Message,
+    payload: MessagePayload,
+    rag_turn: RagTurn,
+) -> None:
+    """Send and store the code-built reply of a gated strict turn without calling the LLM."""
+    reply_text: str = rag_turn.reply_text or ""
+    await websocket.send_json({"type": "token", "content": reply_text})
+    assistant_msg = await _persist_assistant_message(
+        session,
+        chat,
+        user_msg.id,
+        reply_text,
+        rag_sources=rag_turn.sources_json,
+    )
+    extract_and_update_facts(
+        session,
+        chat_id,
+        payload.content,
+        payload.model,
+        user_id=chat.user_id,
+        provider_id=payload.provider_id,
+    )
+    stats = await compute_chat_stats(session, chat_id, payload.model)
+    if chat.title == DEFAULT_CHAT_TITLE and user_msg.parent_id is None:
+        schedule_title_generation(
+            chat_id,
+            chat.user_id,
+            payload.content,
+            reply_text,
+            payload.model,
+            payload.provider_id,
+        )
+    await websocket.send_json(
+        {
+            "type": "done",
+            "message_id": assistant_msg.id,
+            "stats": stats,
+            "memory_writes": [],
+            "task_writes": [],
+            "invariant_conflict": None,
+            "rag": rag_turn.done_payload,
+        },
+    )
+    logger.info("rag_gated_reply_sent", chat_id=chat_id, message_id=assistant_msg.id)
+
+
 async def _handle_chat_message(
     websocket: WebSocket,
     chat_id: int,
@@ -804,6 +855,12 @@ async def _handle_chat_message(
                 client=client,
                 model=payload.model,
             )
+
+            if rag_turn.reply_text is not None:
+                await _complete_gated_turn(
+                    websocket, session, chat, chat_id, user_msg, payload, rag_turn,
+                )
+                return
 
             assistant_text = ""
             pending_tool_calls: list[dict[str, Any]] = []
@@ -986,6 +1043,9 @@ async def _handle_chat_message(
                 justification_text += tail
                 assistant_text += tail
 
+            assistant_text, rag_turn = await asyncio.to_thread(
+                finalize_rag_turn, rag_turn, payload.content, assistant_text,
+            )
             assistant_msg = await _persist_assistant_message(
                 session,
                 chat,
