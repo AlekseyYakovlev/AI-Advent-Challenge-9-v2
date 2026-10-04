@@ -147,6 +147,7 @@ _CHATRAGCONFIG_RANK_COLUMNS: tuple[tuple[str, str], ...] = (
     ("llm_rerank", "BOOLEAN DEFAULT 0"),
     ("hybrid", "BOOLEAN DEFAULT 0"),
     ("rewrite", "BOOLEAN DEFAULT 0"),
+    ("strict", "BOOLEAN DEFAULT 1"),
 )
 
 

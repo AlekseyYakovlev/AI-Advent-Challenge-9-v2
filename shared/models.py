@@ -719,7 +719,8 @@ class ChatRagConfig(SQLModel, table=True):
 
     The four stage flags (lexical, llm_rerank, hybrid, rewrite) are independent
     switches, not a mode ladder. A None threshold means the calibrated value of
-    the attached KB's embedding model; a number is a user override.
+    the attached KB's embedding model; a number is a user override. The strict
+    flag turns on quotes plus the «не знаю» gate together.
     """
 
     chat_id: int = Field(
@@ -741,4 +742,5 @@ class ChatRagConfig(SQLModel, table=True):
     llm_rerank: bool = Field(default=False)
     hybrid: bool = Field(default=False)
     rewrite: bool = Field(default=False)
+    strict: bool = Field(default=True)
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

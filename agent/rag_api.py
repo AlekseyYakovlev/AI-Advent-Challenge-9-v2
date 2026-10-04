@@ -37,6 +37,7 @@ class RagConfigIn(BaseModel):
     llm_rerank: StrictBool | None = None
     hybrid: StrictBool | None = None
     rewrite: StrictBool | None = None
+    strict: StrictBool | None = None
 
 
 class RagConfigOut(BaseModel):
@@ -57,6 +58,7 @@ class RagConfigOut(BaseModel):
     llm_rerank: bool
     hybrid: bool
     rewrite: bool
+    strict: bool
 
 
 async def _get_owned_chat(session: AsyncSession, chat_id: int, user_id: int) -> Chat:
@@ -81,7 +83,7 @@ async def _config_out(
             kb_status=None, top_k=DEFAULT_TOP_K, candidate_k=DEFAULT_CANDIDATE_K,
             threshold=None, calibrated_threshold=None, effective_threshold=0.0,
             threshold_source="none", lexical=False, llm_rerank=False, hybrid=False,
-            rewrite=False,
+            rewrite=False, strict=True,
         )
     kb: KnowledgeBase | None = None
     if row.kb_id is not None:
@@ -106,6 +108,7 @@ async def _config_out(
         llm_rerank=bool(row.llm_rerank),
         hybrid=bool(row.hybrid),
         rewrite=bool(row.rewrite),
+        strict=bool(row.strict) if row.strict is not None else True,
     )
 
 
@@ -116,7 +119,7 @@ def _apply_search_settings(row: ChatRagConfig, body: RagConfigIn) -> None:
         row.threshold = body.threshold
     if body.candidate_k is not None:
         row.candidate_k = body.candidate_k
-    for name in ("lexical", "llm_rerank", "hybrid", "rewrite"):
+    for name in ("lexical", "llm_rerank", "hybrid", "rewrite", "strict"):
         value = getattr(body, name)
         if value is not None:
             setattr(row, name, value)
@@ -129,7 +132,7 @@ async def get_rag_config(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> RagConfigOut:
-    """Return the chat's RAG settings; defaults (off, no KB, top_k 5, threshold only) when never configured."""
+    """Return the chat's RAG settings; defaults (off, no KB, top_k 5, threshold only, strict on) when never configured."""
     chat = await _get_owned_chat(session, chat_id, current_user.id)
     row = await session.get(ChatRagConfig, chat_id)
     return await _config_out(session, chat, row)
@@ -181,6 +184,7 @@ async def put_rag_config(
         llm_rerank=row.llm_rerank,
         hybrid=row.hybrid,
         rewrite=row.rewrite,
+        strict=row.strict,
     )
     return await _config_out(session, chat, row)
 
