@@ -289,7 +289,7 @@ def test_shipped_thresholds_match_calibration_report() -> None:
             assert rag.calibrated_threshold(entry["embedding_model"]) is None, label
 
 
-def test_payload_defaults_are_v2_ok_without_search() -> None:
+def test_payload_defaults_are_v3_ok_without_search() -> None:
     payload = rag.build_rag_payload(
         mode="rag",
         kb_id=1,
@@ -300,9 +300,46 @@ def test_payload_defaults_are_v2_ok_without_search() -> None:
         context_tokens=0,
         warning=None,
     )
-    assert payload["v"] == 2
+    assert payload["v"] == 3
     assert payload["verdict"] == "ok"
     assert payload["search"] is None
+    assert payload["strict"] is False
+    assert payload["gated"] is False
+    assert payload["quotes"] == []
+    assert payload["cited_ranks"] == []
+    assert payload["invalid_refs"] == 0
+    assert payload["answer_supported"] is None
+    assert payload["answer_empty"] is False
+
+
+def test_render_block_soft_is_unchanged_and_strict_swaps_instruction() -> None:
+    chunks = [{"source": "f", "section": "s", "text": "t"}]
+    soft = rag.render_rag_block(chunks)
+    strict = rag.render_rag_block(chunks, strict=True)
+    assert soft.endswith(rag.RAG_INSTRUCTION)
+    assert strict.endswith(rag.STRICT_INSTRUCTION)
+    assert rag.RAG_INSTRUCTION not in strict
+    assert strict.startswith(soft[: -len(rag.RAG_INSTRUCTION)])
+
+
+def test_build_rag_block_strict_counts_longer_instruction() -> None:
+    chunks = [{"source": "f", "section": "s", "text": f"фрагмент {i} " * 20} for i in range(5)]
+    soft_one = rag.render_rag_block(chunks[:1])
+    budget = int(count_tokens(soft_one) * rag.CYRILLIC_SAFETY) + 1
+    _, soft_kept, _ = rag.build_rag_block(chunks, budget)
+    assert len(soft_kept) >= 1
+    # A budget that exactly fits the soft block must not fit the longer strict one.
+    _, strict_kept, _ = rag.build_rag_block(chunks, budget, strict=True)
+    assert len(strict_kept) <= len(soft_kept)
+    tight = int(count_tokens(rag.render_rag_block(chunks[:1], strict=True)) * rag.CYRILLIC_SAFETY) - 1
+    block, kept, dropped = rag.build_rag_block(chunks, tight, strict=True)
+    assert block is None and kept == [] and dropped == 5
+
+
+def test_parse_stored_v2_payload_still_works() -> None:
+    raw = '{"v": 2, "mode": "rag", "sources": [], "verdict": "ok", "search": null}'
+    parsed = rag.parse_rag_payload(raw)
+    assert parsed is not None and parsed["v"] == 2
 
 
 def test_parse_stored_v1_payload_still_works() -> None:
