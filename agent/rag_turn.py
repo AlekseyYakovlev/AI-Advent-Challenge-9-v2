@@ -1,7 +1,7 @@
 """Fail-soft RAG pre-step for a chat turn."""
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from sqlalchemy.exc import SQLAlchemyError
@@ -15,6 +15,7 @@ from agent.rag import (
     MSG_CONTEXT_FULL,
     MSG_RETRIEVAL_FAILED,
     VERDICT_KB_UNAVAILABLE,
+    VERDICT_MODEL_IDK,
     VERDICT_OFF,
     RagFailure,
     build_rag_block,
@@ -25,6 +26,7 @@ from agent.rag import (
     serialize_rag_payload,
     sources_from_chunks,
 )
+from agent.rag_cite import build_idk_reply, process_answer
 from agent.rag_pipeline import (
     VERDICT_BELOW_THRESHOLD,
     config_from_row,
@@ -43,6 +45,10 @@ class RagTurn:
 
     mode: str
     payload: dict[str, Any]
+    # In memory only: carries chunk text for quote verification, never serialized.
+    kept_chunks: list[dict[str, Any]] = field(default_factory=list)
+    strict: bool = False
+    reply_text: str | None = None
 
     @property
     def sources_json(self) -> str:
@@ -67,6 +73,8 @@ def _payload(
     warning: dict[str, str] | None = None,
     verdict: str = "ok",
     search: dict[str, Any] | None = None,
+    strict: bool = False,
+    gated: bool = False,
 ) -> dict[str, Any]:
     """Build a RAG payload with metadata-only sources."""
     return build_rag_payload(
@@ -80,6 +88,8 @@ def _payload(
         warning=warning,
         verdict=verdict,
         search=search,
+        strict=strict,
+        gated=gated,
     )
 
 
@@ -128,11 +138,30 @@ async def prepare_rag_turn(
             turn = RagTurn(MODE_OFF, _payload(MODE_OFF, kb_id, kb_name, None, verdict=VERDICT_OFF))
             _log(chat_id, turn)
             return turn
+        strict = True if config.strict is None else bool(config.strict)
         pipeline_config = config_from_row(config, kb)
         chunks, trace = await run_retrieval_pipeline(
             session, kb, question, pipeline_config, client, model
         )
         verdict = trace.pop("verdict")
+        if strict and (verdict == VERDICT_BELOW_THRESHOLD or not chunks):
+            turn = RagTurn(
+                MODE_RAG,
+                _payload(
+                    MODE_RAG,
+                    kb_id,
+                    kb_name,
+                    top_k,
+                    verdict=verdict,
+                    search=trace,
+                    strict=True,
+                    gated=True,
+                ),
+                strict=True,
+                reply_text=build_idk_reply(trace),
+            )
+            _log(chat_id, turn)
+            return turn
         if verdict == VERDICT_BELOW_THRESHOLD:
             merge_no_fragments_note(llm_messages)
             turn = RagTurn(
@@ -150,7 +179,7 @@ async def prepare_rag_turn(
             "extra_tokens": extra_tokens,
             "budget": budget,
         }
-        block, kept, dropped = build_rag_block(chunks, budget)
+        block, kept, dropped = build_rag_block(chunks, budget, strict=strict)
         if chunks and block is None:
             raise RagFailure("context_full", MSG_CONTEXT_FULL)
         context_tokens = 0
@@ -171,7 +200,10 @@ async def prepare_rag_turn(
                 context_tokens=context_tokens,
                 verdict=verdict,
                 search=trace,
+                strict=strict,
             ),
+            kept_chunks=kept,
+            strict=strict,
         )
     except asyncio.CancelledError:
         raise
@@ -223,7 +255,43 @@ def _log(chat_id: int, turn: RagTurn, budget_info: dict[str, int] | None = None)
         context_tokens=payload["context_tokens"],
         warning=warning["code"] if warning else None,
         verdict=payload["verdict"],
+        strict=payload.get("strict", False),
+        gated=payload.get("gated", False),
         candidates=len(search.get("candidates", [])),
         skipped=len(search.get("skipped", [])),
         **(budget_info or {}),
     )
+
+
+def finalize_rag_turn(
+    turn: RagTurn, question: str, assistant_text: str
+) -> tuple[str, RagTurn]:
+    """Verify quotes in a strict answer; return the clean answer and the enriched turn."""
+    if (
+        turn.mode != MODE_RAG
+        or not turn.strict
+        or turn.reply_text is not None
+        or turn.payload.get("warning")
+        or not turn.kept_chunks
+    ):
+        return assistant_text, turn
+    try:
+        result = process_answer(question, assistant_text, turn.kept_chunks)
+        fields = result.payload_fields(turn.kept_chunks)
+        new_payload = {**turn.payload, **fields}
+        if result.model_idk:
+            new_payload["verdict"] = VERDICT_MODEL_IDK
+        quotes = result.quotes
+        logger.info(
+            "rag_cite_done",
+            quotes=len(quotes),
+            verified=sum(1 for q in quotes if q.state != "unverified"),
+            auto=sum(1 for q in quotes if q.auto),
+            invalid_refs=result.invalid_refs,
+            model_idk=result.model_idk,
+            answer_empty=result.answer_empty,
+        )
+        return result.answer, replace(turn, payload=new_payload)
+    except Exception as exc:
+        logger.error("rag_cite_failed", error=type(exc).__name__)
+        return assistant_text, turn

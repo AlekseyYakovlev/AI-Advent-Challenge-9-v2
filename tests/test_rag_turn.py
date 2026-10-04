@@ -1,6 +1,7 @@
 """Tests for the fail-soft RAG pre-step of a chat turn."""
 
 import asyncio
+import json
 from typing import Any
 
 import pytest
@@ -8,8 +9,9 @@ import pytest
 from agent import kb_search, rag_turn
 from agent.kb_indexer import run_index_job
 from agent.llm_client import count_tokens
-from agent.rag import BLOCK_OPEN, NO_FRAGMENTS_INSTRUCTION, RagFailure
-from agent.rag_turn import prepare_rag_turn
+from agent.rag import BLOCK_OPEN, NO_FRAGMENTS_INSTRUCTION, RAG_INSTRUCTION, RagFailure
+from agent.rag_cite import STRICT_INSTRUCTION
+from agent.rag_turn import finalize_rag_turn, prepare_rag_turn
 from kb_helpers import get_kb, install_fake_embedder, seed_kb, seed_user, vector_for
 from shared.database import async_session_factory
 from shared.models import Chat, ChatRagConfig, KbStatus
@@ -40,6 +42,7 @@ async def _chat(
     top_k: int = 3,
     threshold: float | None = None,
     rewrite: bool = False,
+    strict: bool = False,
 ) -> int:
     async with async_session_factory() as session:
         chat = Chat(title="t", user_id=user_id)
@@ -53,6 +56,7 @@ async def _chat(
                 top_k=top_k,
                 threshold=threshold,
                 rewrite=rewrite,
+                strict=strict,
             ))
         await session.commit()
         return chat.id
@@ -224,12 +228,12 @@ async def test_partial_fit_reports_dropped(monkeypatch: pytest.MonkeyPatch) -> N
     assert turn.payload["context_tokens"] <= int(1500 * 0.30)
 
 
-async def test_payload_v2_ok_with_trace_and_no_chunk_text(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_payload_v3_ok_with_trace_and_no_chunk_text(monkeypatch: pytest.MonkeyPatch) -> None:
     user_id, kb_id = await _ready_kb(monkeypatch)
     chat_id = await _chat(user_id, kb_id, top_k=3)
     turn = await _run(chat_id, _messages())
     payload = turn.payload
-    assert payload["v"] == 2
+    assert payload["v"] == 3
     assert payload["verdict"] == "ok"
     assert len(payload["search"]["candidates"]) >= len(payload["sources"])
     assert "verdict" not in payload["search"]
@@ -307,3 +311,141 @@ async def test_client_and_model_are_passed_to_pipeline(monkeypatch: pytest.Monke
     sentinel = object()
     await _run(chat_id, _messages(), client=sentinel, model="m-1")
     assert seen == {"client": sentinel, "model": "m-1"}
+
+
+async def test_strict_below_threshold_is_gated_before_llm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id, kb_id = await _ready_kb(monkeypatch)
+    chat_id = await _chat(user_id, kb_id, threshold=0.99, strict=True)
+    msgs = _messages()
+    turn = await _run(chat_id, msgs)
+    assert msgs == _messages()
+    assert turn.reply_text is not None and turn.reply_text.startswith("Не знаю")
+    payload = turn.payload
+    assert payload["verdict"] == "below_threshold"
+    assert payload["gated"] is True
+    assert payload["strict"] is True
+    assert payload["sources"] == []
+    assert payload["search"]["candidates"]
+    assert turn.kept_chunks == []
+
+
+async def test_strict_zero_candidates_is_gated(monkeypatch: pytest.MonkeyPatch) -> None:
+    user_id, kb_id = await _ready_kb(monkeypatch)
+    chat_id = await _chat(user_id, kb_id, strict=True)
+
+    async def empty(*args: object) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        return [], {"verdict": "ok", "candidates": [], "skipped": []}
+
+    monkeypatch.setattr(rag_turn, "run_retrieval_pipeline", empty)
+    msgs = _messages()
+    turn = await _run(chat_id, msgs)
+    assert msgs == _messages()
+    assert turn.reply_text is not None
+    assert turn.reply_text.endswith("в базе знаний не нашлось ничего близкого.")
+    assert turn.payload["gated"] is True
+    assert turn.payload["verdict"] == "ok"
+
+
+async def test_strict_fragments_use_strict_instruction_and_keep_text_in_memory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id, kb_id = await _ready_kb(monkeypatch)
+    chat_id = await _chat(user_id, kb_id, top_k=3, strict=True)
+    msgs = _messages()
+    turn = await _run(chat_id, msgs)
+    content = msgs[-1]["content"]
+    assert STRICT_INSTRUCTION in content
+    assert RAG_INSTRUCTION not in content
+    assert turn.reply_text is None
+    assert turn.strict is True
+    assert turn.kept_chunks and all("text" in c for c in turn.kept_chunks)
+    assert turn.payload["gated"] is False
+    assert "text" not in json.loads(turn.sources_json)["sources"][0]
+    for chunk in turn.kept_chunks:
+        assert chunk["text"] not in turn.sources_json
+
+
+async def test_strict_off_keeps_phase_15_behavior(monkeypatch: pytest.MonkeyPatch) -> None:
+    user_id, kb_id = await _ready_kb(monkeypatch)
+    below = await _chat(user_id, kb_id, threshold=0.99, strict=False)
+    msgs = _messages()
+    turn = await _run(below, msgs)
+    assert msgs[-1]["content"].startswith(NO_FRAGMENTS_INSTRUCTION)
+    assert turn.reply_text is None
+    assert turn.payload["strict"] is False and turn.payload["gated"] is False
+    found = await _chat(user_id, kb_id, top_k=3, strict=False)
+    msgs = _messages()
+    turn = await _run(found, msgs)
+    assert RAG_INSTRUCTION in msgs[-1]["content"]
+    assert STRICT_INSTRUCTION not in msgs[-1]["content"]
+    assert turn.payload["quotes"] == []
+
+
+async def test_strict_retrieval_failure_is_fail_soft(monkeypatch: pytest.MonkeyPatch) -> None:
+    user_id, kb_id = await _ready_kb(monkeypatch)
+    chat_id = await _chat(user_id, kb_id, strict=True)
+
+    async def failing(*args: object) -> list[dict[str, Any]]:
+        raise RagFailure("embedder_unavailable", "нет модели")
+
+    monkeypatch.setattr(rag_turn, "run_retrieval_pipeline", failing)
+    msgs = _messages()
+    turn = await _run(chat_id, msgs)
+    assert turn.payload["verdict"] == "kb_unavailable"
+    assert turn.reply_text is None
+    assert turn.kept_chunks == []
+    assert msgs == _messages()
+
+
+async def _strict_turn(monkeypatch: pytest.MonkeyPatch) -> rag_turn.RagTurn:
+    user_id, kb_id = await _ready_kb(monkeypatch)
+    chat_id = await _chat(user_id, kb_id, top_k=3, strict=True)
+    return await _run(chat_id, _messages())
+
+
+async def test_finalize_builds_quotes_and_clean_answer(monkeypatch: pytest.MonkeyPatch) -> None:
+    turn = await _strict_turn(monkeypatch)
+    quote = turn.kept_chunks[0]["text"][:60]
+    raw = f"Ответ по документу [1].\n\nЦитаты:\n[1] «{quote}»"
+    answer, final = finalize_rag_turn(turn, QUESTION, raw)
+    assert "Цитаты" not in answer
+    assert final.payload["quotes"] and final.payload["quotes"][0]["state"] == "exact"
+    assert final.payload["cited_ranks"] == [1]
+    assert final.payload["answer_supported"] is True
+    assert final.payload["verdict"] == "ok"
+    assert final.kept_chunks is turn.kept_chunks
+
+
+async def test_finalize_model_idk_sets_verdict(monkeypatch: pytest.MonkeyPatch) -> None:
+    turn = await _strict_turn(monkeypatch)
+    answer, final = finalize_rag_turn(turn, QUESTION, "Не знаю. Уточните вопрос?")
+    assert final.payload["verdict"] == "model_idk"
+    assert final.payload["quotes"] == []
+
+
+async def test_finalize_returns_inputs_for_non_strict_gated_and_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user_id, kb_id = await _ready_kb(monkeypatch)
+    soft = await _run(await _chat(user_id, kb_id, top_k=3, strict=False), _messages())
+    assert finalize_rag_turn(soft, QUESTION, "текст") == ("текст", soft)
+    gated = await _run(await _chat(user_id, kb_id, threshold=0.99, strict=True), _messages())
+    assert finalize_rag_turn(gated, QUESTION, "текст")[1] is gated
+    off = await _run(await _chat(user_id, kb_id, mode="off", strict=True), _messages())
+    assert finalize_rag_turn(off, QUESTION, "текст")[1] is off
+
+
+async def test_finalize_is_fail_soft_when_processing_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    turn = await _strict_turn(monkeypatch)
+
+    def boom(*args: object) -> None:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(rag_turn, "process_answer", boom)
+    answer, final = finalize_rag_turn(turn, QUESTION, "сырой ответ")
+    assert answer == "сырой ответ"
+    assert final is turn
