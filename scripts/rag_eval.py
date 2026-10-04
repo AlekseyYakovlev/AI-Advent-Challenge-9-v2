@@ -82,6 +82,20 @@ ABLATION_RUNS: dict[str, dict[str, bool]] = {
     "all": {"lexical": True, "llm_rerank": True, "hybrid": True, "rewrite": True},
 }
 JUDGE_COLUMNS: tuple[str, ...] = ("verdict", "comment", "judge_verdict", "judge_comment")
+DAY24_OUT: Path = REPO_ROOT / "eval_out" / "day24"
+DAY23_META: Path = DAY23_OUT / "run_meta.json"
+# At 4096 the reasoning model returned empty strict answers: the budget went to reasoning
+# before the quotes section was written.
+DEFAULT_CITE_MAX_TOKENS = 8192
+MEANING_VERDICTS: tuple[str, ...] = ("да", "частично", "нет")
+# strict: Day 23 embedder winner with its calibrated threshold, strict mode on (primary run).
+# strict_off: same retrieval, Phase 15 prompt (comparison row).
+# strict_baseline: strict mode on the plain top-k retrieval, only the model's own refusal applies.
+CITE_RUNS: dict[str, dict[str, Any]] = {
+    "strict": {"strict": True, "retrieval": "threshold"},
+    "strict_off": {"strict": False, "retrieval": "threshold"},
+    "strict_baseline": {"strict": True, "retrieval": "baseline"},
+}
 
 
 def parse_article(text: str | None) -> str | None:
@@ -1313,6 +1327,170 @@ def _add_ablate_parser(sub: Any) -> None:
     )
     ablate.add_argument("--fixture", type=Path, default=DEFAULT_FIXTURE)
     ablate.add_argument("--out", type=Path, default=DAY23_OUT)
+
+
+def classify_reply(strict: bool, gated: bool, result: Any, reply: dict[str, Any]) -> str:
+    """Kind of one cite record: gated, model_idk, empty, error or answer."""
+    if reply.get("error"):
+        return "error"
+    if strict and gated:
+        return "gated"
+    if not (reply.get("answer") or "").strip():
+        return "empty"
+    if strict and result is not None and result.model_idk:
+        return "model_idk"
+    return "answer"
+
+
+async def _cite_question(
+    session: Any,
+    kb: Any,
+    client: Any,
+    opts: EvalOptions,
+    run: str,
+    strict: bool,
+    config: Any,
+    question: dict[str, Any],
+) -> dict[str, Any]:
+    """Run one question through the chat's gate and citation rules; return the raw record."""
+    from agent.rag import (
+        RagFailure,
+        build_rag_block,
+        merge_no_fragments_note,
+        merge_rag_block,
+        rag_budget,
+        sources_from_chunks,
+    )
+    from agent.rag_cite import build_idk_reply, process_answer
+    from agent.rag_pipeline import VERDICT_BELOW_THRESHOLD, mark_over_budget, run_retrieval_pipeline
+
+    started = time.perf_counter()
+    warning: str | None = None
+    try:
+        chunks, trace = await run_retrieval_pipeline(
+            session, kb, question["question"], config, client, opts.model
+        )
+    except RagFailure as failure:
+        chunks, trace, warning = [], _failed_trace(config, failure.code), failure.code
+    retrieval_ms = int((time.perf_counter() - started) * 1000)
+    verdict = trace.pop("verdict")
+    messages = [
+        {"role": "system", "content": EVAL_SYSTEM_PROMPT},
+        {"role": "user", "content": question["question"]},
+    ]
+    kept: list[dict[str, Any]] = []
+    dropped = 0
+    below = verdict == VERDICT_BELOW_THRESHOLD
+    if below:
+        if not strict:
+            merge_no_fragments_note(messages)
+    elif warning is None:
+        budget = rag_budget(opts.context_length, _message_tokens(messages), opts.max_tokens)
+        block, kept, dropped = build_rag_block(chunks, budget, strict=strict)
+        if block:
+            merge_rag_block(messages, block)
+        mark_over_budget(trace, len(kept))
+    gated = strict and warning is None and (below or not kept)
+    answer_started = time.perf_counter()
+    result = None
+    if gated:
+        reply: dict[str, Any] = {
+            "answer": build_idk_reply(trace),
+            "error": None,
+            "finish_reason": None,
+            "has_reasoning": False,
+            "completion_tokens": None,
+            "sent": [],
+        }
+        raw_answer = reply["answer"]
+    elif warning is not None and strict:
+        reply = {
+            "answer": "",
+            "error": f"retrieval: {warning}",
+            "finish_reason": None,
+            "has_reasoning": False,
+            "completion_tokens": None,
+            "sent": [],
+        }
+        raw_answer = ""
+    else:
+        reply = await _ask(client, opts, messages)
+        raw_answer = reply["answer"]
+        if strict and kept and not reply["error"]:
+            result = process_answer(question["question"], raw_answer, kept)
+            reply["answer"] = result.answer
+    answer_ms = int((time.perf_counter() - answer_started) * 1000)
+    fields = result.payload_fields(kept) if result is not None else {}
+    quotes = fields.get("quotes", [])
+    counts = {"exact": 0, "fuzzy": 0, "unverified": 0, "auto": 0}
+    for quote in quotes:
+        counts["auto" if quote["auto"] else quote["state"]] += 1
+    cite_verdict = "below_threshold" if below else ("model_idk" if result and result.model_idk else "ok")
+    return {
+        "run": run,
+        "id": question["id"],
+        "category": question["category"],
+        "question": question["question"],
+        "strict": strict,
+        "gated": gated,
+        "kind": classify_reply(strict, gated, result, reply),
+        "cite_verdict": cite_verdict,
+        "config": trace["config"],
+        "search": trace,
+        "retrieval": {**score_question(chunks, question, opts.top_k), "warning": warning, "dropped": dropped},
+        "chunks_before": len(trace["candidates"]),
+        "chunks_after": len(kept),
+        "retrieval_latency_ms": retrieval_ms,
+        "answer_latency_ms": answer_ms,
+        "skipped": trace.get("skipped", []),
+        "verdict": verdict,
+        "messages": reply.pop("sent"),
+        "chunks": [{k: v for k, v in c.items() if k != "text"} for c in chunks],
+        "fragments": [c["text"] for c in kept],
+        "sources": sources_from_chunks(kept),
+        "raw_answer": raw_answer,
+        "quotes": quotes,
+        "cited_ranks": fields.get("cited_ranks", []),
+        "invalid_refs": fields.get("invalid_refs", 0),
+        "answer_supported": fields.get("answer_supported"),
+        "answer_empty": fields.get("answer_empty", False),
+        "quote_counts": counts,
+        "cited_sources": _cited_sources(reply["answer"], kept),
+        **reply,
+    }
+
+
+async def run_cite(
+    opts: EvalOptions,
+    client: Any,
+    session_factory: Any,
+    runs: list[str],
+    kb_id: int,
+    candidate_k: int,
+    threshold: float,
+    threshold_source: str = "calibrated",
+) -> list[dict[str, Any]]:
+    """Answer every control question under each cite run and write the raw records."""
+    from shared.models import KnowledgeBase
+
+    fixture = load_fixture(opts.fixture, require_frozen=not opts.allow_draft)
+    raw_dir = opts.out / "raw"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    records: list[dict[str, Any]] = []
+    async with session_factory() as session:
+        kb = await session.get(KnowledgeBase, kb_id)
+        for run in runs:
+            spec = CITE_RUNS[run]
+            config = ablation_config(
+                spec["retrieval"], opts.top_k, candidate_k, threshold, threshold_source
+            )
+            for question in fixture["questions"]:
+                raw = await _cite_question(
+                    session, kb, client, opts, run, spec["strict"], config, question
+                )
+                _write_json(raw_dir / f"{run}_{question['id']}.json", raw)
+                records.append(raw)
+    return records
 
 
 def build_parser() -> argparse.ArgumentParser:
