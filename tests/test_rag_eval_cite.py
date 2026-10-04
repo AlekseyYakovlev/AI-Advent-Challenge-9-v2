@@ -203,3 +203,125 @@ async def test_run_cite_writes_raw_files_in_run_order(
     loaded = rag_eval._load_raw(opts.out / "raw")
     assert len(loaded) == 6
     assert {r["run"] for r in loaded} == {"strict", "strict_off"}
+
+
+def _raw(run: str, qid: str, category: str, kind: str, **extra: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "run": run, "id": qid, "category": category, "kind": kind, "answer": "a",
+        "sources": [{"rank": 1}], "quotes": [], "quote_counts": {"exact": 0, "fuzzy": 0, "unverified": 0, "auto": 0},
+        "invalid_refs": 0, "completion_tokens": 10, "finish_reason": "stop",
+    }
+    return {**base, **extra}
+
+
+def test_cite_metrics_rates_false_refusals_and_empty() -> None:
+    rows = [
+        _raw("strict", "Q01", "direct", "answer",
+             quotes=[{"state": "exact", "auto": False, "rank": 1, "text": "t"}],
+             quote_counts={"exact": 1, "fuzzy": 0, "unverified": 0, "auto": 0}),
+        _raw("strict", "Q02", "direct", "gated"),
+        _raw("strict", "Q03", "direct", "empty", finish_reason="length"),
+        _raw("strict", "Q04", "synthesis", "answer",
+             quote_counts={"exact": 0, "fuzzy": 1, "unverified": 2, "auto": 3}),
+        _raw("strict", "Q09", "out_of_corpus", "gated"),
+        _raw("strict", "Q10", "out_of_corpus", "model_idk"),
+    ]
+    metrics = rag_eval.cite_metrics(rows)
+    assert metrics["false_refusals"] == 1 and metrics["false_refusal_ids"] == ["Q02"]
+    assert metrics["answerable_total"] == 4 and metrics["false_refusal_rate"] == 0.25
+    assert metrics["empty"] == 1
+    assert metrics["ooc_idk"] == 2 and metrics["ooc_gated"] == 1 and metrics["ooc_model_idk"] == 1
+    assert metrics["ooc_idk_rate"] == 1.0
+    assert metrics["quotes"] == {"exact": 1, "fuzzy": 1, "unverified": 2, "auto": 3}
+
+
+def test_empty_answer_is_not_a_refusal_nor_missing_quotes() -> None:
+    empty = _raw("strict", "Q03", "out_of_corpus", "empty", finish_reason="length")
+    assert rag_eval._idk_correct(empty) == "нет"
+    assert rag_eval._quotes_present(empty) == "—"
+    assert "ответ не получен (length)" in rag_eval._kind_label(empty)
+    assert rag_eval.cite_metrics([empty])["ooc_idk"] == 0
+
+
+def test_render_cite_md_and_summary_columns() -> None:
+    raws = [
+        _raw("strict", "Q01", "direct", "answer",
+             quotes=[{"state": "exact", "auto": False, "rank": 1, "text": "t"}],
+             quote_counts={"exact": 1, "fuzzy": 0, "unverified": 0, "auto": 0}),
+        _raw("strict", "Q09", "out_of_corpus", "gated", sources=[]),
+        _raw("strict_off", "Q01", "direct", "answer"),
+    ]
+    table = rag_eval.render_cite_md(raws, "strict")
+    assert "источники есть" in table and "корректное «не знаю»" in table
+    lines = table.strip().splitlines()
+    assert len(lines) == 4
+    assert "да (модель: 1 exact, 0 fuzzy, 0 unverified; авто: 0)" in lines[2]
+    assert lines[3].count("—") >= 2 and "| да |" in lines[3]
+    summary = rag_eval.render_cite_summary_md(raws).strip().splitlines()
+    assert len(summary) == 4 and summary[2].startswith("| strict |") and summary[3].startswith("| strict_off |")
+
+
+async def test_rerender_keeps_manual_and_judge_cells(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, scripted_pipeline: None
+) -> None:
+    import csv
+    import io
+
+    kb_id = await _ready_kb(monkeypatch)
+    opts = _opts(tmp_path, kb_id)
+    raws = await rag_eval.run_cite(
+        opts, FakeClient(), async_session_factory, ["strict"], kb_id, 20, 0.59
+    )
+    fixture = rag_eval.load_fixture(opts.fixture, require_frozen=True)
+    rag_eval._render_cite_outputs(opts, fixture, {}, raws)
+    path = opts.out / "answers.csv"
+    rows = list(csv.DictReader(io.StringIO(path.read_text(encoding="utf-8"))))
+    assert list(rows[0]) == [
+        "id", "category", "run", "kind", "answer", "quotes", "sources_present", "quotes_present",
+        "idk_correct", "verdict", "comment", "judge_verdict", "judge_comment",
+    ]
+    rows[0]["verdict"], rows[0]["comment"], rows[1]["judge_verdict"] = "да", "ok", "нет"
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=list(rows[0]), lineterminator="\n")
+    writer.writeheader()
+    writer.writerows(rows)
+    path.write_text(buffer.getvalue(), encoding="utf-8")
+    rag_eval._render_cite_outputs(opts, fixture, {}, raws)
+    again = list(csv.DictReader(io.StringIO(path.read_text(encoding="utf-8"))))
+    assert again[0]["verdict"] == "да" and again[0]["comment"] == "ok"
+    assert again[1]["judge_verdict"] == "нет"
+    assert "да" in (opts.out / "cite_strict.md").read_text(encoding="utf-8")
+
+
+async def test_render_only_needs_no_client(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, scripted_pipeline: None
+) -> None:
+    kb_id = await _ready_kb(monkeypatch)
+    opts = _opts(tmp_path, kb_id)
+    await rag_eval.run_cite(opts, FakeClient(), async_session_factory, ["strict"], kb_id, 20, 0.59)
+
+    def boom(*args: object, **kwargs: object) -> None:
+        raise AssertionError("render-only must not build a client")
+
+    monkeypatch.setattr("agent.llm_client.LLMClient", boom)
+    args = rag_eval.build_parser().parse_args(
+        ["cite", "--render-only", "--out", str(opts.out), "--fixture", str(opts.fixture)]
+    )
+    assert await rag_eval.cite_command(args) == 0
+    for name in ("cite_strict.md", "cite_summary.md", "answers.csv", "answers.md", "run_meta.json"):
+        assert (opts.out / name).exists()
+
+
+def test_cite_parser_defaults() -> None:
+    args = rag_eval.build_parser().parse_args(["cite"])
+    assert args.max_tokens == 8192 == rag_eval.DEFAULT_CITE_MAX_TOKENS
+    assert args.context_length == 16384 and args.render_only is False
+    assert args.out == rag_eval.DAY24_OUT and args.meta == rag_eval.DAY23_META
+    assert args.runs is None and args.kb is None and args.model is None
+
+
+async def test_cite_unknown_run_and_missing_meta_exit_2(tmp_path: Path) -> None:
+    bad = rag_eval.build_parser().parse_args(["cite", "--runs", "strict,bogus"])
+    assert await rag_eval.cite_command(bad) == 2
+    missing = rag_eval.build_parser().parse_args(["cite", "--meta", str(tmp_path / "none.json")])
+    assert await rag_eval.cite_command(missing) == 2

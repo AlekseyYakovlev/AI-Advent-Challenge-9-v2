@@ -7,6 +7,8 @@ Usage:
   python scripts/rag_eval.py calibrate --kb LABEL=ID [--kb LABEL=ID ...] [--candidate-k 20]
   python scripts/rag_eval.py ablate --kb LABEL=ID [--runs baseline,threshold,...] [--threshold F]
                                     [--max-tokens 4096] [--provider lmstudio|deepseek]
+  python scripts/rag_eval.py cite [--runs strict,strict_off,strict_baseline] [--max-tokens 8192]
+                                  [--render-only]
 
 build-kbs indexes the corpus PDFs once per embedder with identical strategy, chunk size and
 overlap into a scratch database (never app.db). run answers every control-set question without
@@ -15,7 +17,9 @@ writes raw outputs, retrieval.md, answers.md, answers.csv (empty verdict column)
 
 calibrate measures per-embedder score distributions on the frozen calibration set and derives the
 relevance threshold; ablate runs the retrieval-pipeline configurations over the control set through
-the same pipeline as the chat and writes ablation.md, answers.md, answers.csv and run_meta.json.
+the same pipeline as the chat and writes ablation.md, answers.md, answers.csv and run_meta.json;
+cite answers the control questions with the chat's strict-mode gate and citation rules and writes
+eval_out/day24 (cite_*.md, cite_summary.md, answers.csv with a manual verdict column).
 
 Exit codes: 0 ok, 1 run error, 2 preflight failure.
 """
@@ -1493,6 +1497,370 @@ async def run_cite(
     return records
 
 
+CITE_ANSWER_COLUMNS: tuple[str, ...] = (
+    "id", "category", "run", "kind", "answer", "quotes", "sources_present", "quotes_present",
+    "idk_correct", *JUDGE_COLUMNS,
+)
+REFUSAL_KINDS: tuple[str, ...] = ("gated", "model_idk")
+
+
+def _kind_label(raw: dict[str, Any]) -> str:
+    """Kind column text; an empty answer is reported as not received, never as a refusal."""
+    if raw["kind"] == "empty":
+        return f"ответ не получен ({raw.get('finish_reason') or 'пусто'})"
+    return str(raw["kind"])
+
+
+def _sources_present(raw: dict[str, Any]) -> str:
+    """Automatic check: at least one source reached the answer; gated replies have none by design."""
+    if raw["kind"] == "gated":
+        return "—"
+    return "да" if raw.get("sources") else "нет"
+
+
+def _quotes_present(raw: dict[str, Any]) -> str:
+    """Automatic check: the answer carries quotes, with the count by state."""
+    if raw["kind"] in ("gated", "model_idk", "empty", "error"):
+        return "—"
+    counts = raw.get("quote_counts") or {}
+    if not raw.get("quotes"):
+        return "нет"
+    return (
+        f"да (модель: {counts.get('exact', 0)} exact, {counts.get('fuzzy', 0)} fuzzy, "
+        f"{counts.get('unverified', 0)} unverified; авто: {counts.get('auto', 0)})"
+    )
+
+
+def _idk_correct(raw: dict[str, Any]) -> str:
+    """Automatic check of the refusal: right on out-of-corpus questions, false on answerable ones."""
+    refused = raw["kind"] in REFUSAL_KINDS
+    if raw["category"] == "out_of_corpus":
+        return "да" if refused else "нет"
+    return "ложный отказ" if refused else "—"
+
+
+def _quotes_cell(raw: dict[str, Any]) -> str:
+    """Quotes of one record as '[rank] «text» (state[, auto][, rebound])' joined by ' | '."""
+    parts: list[str] = []
+    for quote in raw.get("quotes") or []:
+        flags = [quote["state"]]
+        if quote.get("auto"):
+            flags.append("auto")
+        if quote.get("rebound"):
+            flags.append("rebound")
+        parts.append(f"[{quote.get('rank')}] «{quote['text']}» ({', '.join(flags)})")
+    return " | ".join(parts)
+
+
+def cite_metrics(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Abstention and quote-state counters of one cite run."""
+    ooc = [r for r in rows if r["category"] == "out_of_corpus"]
+    answerable = [r for r in rows if r["category"] != "out_of_corpus"]
+    refused_ooc = [r for r in ooc if r["kind"] in REFUSAL_KINDS]
+    false_refusals = [r for r in answerable if r["kind"] in REFUSAL_KINDS]
+    quote_totals = {"exact": 0, "fuzzy": 0, "unverified": 0, "auto": 0}
+    for raw in rows:
+        for key, value in (raw.get("quote_counts") or {}).items():
+            quote_totals[key] += value
+    tokens = [float(r["completion_tokens"]) for r in rows if r.get("completion_tokens") is not None]
+    return {
+        "total": len(rows),
+        "answers": sum(1 for r in rows if r["kind"] == "answer"),
+        "gated": sum(1 for r in rows if r["kind"] == "gated"),
+        "model_idk": sum(1 for r in rows if r["kind"] == "model_idk"),
+        "empty": sum(1 for r in rows if r["kind"] == "empty"),
+        "error": sum(1 for r in rows if r["kind"] == "error"),
+        "ooc_total": len(ooc),
+        "ooc_idk": len(refused_ooc),
+        "ooc_gated": sum(1 for r in refused_ooc if r["kind"] == "gated"),
+        "ooc_model_idk": sum(1 for r in refused_ooc if r["kind"] == "model_idk"),
+        "ooc_idk_rate": len(refused_ooc) / len(ooc) if ooc else None,
+        "answerable_total": len(answerable),
+        "false_refusals": len(false_refusals),
+        "false_refusal_ids": [r["id"] for r in false_refusals],
+        "false_refusal_rate": len(false_refusals) / len(answerable) if answerable else None,
+        "quotes": quote_totals,
+        "invalid_refs": sum(int(r.get("invalid_refs") or 0) for r in rows),
+        "mean_completion_tokens": _mean_num(tokens),
+    }
+
+
+def render_cite_md(
+    raws: list[dict[str, Any]],
+    run: str,
+    carried: dict[tuple[str, str], dict[str, str]] | None = None,
+) -> str:
+    """Per-question check table of one run; the meaning verdict column is filled by hand."""
+    header = [
+        "id", "category", "kind", "источники есть", "цитаты есть",
+        "смысл совпадает с цитатами (" + "/".join(MEANING_VERDICTS) + ")", "корректное «не знаю»",
+    ]
+    lines = ["| " + " | ".join(header) + " |", "|" + "|".join("---" for _ in header) + "|"]
+    for raw in (r for r in raws if r["run"] == run):
+        manual = (carried or {}).get((raw["id"], run), {}).get("verdict", "")
+        cells = [
+            raw["id"], raw["category"], _kind_label(raw), _sources_present(raw),
+            _quotes_present(raw), manual, _idk_correct(raw),
+        ]
+        lines.append("| " + " | ".join(_cell(str(cell)) for cell in cells) + " |")
+    return "\n".join(lines) + "\n"
+
+
+def _share(count: int, total: int) -> str:
+    """'n/total' counter text."""
+    return f"{count}/{total}"
+
+
+def render_cite_summary_md(raws: list[dict[str, Any]]) -> str:
+    """One summary row per run: abstention counters and quote counts by state."""
+    header = [
+        "run", "ответов", "gated", "model_idk", "пустых", "ошибок", "«не знаю» на вне корпуса",
+        "ложные отказы", "цитаты модели exact", "fuzzy", "unverified", "авто-цитаты",
+        "невалидных ссылок", "ср. токенов ответа",
+    ]
+    lines = ["| " + " | ".join(header) + " |", "|" + "|".join("---" for _ in header) + "|"]
+    for run in CITE_RUNS:
+        rows = [raw for raw in raws if raw["run"] == run]
+        if not rows:
+            continue
+        metrics = cite_metrics(rows)
+        refusals = _share(metrics["false_refusals"], metrics["answerable_total"])
+        if metrics["false_refusal_ids"]:
+            refusals += " (" + ", ".join(metrics["false_refusal_ids"]) + ")"
+        cells = [
+            run,
+            str(metrics["answers"]),
+            str(metrics["gated"]),
+            str(metrics["model_idk"]),
+            str(metrics["empty"]),
+            str(metrics["error"]),
+            _share(metrics["ooc_idk"], metrics["ooc_total"]),
+            refusals,
+            str(metrics["quotes"]["exact"]),
+            str(metrics["quotes"]["fuzzy"]),
+            str(metrics["quotes"]["unverified"]),
+            str(metrics["quotes"]["auto"]),
+            str(metrics["invalid_refs"]),
+            _num(metrics["mean_completion_tokens"]),
+        ]
+        lines.append("| " + " | ".join(_cell(cell) for cell in cells) + " |")
+    return "\n".join(lines) + "\n"
+
+
+def render_cite_answers_csv(rows: list[dict[str, Any]]) -> str:
+    """CSV answers sheet; manual and judge columns are empty unless carried over."""
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, lineterminator="\n")
+    writer.writerow(CITE_ANSWER_COLUMNS)
+    for row in rows:
+        writer.writerow([row.get(col) or "" for col in CITE_ANSWER_COLUMNS])
+    return buffer.getvalue()
+
+
+def render_cite_answers_md(rows: list[dict[str, Any]]) -> str:
+    """Markdown answers sheet (answers truncated); full text lives in the raw files."""
+    columns = CITE_ANSWER_COLUMNS
+    lines = ["| " + " | ".join(columns) + " |", "|" + "|".join("---" for _ in columns) + "|"]
+    for row in rows:
+        cells = {col: str(row.get(col) or "") for col in columns}
+        if len(cells["answer"]) > ANSWER_TABLE_CHARS:
+            cells["answer"] = cells["answer"][:ANSWER_TABLE_CHARS] + "…"
+        if len(cells["quotes"]) > ANSWER_TABLE_CHARS:
+            cells["quotes"] = cells["quotes"][:ANSWER_TABLE_CHARS] + "…"
+        lines.append("| " + " | ".join(_cell(cells[col]) for col in columns) + " |")
+    return "\n".join(lines) + "\n"
+
+
+def _render_cite_outputs(
+    opts: EvalOptions, fixture: dict[str, Any], meta: dict[str, Any], raws: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Render the tables, the answers sheet and run_meta.json from the raw records."""
+    by_key = {(raw["run"], raw["id"]): raw for raw in raws}
+    carried = _load_existing_verdicts(opts.out / "answers.csv")
+    present = [run for run in CITE_RUNS if any(raw["run"] == run for raw in raws)]
+    answer_rows: list[dict[str, Any]] = []
+    for question in fixture["questions"]:
+        for run in present:
+            raw = by_key.get((run, question["id"]))
+            if raw is None:
+                continue
+            answer_rows.append(
+                {
+                    "id": question["id"],
+                    "category": question["category"],
+                    "run": run,
+                    "kind": _kind_label(raw),
+                    "answer": raw["answer"],
+                    "quotes": _quotes_cell(raw),
+                    "sources_present": _sources_present(raw),
+                    "quotes_present": _quotes_present(raw),
+                    "idk_correct": _idk_correct(raw),
+                    **carried.get((question["id"], run), {}),
+                }
+            )
+    for run in present:
+        (opts.out / f"cite_{run}.md").write_text(render_cite_md(raws, run, carried), encoding="utf-8")
+    (opts.out / "cite_summary.md").write_text(render_cite_summary_md(raws), encoding="utf-8")
+    (opts.out / "answers.md").write_text(render_cite_answers_md(answer_rows), encoding="utf-8")
+    (opts.out / "answers.csv").write_text(
+        render_cite_answers_csv(answer_rows), encoding="utf-8", newline=""
+    )
+    meta = {
+        **meta,
+        "runs": present,
+        "kind_counts": {
+            run: {
+                kind: sum(1 for r in raws if r["run"] == run and r["kind"] == kind)
+                for kind in ("answer", "gated", "model_idk", "empty", "error")
+            }
+            for run in present
+        },
+    }
+    _write_json(opts.out / "run_meta.json", meta)
+    return meta
+
+
+def _parse_cite_runs(text: str | None) -> list[str] | None:
+    """Comma list of cite run names in canonical order; None when a name is unknown."""
+    if not text:
+        return list(CITE_RUNS)
+    names = [name.strip() for name in text.split(",") if name.strip()]
+    if not names or any(name not in CITE_RUNS for name in names):
+        return None
+    return [run for run in CITE_RUNS if run in names]
+
+
+def _read_day23_meta(path: Path) -> dict[str, Any] | None:
+    """Day 23 run_meta.json with a winner block, or None."""
+    if not path.exists():
+        return None
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return data if data.get("winner") else None
+
+
+async def _cite_render_only(args: argparse.Namespace) -> int:
+    """Re-render the tables from existing raw files without any model call."""
+    raw_dir = args.out / "raw"
+    if not raw_dir.is_dir() or not any(raw_dir.glob("*.json")):
+        print(f"preflight: no raw files in {raw_dir}")
+        return EXIT_PREFLIGHT
+    fixture = load_fixture(args.fixture, require_frozen=True)
+    meta_path = args.out / "run_meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
+    opts = EvalOptions(kb={}, fixture=args.fixture, out=args.out)
+    _render_cite_outputs(opts, fixture, meta, _load_raw(raw_dir))
+    print(f"day 24 tables re-rendered in {args.out}")
+    return EXIT_OK
+
+
+async def cite_command(args: argparse.Namespace) -> int:
+    """Preflight, then run the frozen control questions through the chat's gate and citation rules."""
+    runs = _parse_cite_runs(args.runs)
+    if runs is None:
+        print(f"preflight: --runs must be a comma list of {', '.join(CITE_RUNS)}")
+        return EXIT_PREFLIGHT
+    if args.render_only:
+        return await _cite_render_only(args)
+    day23 = _read_day23_meta(args.meta)
+    if day23 is None:
+        print(f"preflight: {args.meta} is missing or has no winner block")
+        return EXIT_PREFLIGHT
+    fixture = load_fixture(args.fixture, require_frozen=True)
+    if args.kb:
+        (kb_label, kb_id), = _kb_ids([args.kb]).items()
+    else:
+        kb_label, kb_id = day23["winner"]["kb_label"], int(day23["winner"]["kb_id"])
+    model = args.model or day23.get("model") or DEFAULT_MODEL
+    top_k = args.top_k or int(day23.get("top_k", 5))
+    candidate_k = max(args.candidate_k or int(day23.get("candidate_k", DEFAULT_CANDIDATE_K)), top_k)
+    _use_scratch_storage(args.db)
+
+    from agent.llm_client import LLMClient
+    from agent.rag import resolve_threshold
+    from shared.database import async_session_factory, init_db
+    from shared.models import KbStatus, KnowledgeBase
+
+    await init_db()
+    base_url = args.base_url or os.environ.get("LM_STUDIO_BASE_URL", "http://localhost:1234")
+    if not await _lm_studio_reachable(base_url):
+        return EXIT_PREFLIGHT
+    async with async_session_factory() as session:
+        kb = await session.get(KnowledgeBase, kb_id)
+        if kb is None or kb.status != KbStatus.READY:
+            print(f"preflight: knowledge base {kb_label}={kb_id} does not exist or is not ready")
+            return EXIT_PREFLIGHT
+        threshold, source = resolve_threshold(args.threshold, kb.embedding_model)
+        kb_meta = {
+            "label": kb_label,
+            "kb_id": kb_id,
+            "embedding_model": kb.embedding_model,
+            "strategy": getattr(kb.strategy, "value", kb.strategy),
+            "chunk_size": kb.chunk_size,
+            "chunk_overlap": kb.chunk_overlap,
+        }
+    if threshold == 0.0 and args.threshold is None:
+        print("preflight: no calibrated threshold for this embedder; pass --threshold")
+        return EXIT_PREFLIGHT
+    opts = EvalOptions(
+        kb={kb_label: kb_id},
+        model=model,
+        top_k=top_k,
+        context_length=args.context_length,
+        max_tokens=args.max_tokens,
+        fixture=args.fixture,
+        out=args.out,
+    )
+    await run_cite(
+        opts, LLMClient(base_url, ""), async_session_factory, runs, kb_id, candidate_k, threshold, source
+    )
+    meta = {
+        "fixture": args.fixture.name,
+        "fixture_sha256": fixture_sha256(args.fixture),
+        "provider": "lmstudio",
+        "model": model,
+        "temperature": 0.0,
+        "max_tokens": args.max_tokens,
+        "context_length": args.context_length,
+        "top_k": top_k,
+        "candidate_k": candidate_k,
+        "threshold": threshold,
+        "threshold_source": source,
+        "kb": kb_meta,
+        "winner": day23["winner"],
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    # A partial --runs re-run keeps the records of the other runs already on disk.
+    _render_cite_outputs(opts, fixture, meta, _load_raw(opts.out / "raw"))
+    print(f"day 24 results written to {opts.out} (runs: {', '.join(runs)})")
+    return EXIT_OK
+
+
+def _add_cite_parser(sub: Any) -> None:
+    """Register the cite subcommand."""
+    cite = sub.add_parser("cite", help="check citations and «не знаю» on the control questions")
+    cite.add_argument("--db", type=Path, default=DAY23_DB)
+    cite.add_argument("--meta", type=Path, default=DAY23_META)
+    cite.add_argument("--kb", default=None, metavar="LABEL=ID", help="default: winner of the meta file")
+    cite.add_argument("--model", default=None, help="default: model of the meta file")
+    cite.add_argument("--base-url", default="")
+    cite.add_argument("--top-k", type=int, default=None)
+    cite.add_argument("--candidate-k", type=int, default=None)
+    cite.add_argument("--threshold", type=float, default=None)
+    cite.add_argument("--runs", default=None, help="comma list; default all: " + ",".join(CITE_RUNS))
+    cite.add_argument("--context-length", type=int, default=16384)
+    cite.add_argument(
+        "--max-tokens",
+        type=int,
+        default=DEFAULT_CITE_MAX_TOKENS,
+        help="answer budget; 8192 leaves room for reasoning before the quotes section",
+    )
+    cite.add_argument("--fixture", type=Path, default=DEFAULT_FIXTURE)
+    cite.add_argument("--out", type=Path, default=DAY24_OUT)
+    cite.add_argument(
+        "--render-only", action="store_true", help="re-render tables from raw files, no model calls"
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Command-line interface."""
     parser = argparse.ArgumentParser(description="Offline RAG evaluation runner.")
@@ -1520,6 +1888,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--only-kb", metavar="LABEL", default=None)
     _add_calibrate_parser(sub)
     _add_ablate_parser(sub)
+    _add_cite_parser(sub)
     return parser
 
 
@@ -1531,6 +1900,7 @@ def main() -> int:
         "run": run_command,
         "calibrate": calibrate_command,
         "ablate": ablate_command,
+        "cite": cite_command,
     }
     return asyncio.run(handlers[args.command](args))
 
