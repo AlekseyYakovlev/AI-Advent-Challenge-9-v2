@@ -254,8 +254,8 @@ Plans:
 
 **Wave 1**
 
-- [ ] 16-01-PLAN.md — pure citation rules in `agent/rag_cite.py`: strict instruction, quote-tail parser, normalization, exact + fuzzy verification, re-attach, auto quotes, code-built "не знаю" reply
-- [ ] 16-02-PLAN.md — per-chat `strict` flag (default on): model column, idempotent migration, REST in/out
+- [x] 16-01-PLAN.md — pure citation rules in `agent/rag_cite.py`: strict instruction, quote-tail parser, normalization, exact + fuzzy verification, re-attach, auto quotes, code-built "не знаю" reply
+- [x] 16-02-PLAN.md — per-chat `strict` flag (default on): model column, idempotent migration, REST in/out
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -311,7 +311,7 @@ Plans:
 | 13. Knowledge base indexing (Day 21) | v3.0 | 8/8 | Complete   | 2026-10-03 |
 | 14. First RAG query (Day 22) | v3.0 | 8/8 | Complete    | 2026-10-03 |
 | 15. Reranking and filtering (Day 23) | v3.0 | 13/13 | Complete    | 2026-10-03 |
-| 16. Citations and anti-hallucination (Day 24) | v3.0 | 0/TBD | Not started | - |
+| 16. Citations and anti-hallucination (Day 24) | v3.0 | 2/8 | In Progress|  |
 | 17. Mini-chat with RAG and task memory (Day 25) | v3.0 | 0/TBD | Not started | - |
 
 ## Backlog
