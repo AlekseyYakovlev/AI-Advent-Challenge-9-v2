@@ -83,6 +83,7 @@ async def _set_config(
     top_k: int = 3,
     **flags: Any,
 ) -> None:
+    flags.setdefault("strict", False)
     async with async_session_factory() as session:
         session.add(
             ChatRagConfig(chat_id=chat_id, kb_id=kb_id, mode=mode, top_k=top_k, **flags)
@@ -293,7 +294,7 @@ def test_done_frame_carries_search_trace_v2(monkeypatch: pytest.MonkeyPatch) -> 
         ) as ws:
             frames = _send_and_drain(ws, QUESTION)
         rag = frames[-1]["rag"]
-        assert rag["v"] == 2
+        assert rag["v"] == 3
         assert rag["verdict"] == "ok"
         assert rag["search"]["candidates"]
         assert rag["search"]["query"] == QUESTION
