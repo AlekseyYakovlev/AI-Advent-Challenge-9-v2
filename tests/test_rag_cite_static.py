@@ -1,0 +1,59 @@
+"""Static guards for the citation UI: strict switch, quotes block, chips, answer lines and textContent-only rendering."""
+import re
+from pathlib import Path
+
+import pytest
+
+STATIC_DIR: Path = Path(__file__).resolve().parent.parent / "ui" / "static"
+APP_JS: str = (STATIC_DIR / "app.js").read_text(encoding="utf-8")
+INDEX_HTML: str = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+
+
+def _function_source(name: str) -> str:
+    """Return the source text of a top-level JS function by name."""
+    match = re.search(
+        rf"^(?:async )?function {name}\(.*?(?=^(?:async )?function |\Z)",
+        APP_JS,
+        re.DOTALL | re.MULTILINE,
+    )
+    assert match, f"function {name} not found in app.js"
+    return match.group(0)
+
+
+def _strict_input_tag() -> str:
+    match = re.search(r"<input[^>]*id=\"rag-strict\"[^>]*>", INDEX_HTML)
+    assert match, "rag-strict input not found in index.html"
+    return match.group(0)
+
+
+def test_strict_switch_markup() -> None:
+    assert INDEX_HTML.count('id="rag-strict"') == 1
+    tag = _strict_input_tag()
+    assert 'type="checkbox"' in tag
+    assert 'role="switch"' in tag
+    assert "name=" not in tag
+
+
+def test_strict_switch_is_first_in_switch_list() -> None:
+    assert INDEX_HTML.index('id="rag-strict"') < INDEX_HTML.index('id="rag-stage-lexical"')
+
+
+def test_strict_switch_copy() -> None:
+    assert "Строгий режим" in INDEX_HTML
+    assert "цитаты + «не знаю»" in INDEX_HTML
+
+
+def test_popover_renders_strict_value() -> None:
+    assert "rag-strict" in _function_source("renderRagSearchPopover")
+
+
+def test_strict_switch_does_not_light_search_button() -> None:
+    src = _function_source("renderRagSearchPopover")
+    flags = re.search(r"const flags = \{.*?\};", src, re.DOTALL)
+    assert flags
+    assert "rag-strict" not in flags.group(0)
+
+
+def test_strict_is_saved_through_rag_put() -> None:
+    assert "'strict'" in _function_source("saveChatRag")
+    assert "strict: e.target.checked" in _function_source("bindRagSearchUi")

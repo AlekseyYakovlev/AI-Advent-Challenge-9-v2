@@ -3961,6 +3961,9 @@ function renderRagSearchPopover() {
         'rag-stage-rewrite': cfg.rewrite,
     };
     Object.entries(flags).forEach(([id, value]) => { $(id).checked = Boolean(value); });
+    const strict = $('rag-strict');
+    strict.checked = cfg.strict !== false;
+    strict.setAttribute('aria-checked', String(strict.checked));
     const anyOn = Object.values(flags).some(Boolean);
     ['border-indigo-500', 'text-white'].forEach((c) => btn.classList.toggle(c, anyOn));
     ['border-slate-700', 'text-slate-300'].forEach((c) => btn.classList.toggle(c, !anyOn));
@@ -4007,6 +4010,7 @@ function bindRagSearchUi() {
         saveRagSearchSetting({ threshold: value });
     });
     $('rag-threshold-reset').addEventListener('click', () => saveRagSearchSetting({ threshold: null }));
+    $('rag-strict').addEventListener('change', (e) => saveRagSearchSetting({ strict: e.target.checked }));
     [
         ['rag-stage-lexical', 'lexical'],
         ['rag-stage-llm', 'llm_rerank'],
@@ -4026,7 +4030,7 @@ async function saveChatRag(patch, errorText) {
         kb_id: prev.kb_id,
         top_k: prev.top_k,
     };
-    ['mode', 'kb_id', 'top_k', 'candidate_k', 'threshold', 'lexical', 'llm_rerank', 'hybrid', 'rewrite']
+    ['mode', 'kb_id', 'top_k', 'candidate_k', 'threshold', 'lexical', 'llm_rerank', 'hybrid', 'rewrite', 'strict']
         .forEach((key) => {
             if (key in patch) body[key] = patch[key];
         });
