@@ -225,12 +225,12 @@ async def test_migrate_add_message_rag_sources_is_idempotent(tmp_path) -> None:
     assert legacy_value is None
 
 
-_RANK_COLUMNS = ("candidate_k", "threshold", "lexical", "llm_rerank", "hybrid", "rewrite")
+_RANK_COLUMNS = ("candidate_k", "threshold", "lexical", "llm_rerank", "hybrid", "rewrite", "strict")
 
 
 @pytest.mark.asyncio
 async def test_migrate_add_chatragconfig_rank_columns_is_idempotent(tmp_path) -> None:
-    """The rank-column migration adds six columns once to a Phase 14 chatragconfig table."""
+    """The rank-column migration adds seven columns once to a Phase 14 chatragconfig table."""
     from sqlalchemy.ext.asyncio import create_async_engine
 
     legacy = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'legacy.db'}")
@@ -253,7 +253,7 @@ async def test_migrate_add_chatragconfig_rank_columns_is_idempotent(tmp_path) ->
         row = (
             await conn.execute(
                 text(
-                    "SELECT candidate_k, threshold, lexical, llm_rerank, hybrid, rewrite "
+                    "SELECT candidate_k, threshold, lexical, llm_rerank, hybrid, rewrite, strict "
                     "FROM chatragconfig"
                 )
             )
@@ -262,7 +262,43 @@ async def test_migrate_add_chatragconfig_rank_columns_is_idempotent(tmp_path) ->
 
     for name in _RANK_COLUMNS:
         assert columns.count(name) == 1
-    assert tuple(row) == (20, None, 0, 0, 0, 0)
+    assert tuple(row) == (20, None, 0, 0, 0, 0, 1)
+
+
+@pytest.mark.asyncio
+async def test_migrate_adds_strict_default_on(tmp_path) -> None:
+    """The strict column is added once and existing rows read as on."""
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    legacy = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'strict.db'}")
+    async with legacy.begin() as conn:
+        await conn.execute(
+            text(
+                "CREATE TABLE chatragconfig (chat_id INTEGER PRIMARY KEY, kb_id INTEGER, "
+                "mode VARCHAR, top_k INTEGER, updated_at DATETIME)"
+            )
+        )
+        await conn.execute(
+            text("INSERT INTO chatragconfig (chat_id, mode, top_k) VALUES (1, 'rag', 5)")
+        )
+        await migrate_add_chatragconfig_rank_columns(conn)
+        await migrate_add_chatragconfig_rank_columns(conn)
+    async with legacy.connect() as conn:
+        columns = [
+            row[1] for row in (await conn.execute(text("PRAGMA table_info(chatragconfig)"))).fetchall()
+        ]
+        value = (await conn.execute(text("SELECT strict FROM chatragconfig"))).scalar_one()
+    await legacy.dispose()
+
+    assert columns.count("strict") == 1
+    assert value == 1
+
+
+def test_chat_rag_config_strict_defaults_on() -> None:
+    """A fresh config row has strict mode on."""
+    from shared.models import ChatRagConfig
+
+    assert ChatRagConfig(chat_id=1).strict is True
 
 
 @pytest.mark.asyncio
