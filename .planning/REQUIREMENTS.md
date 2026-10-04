@@ -58,9 +58,9 @@
 
 ### Citations and anti-hallucination (Day 24)
 
-- [ ] **CITE-01**: Every RAG answer contains the answer text, a list of sources (source + section / chunk_id) and quotes — fragments of the retrieved chunks
-- [ ] **CITE-02**: Each quote is verified server-side as a (normalized) substring of the cited chunk and marked verified / unverified; invalid source references are rejected; sources are rendered from chunk metadata, not trusted from model text
-- [ ] **CITE-03**: If the best relevance after filtering is below the threshold, the assistant answers "не знаю" and asks a clarifying question — enforced in code, not only by prompt
+- [x] **CITE-01**: Every RAG answer contains the answer text, a list of sources (source + section / chunk_id) and quotes — fragments of the retrieved chunks
+- [x] **CITE-02**: Each quote is verified server-side as a (normalized) substring of the cited chunk and marked verified / unverified; invalid source references are rejected; sources are rendered from chunk metadata, not trusted from model text
+- [x] **CITE-03**: If the best relevance after filtering is below the threshold, the assistant answers "не знаю" and asks a clarifying question — enforced in code, not only by prompt
 - [x] **CITE-04**: A check on the 10 control questions records per answer: sources present, quotes present, answer meaning matches quotes, and correct "не знаю" on out-of-corpus questions (in a Day 24 report section)
 
 ### Mini-chat with RAG and task memory (Day 25)
@@ -129,9 +129,9 @@
 | RANK-07 | Phase 15 | Complete |
 | RANK-08 | Phase 15 | Complete |
 | RANK-09 | Phase 15 | Complete |
-| CITE-01 | Phase 16 | Pending |
-| CITE-02 | Phase 16 | Pending |
-| CITE-03 | Phase 16 | Pending |
+| CITE-01 | Phase 16 | Complete |
+| CITE-02 | Phase 16 | Complete |
+| CITE-03 | Phase 16 | Complete |
 | CITE-04 | Phase 16 | Complete |
 | RCHAT-01 | Phase 17 | Pending |
 | RCHAT-02 | Phase 17 | Pending |
