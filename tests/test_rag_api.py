@@ -18,6 +18,7 @@ SEARCH_DEFAULTS: dict[str, Any] = {
     "candidate_k": 20, "threshold": None, "calibrated_threshold": None,
     "effective_threshold": 0.0, "threshold_source": "none",
     "lexical": False, "llm_rerank": False, "hybrid": False, "rewrite": False,
+    "strict": True,
 }
 
 
@@ -54,6 +55,30 @@ async def test_config_defaults(authenticated_client: AsyncClient) -> None:
     }
 
 
+async def test_config_default_strict_on(authenticated_client: AsyncClient) -> None:
+    chat_id = await _chat(authenticated_client)
+    kb_id = await _kb(authenticated_client.seeded_user_id)
+    url = f"/api/v1/chats/{chat_id}/rag"
+    assert (await authenticated_client.get(url)).json()["strict"] is True
+    put = await authenticated_client.put(url, json={"mode": "rag", "kb_id": kb_id, "top_k": 5})
+    assert put.status_code == 200
+    assert put.json()["strict"] is True
+
+
+async def test_put_strict_roundtrip_and_partial_update(authenticated_client: AsyncClient) -> None:
+    chat_id = await _chat(authenticated_client)
+    kb_id = await _kb(authenticated_client.seeded_user_id)
+    url = f"/api/v1/chats/{chat_id}/rag"
+    base = {"mode": "rag", "kb_id": kb_id, "top_k": 5}
+    off = await authenticated_client.put(url, json={**base, "strict": False})
+    assert off.json()["strict"] is False
+    omitted = await authenticated_client.put(url, json=base)
+    assert omitted.json()["strict"] is False
+    assert (await authenticated_client.get(url)).json()["strict"] is False
+    on = await authenticated_client.put(url, json={**base, "strict": True})
+    assert on.json()["strict"] is True
+
+
 async def test_config_put_roundtrip(authenticated_client: AsyncClient) -> None:
     chat_id = await _chat(authenticated_client)
     kb_id = await _kb(authenticated_client.seeded_user_id)
@@ -77,6 +102,8 @@ async def test_config_put_roundtrip(authenticated_client: AsyncClient) -> None:
         {"mode": "rag", "threshold": -0.1},
         {"mode": "rag", "threshold": 1.5},
         {"mode": "rag", "lexical": "yes-string-not-bool"},
+        {"mode": "rag", "strict": "yes"},
+        {"mode": "rag", "strict": 1},
     ],
 )
 async def test_config_validation_422(authenticated_client: AsyncClient, body: dict[str, Any]) -> None:
