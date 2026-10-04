@@ -39,9 +39,11 @@ Full details: [milestones/v2.0-ROADMAP.md](milestones/v2.0-ROADMAP.md)
 - [x] **Phase 10: Modals close only via x button (Day 21)** — carried over from v2.0; a modal closes only on its 'x'; a backdrop click no longer closes it
  (completed 2026-10-02)
 
-- [x] **Phase 11: Edit and delete long-term memory entries via UI (Day 21)** — carried over from v2.0; "Редактировать" / "Удалить" buttons per long-term memory entry (completed 2026-10-03)
+- [x] **Phase 11: Edit and delete long-term memory entries via UI (Day 21)** — carried over from v2.0; "Редактировать" / "Удалить" buttons per long-term memory entry
+ (completed 2026-10-03)
 - [x] **Phase 13: Knowledge base indexing (Day 21)** — upload PDF/TXT/MD, chunk (fixed or structural), embed via LM Studio, persist FAISS + SQLite, background indexing with live progress (completed 2026-10-03)
-- [x] **Phase 14: First RAG query (Day 22)** — attach a KB to a chat, toggle RAG, retrieve top-K chunks into the LLM request, show sources, frozen 10-question eval and Day22 report (completed 2026-10-03)
+- [x] **Phase 14: First RAG query (Day 22)** — attach a KB to a chat, toggle RAG, retrieve top-K chunks into the LLM request, show sources, frozen 10-question eval and Day22 report
+ (completed 2026-10-03)
 - [x] **Phase 15: Reranking and filtering (Day 23)** — two-stage retrieval with threshold, lexical/LLM rerank, hybrid FTS5, query rewrite, "Детали поиска", Day23 report (completed 2026-10-03)
 - [x] **Phase 16: Citations and anti-hallucination (Day 24)** — sources and verified quotes on every answer, code-enforced "не знаю" with a clarifying question (completed 2026-10-04)
 - [ ] **Phase 17: Mini-chat with RAG and task memory (Day 25)** — the existing chat as RAG mini-chat with per-chat task memory, two long scripted scenarios, Day25 report
@@ -410,6 +412,56 @@ Plans:
 
 **Goal:** In Settings → MCP серверы, «Отключить» does not stick: on the next chat request the MCP servers are connected again automatically, so their tool schemas (~11k tokens for filesystem 17 + GitLab 20 + builtin) are still sent to the LLM. This eats the context window and starves RAG fragments (see 14-UAT.md gap, debug session `.planning/debug/rag-k15-context-full.md`). Investigate where the agent re-connects servers (ws.py tool collection / MCP manager) and make the disabled state persistent and respected; consider also excluding tool schemas from RAG turns or showing their tokens in the usage meter.
 **Refs:** .planning/debug/rag-k15-context-full.md; 14-UAT.md test 3
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /bm:review-backlog when ready)
+
+### Phase 999.13: Citations: trivial quotes reach exact status (Phase 16 review WR-01) (BACKLOG)
+
+**Goal:** quotes of 8 or more characters (e.g. «в базе знаний») get `exact` status and can rebind to any fragment, which makes `answer_supported` true and hides the «не подтверждён» warning (`agent/rag_cite.py:179-191`). Require a minimum total quote length (or distinctiveness) for `exact`; update the 16-01 tests that pin the current behaviour.
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /bm:review-backlog when ready)
+
+### Phase 999.14: Citations: auto-picked quotes shown as verified (Phase 16 review WR-02) (BACKLOG)
+
+**Goal:** auto quotes are stored as `exact` and rendered with the green «✓ подтверждена» chip although they are picked by word overlap and confirm nothing (`agent/rag_cite.py:416`, `ui/static/app.js:4296`). Give them their own state or a neutral chip; tests from 16-03/16-06 probably pin the current state.
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /bm:review-backlog when ready)
+
+### Phase 999.15: Citations: quote lines past MAX_QUOTE_LINES leak into the answer (Phase 16 review WR-03) (BACKLOG)
+
+**Goal:** past `MAX_QUOTE_LINES` (10) the extra quote lines stay in the visible answer, and `body_refs` counts their `[N]` markers, inflating `valid` and possibly setting `supported` falsely (`agent/rag_cite.py:250-265`). Related: an answer made only of quote lines keeps them in the visible text.
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /bm:review-backlog when ready)
+
+### Phase 999.16: Strict mode: gated-turn error handling and migration default (Phase 16 review WR-04) (BACKLOG)
+
+**Goal:** `_complete_gated_turn` (`agent/ws.py:700-863`) has no error/rollback handling and sits outside the stream try/finally and `active_streams`. Also: the migration default `strict=1` (`shared/database.py:150`) silently turns every existing RAG chat strict (documented D-15 decision; revisit if it surprises users).
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /bm:review-backlog when ready)
+
+### Phase 999.17: Phase 16 review info items IN-01..IN-03 (BACKLOG)
+
+**Goal:** IN-01 `assert` used for type narrowing (`agent/rag_cite.py:298`); IN-02 bare empty «Цитаты:» heading stays in stored content when a «не знаю» reply ends with it (`parse_tail`, `agent/rag_cite.py:229-268`); IN-03 new `build_rag_payload` quote parameters are unused because `finalize_rag_turn` merges `payload_fields()` by hand (`agent/rag.py:268-299`, `agent/rag_turn.py:266-294`). Full report: `.planning/phases/16-citations-and-anti-hallucination-day-24/16-REVIEW.md`.
 **Requirements:** TBD
 **Plans:** 0 plans
 
