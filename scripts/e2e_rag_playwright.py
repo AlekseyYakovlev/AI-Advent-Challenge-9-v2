@@ -9,6 +9,7 @@ PDF in C:\\Projects\\RAG, and prints one PASS/FAIL line per check. The default p
 running app are never touched and only processes started by this script are ever stopped.
 
 Reuses the copy/seed/login/KB-creation/teardown building blocks of e2e_kb_playwright.py.
+The chat runs with strict mode off, so the checks cover the plain Day 22 answer behaviour.
 
 Exit codes: 0 all checks passed, 1 a check failed, 2 blocked by preflight (ports busy, LM Studio,
 a chat model or the PDF missing), 4 Playwright not installed.
@@ -132,6 +133,22 @@ async def tree_of(page: Any, chat_id: int) -> list[dict[str, Any]]:
     return await resp.json()
 
 
+async def set_strict(page: Any, chat_id: int, on: bool) -> bool:
+    """Set the chat's strict mode through the REST config (mode, KB and top_k are sent back unchanged)."""
+    url = f"{AGENT_URL}/api/v1/chats/{chat_id}/rag"
+    current = await (await page.request.get(url)).json()
+    body = {
+        "mode": current["mode"],
+        "kb_id": current.get("kb_id"),
+        "top_k": current["top_k"],
+        "strict": on,
+    }
+    resp = await page.request.put(url, data=body)
+    if not resp.ok:
+        return False
+    return (await resp.json()).get("strict") is on
+
+
 async def delete_kb_via_panel(page: Any, name: str) -> None:
     """Delete a KB with the two-step confirm in the KB panel."""
     if await page.locator("#kb-panel-body").is_hidden():
@@ -206,6 +223,9 @@ async def scenarios(page: Any, creds: dict[str, str]) -> None:
             await page.input_value("#rag-k-input"),
             (await page.locator("#rag-badge").inner_text()).strip(),
         )
+
+    strict_off = await set_strict(page, await chat_id_of(page), False)
+    report("3a strict mode off for the Day 22 scenarios", strict_off, f"strict_off={strict_off}")
 
     first = await rag_state()
     await reopen_chat(page)

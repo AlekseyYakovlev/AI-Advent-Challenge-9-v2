@@ -10,6 +10,7 @@ running app are never touched and only processes started by this script are ever
 
 Reuses the copy/seed/login/teardown building blocks of e2e_kb_playwright.py and the chat helpers
 of e2e_rag_playwright.py.
+The chat runs with strict mode off, so the checks cover the Day 23 retrieval behaviour.
 
 Exit codes: 0 all checks passed, 1 a check failed, 2 blocked by preflight (ports busy, LM Studio,
 a chat model or the PDF missing), 4 Playwright not installed.
@@ -151,6 +152,10 @@ async def scenarios(page: Any, creds: dict[str, str]) -> None:
     report("S1 «Поиск ⚙» is hidden with RAG off and shown with RAG on",
            hidden_off and visible_on and label == "Поиск ⚙",
            f"hidden_off={hidden_off} visible_on={visible_on} label={label!r}; model={rag.chat_model['id']}")
+
+    strict_off = await rag.set_strict(page, chat_id, False)
+    await reopen(page)
+    report("setup: strict mode off for the Day 23 scenarios", strict_off, f"strict_off={strict_off}")
 
     # S2
     cfg = await rag_cfg(page, chat_id)
