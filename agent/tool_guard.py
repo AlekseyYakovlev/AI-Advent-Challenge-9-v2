@@ -32,16 +32,22 @@ TOOL_ERROR_REMINDER = (
     "different tool or approach, and continue the task. Do not give up after one error."
 )
 
+# A reply this long is treated as a real final answer, so an error nudge would only
+# append a second answer after it.
+TOOL_ERROR_NUDGE_MAX_CHARS = 300
+
 MULTI_STEP_TOOL_HINT = (
     "Finish ALL steps of a multi-step request by calling tools one after another before "
     "the final answer. Filesystem tools act on the LOCAL disk; GitLab tools act on the REMOTE "
-    "repository. To find the local folder for a GitLab task, first call list_projects for the "
-    "project path (group/name): the matching local folder is named like its last segment and "
-    "its <folder>/.git/config remote URL points to that project. Never explore folders whose "
-    "remote is another project. Remote file paths are relative to the repository root, never "
-    "local folder names. To commit local changes, read the local files, then call commit_files "
-    "(branch, commit message, actions), then create_merge_request. When a tool returns an "
-    "error, read it and try another approach."
+    "repository. To find the local folder for a GitLab task, call list_projects for the "
+    "project path (group/name): the local folder is named like its last segment and its "
+    "<folder>/.git/config remote URL points to that project. Never explore folders of other "
+    "projects. Call list_allowed_directories and get_file_info at most once per turn and "
+    "reuse the results. Remote file paths are relative to the repository root. To commit local "
+    "changes, read the local files, then call commit_files (branch, message, actions; action "
+    "\"create\" for files missing on the target branch, \"update\" only for existing ones; "
+    "if it reports a missing file, retry with \"create\"), then create_merge_request. "
+    "When a tool returns an error, read it and try another approach."
 )
 
 _CYRILLIC_RE = re.compile(r"[А-Яа-яЁё]")
@@ -339,6 +345,15 @@ def build_tool_fallback_summary(results: list[dict[str, Any]], user_text: str) -
         body = result.get("result_text") or result.get("content") or ""
         lines.append(f"- {label}: {status} — {_preview(str(body))}")
     return "\n".join(lines)
+
+
+def should_nudge_after_tool_error(text: str, last_results: list[dict[str, Any]]) -> bool:
+    """Return True when a fail-only MCP round got no substantial answer and merits a nudge."""
+    failed = any(
+        not r["ok"] and r.get("mcp") is not None and not r.get("blocked") for r in last_results
+    )
+    succeeded = any(r["ok"] for r in last_results)
+    return failed and not succeeded and len(text.strip()) < TOOL_ERROR_NUDGE_MAX_CHARS
 
 
 def build_llm_failure_note(detail: str, user_text: str) -> str:

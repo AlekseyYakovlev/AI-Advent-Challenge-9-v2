@@ -22,7 +22,29 @@ from agent.tool_guard import (
     strip_tool_use_rule,
     user_asked_to_merge,
     build_llm_failure_note,
+    should_nudge_after_tool_error,
+    TOOL_ERROR_NUDGE_MAX_CHARS,
 )
+
+_MCP_FAIL = {"ok": False, "mcp": {"tool": "t"}}
+_MCP_OK = {"ok": True, "mcp": {"tool": "t"}}
+
+
+@pytest.mark.parametrize(
+    ("text", "results", "expected"),
+    [
+        ("The tool failed.", [_MCP_FAIL], True),
+        ("", [_MCP_FAIL], True),
+        ("x" * TOOL_ERROR_NUDGE_MAX_CHARS, [_MCP_FAIL], False),
+        ("Short.", [_MCP_FAIL, _MCP_OK], False),
+        ("Short.", [{"ok": False, "mcp": {"tool": "t"}, "blocked": True}], False),
+        ("Short.", [{"ok": False, "mcp": None}], False),
+    ],
+)
+def test_should_nudge_after_tool_error(text: str, results: list[dict], expected: bool) -> None:
+    """The error nudge fires only for short replies after a fail-only MCP round."""
+    assert should_nudge_after_tool_error(text, results) is expected
+
 from agent.ws import _llm_error_detail
 
 
@@ -388,7 +410,7 @@ def test_reminders_and_hint_are_nonempty() -> None:
     """The new prompt fragments exist and the hint stays short for a small local model."""
     assert ACTION_ANNOUNCE_REMINDER
     assert TOOL_ERROR_REMINDER
-    assert 0 < len(MULTI_STEP_TOOL_HINT.split()) <= 130
+    assert 0 < len(MULTI_STEP_TOOL_HINT.split()) <= 170  # grew: discovery and commit_files create/update rules
 
 
 _RESULTS = [

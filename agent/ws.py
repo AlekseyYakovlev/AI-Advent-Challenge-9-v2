@@ -56,6 +56,7 @@ from agent.tool_guard import (
     build_tool_fallback_summary,
     looks_like_action_announcement,
     looks_like_action_claim,
+    should_nudge_after_tool_error,
     strip_tool_use_rule,
 )
 from agent.tools import TOOL_REGISTRY, build_tool_schemas, dispatch_tool_calls
@@ -526,11 +527,8 @@ def _pick_nudge(acc: _ToolRoundsResult, text: str, last_results: list[dict[str, 
     if not acc.announce_nudge_used and looks_like_action_announcement(text):
         acc.announce_nudge_used = True
         return "announce"
-    mcp_failed = any(
-        not r["ok"] and r.get("mcp") is not None and not r.get("blocked") for r in last_results
-    )
     # Only MCP failures: native task-tool errors have their own transition re-prompt.
-    if not acc.error_nudge_used and mcp_failed:
+    if not acc.error_nudge_used and should_nudge_after_tool_error(text, last_results):
         acc.error_nudge_used = True
         return "error"
     return None

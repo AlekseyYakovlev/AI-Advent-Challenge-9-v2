@@ -21,6 +21,7 @@ from tests.test_memory_ws import (
     _send_and_drain,
     _tool_calls_response,
 )
+from tests.test_tool_rounds_ws import _stream_queue
 
 FIXTURE = str(Path(__file__).parent / "fixtures" / "mcp_stdio_server.py")
 COMPLETIONS_URL = f"{BASE_URL}/v1/chat/completions"
@@ -205,3 +206,55 @@ def test_disconnected_server_adds_no_tools_and_unknown_call_is_handled(
     assert len(tool_frames) == 1 and tool_frames[0]["ok"] is False
     assert "unknown tool" in tool_frames[0]["result"]
     assert [f["type"] for f in frames].count("done") == 1
+
+
+def _streaming_calls(route: respx.Route) -> int:
+    """Count streaming LLM requests; the facts-extraction call is non-streaming."""
+    return sum(
+        1 for call in route.calls if json.loads(call.request.content).get("stream") is True
+    )
+
+
+@respx.mock
+def test_partly_successful_round_with_short_text_gets_no_nudge() -> None:
+    """A round with one failure and one success is not nudged even if the answer is short."""
+    route = respx.post(COMPLETIONS_URL).mock(
+        side_effect=_stream_queue(
+            [
+                _tool_calls_response(
+                    [
+                        ("c1", "mcp__fixture__fail", "{}"),
+                        ("c2", "mcp__fixture__echo", json.dumps({"text": "hi"})),
+                    ],
+                ),
+                _plain_content_response("Short."),
+            ],
+        ),
+    )
+    with TestClient(app) as client:
+        chat_id = _setup(client)
+        frames = _run_turn(client, chat_id)
+
+    assert _streaming_calls(route) == 2
+    assert [f["type"] for f in frames].count("done") == 1
+
+
+@respx.mock
+def test_fail_only_round_with_long_final_answer_gets_no_nudge() -> None:
+    """A substantial answer after a fail-only round is final: no second nudged answer."""
+    long_answer = "The tool failed, here is a full explanation. " * 10
+    route = respx.post(COMPLETIONS_URL).mock(
+        side_effect=_stream_queue(
+            [
+                _tool_calls_response([("c1", "mcp__fixture__fail", "{}")]),
+                _plain_content_response(long_answer),
+            ],
+        ),
+    )
+    with TestClient(app) as client:
+        chat_id = _setup(client)
+        frames = _run_turn(client, chat_id)
+
+    assert _streaming_calls(route) == 2
+    tokens = "".join(f.get("content", "") for f in frames if f["type"] == "token")
+    assert tokens.count("full explanation") == 10
