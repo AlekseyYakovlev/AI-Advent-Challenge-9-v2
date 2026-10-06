@@ -17,7 +17,7 @@ from agent import scheduler_ops
 from agent.main import app
 from agent.schemas import CancelScheduledTaskArgs, ListScheduledTasksArgs, ScheduleTaskArgs
 from agent.state import current_chat_model
-from agent.tool_guard import user_asked_to_cancel
+from agent.tool_guard import message_names_task, user_asked_to_cancel, user_asked_to_schedule
 from agent.tools import TOOL_REGISTRY, build_tool_schemas, dispatch_tool_calls
 from agent.ws import SCHEDULER_TOOL_NAMES
 from shared.config import settings
@@ -78,6 +78,65 @@ def test_user_asked_to_cancel_true(text: str) -> None:
 def test_user_asked_to_cancel_false(text: str) -> None:
     """Negations, unrelated words and stems that merely contain a cancel verb are rejected."""
     assert user_asked_to_cancel(text) is False
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "напомни через 5 минут проверить почту",
+        "запланируй отчёт каждый день в 9:00",
+        "каждые 10 минут проверяй сервер",
+        "run p in a minute",
+        "remind me tomorrow at 9",
+        "schedule a daily report",
+        "every hour check the build",
+        "Можешь напомнить через час?",
+    ],
+)
+def test_user_asked_to_schedule_true(text: str) -> None:
+    """Scheduling requests in RU/EN, including polite questions, are recognised."""
+    assert user_asked_to_schedule(text) is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",
+        "покажи мои задания",
+        "не напоминай мне",
+        "don't schedule anything",
+        "How do I schedule a job?",
+        "прочитай файл",
+    ],
+)
+def test_user_asked_to_schedule_false(text: str) -> None:
+    """Negations, questions about scheduling and unrelated text are rejected."""
+    assert user_asked_to_schedule(text) is False
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["How do I cancel a job?", "should I stop the 5 min job?", "а если удалить задание?"],
+)
+def test_user_asked_to_cancel_rejects_questions(text: str) -> None:
+    """Questions and hypotheticals do not authorise a cancel."""
+    assert user_asked_to_cancel(text) is False
+
+
+@pytest.mark.parametrize(
+    ("text", "task_id", "title", "expected"),
+    [
+        ("отмени задание 3", 3, "job", True),
+        ("отмени задание 13", 3, "job", False),
+        ("cancel the report job", 7, "Daily report", True),
+        ("отмени отчёт", 7, "Отчет по продажам", True),
+        ("отмени задание", 7, "Задание", False),
+        ("cancel job 5", 7, "Weather check", False),
+    ],
+)
+def test_message_names_task(text: str, task_id: int, title: str, expected: bool) -> None:
+    """A cancel is bound to the job id or a significant title word the user named."""
+    assert message_names_task(text, task_id, title) is expected
 
 
 def test_schedule_args_once_delay_valid() -> None:
@@ -241,7 +300,7 @@ async def test_schedule_task_once_creates_job(
 ) -> None:
     """A once job via delay_seconds is stored for the caller with the chat model and origin."""
     user_id = authenticated_client.seeded_user_id
-    chat_id = await _seed_chat(user_id)
+    chat_id = await _seed_chat(user_id, "напомни через минуту")
     before = datetime.now(timezone.utc)
 
     result = await _dispatch(
@@ -270,7 +329,7 @@ async def test_schedule_task_interval_and_cron(
 ) -> None:
     """Interval and cron jobs are accepted with their schedule fields."""
     user_id = authenticated_client.seeded_user_id
-    chat_id = await _seed_chat(user_id)
+    chat_id = await _seed_chat(user_id, "напомни через минуту")
 
     interval = await _dispatch(
         user_id,
@@ -300,7 +359,7 @@ async def test_schedule_task_without_model_is_model_unknown(
 ) -> None:
     """Without a chat model in context no job is created."""
     user_id = authenticated_client.seeded_user_id
-    chat_id = await _seed_chat(user_id)
+    chat_id = await _seed_chat(user_id, "напомни через минуту")
 
     result = await _dispatch(
         user_id,
@@ -320,7 +379,7 @@ async def test_schedule_task_invalid_schedule(
 ) -> None:
     """A 6-field cron and a too-short interval come back as invalid_schedule."""
     user_id = authenticated_client.seeded_user_id
-    chat_id = await _seed_chat(user_id)
+    chat_id = await _seed_chat(user_id, "напомни через минуту")
 
     bad_cron = await _dispatch(
         user_id,
@@ -357,7 +416,7 @@ async def test_schedule_task_handler_reports_out_of_range_as_invalid_schedule(
 ) -> None:
     """The handler maps range errors to ok=False invalid_schedule instead of raising."""
     user_id = authenticated_client.seeded_user_id
-    chat_id = await _seed_chat(user_id)
+    chat_id = await _seed_chat(user_id, "напомни через минуту")
     async with async_session_factory() as session:
         result = await TOOL_REGISTRY["schedule_task"](
             session, user_id, chat_id, {"title": "t", "prompt": "p", **args}
@@ -373,7 +432,7 @@ async def test_dispatch_schedule_task_out_of_range_is_not_ok_and_does_not_raise(
 ) -> None:
     """Through the dispatcher an out-of-range call is reported as ok=False without raising."""
     user_id = authenticated_client.seeded_user_id
-    chat_id = await _seed_chat(user_id)
+    chat_id = await _seed_chat(user_id, "напомни через минуту")
 
     result = await _dispatch(
         user_id, chat_id, "schedule_task", {"title": "t", "prompt": "p", **args}
@@ -388,7 +447,7 @@ async def test_dispatch_turns_handler_exception_into_failed_result(
 ) -> None:
     """An unexpected handler exception fails its own call only, never the surrounding turn."""
     user_id = authenticated_client.seeded_user_id
-    chat_id = await _seed_chat(user_id)
+    chat_id = await _seed_chat(user_id, "напомни через минуту")
     calls: list[str] = []
 
     async def _boom(_session: Any, _user_id: int, _chat_id: int, _args: dict[str, Any]) -> dict:
@@ -416,7 +475,7 @@ async def test_dispatch_propagates_cancellation(
 ) -> None:
     """CancelledError is not swallowed by the handler guard."""
     user_id = authenticated_client.seeded_user_id
-    chat_id = await _seed_chat(user_id)
+    chat_id = await _seed_chat(user_id, "напомни через минуту")
 
     async def _cancelled(*_args: Any) -> dict:
         raise asyncio.CancelledError()
@@ -435,7 +494,7 @@ async def test_schedule_task_cap_reports_too_many(
     """Reaching the per-user cap is reported as too_many."""
     monkeypatch.setattr(settings, "SCHEDULER_MAX_ACTIVE_TASKS_PER_USER", 1)
     user_id = authenticated_client.seeded_user_id
-    chat_id = await _seed_chat(user_id)
+    chat_id = await _seed_chat(user_id, "напомни через минуту")
     await _make_job(user_id)
 
     result = await _dispatch(
@@ -455,7 +514,7 @@ async def test_list_scheduled_tasks_only_live_jobs_of_caller(
     """The list shows the caller's active/paused jobs only, with last run status."""
     user_id = authenticated_client.seeded_user_id
     other_id = second_authenticated_client.seeded_user_id
-    chat_id = await _seed_chat(user_id)
+    chat_id = await _seed_chat(user_id, "напомни через минуту")
     active = await _make_job(user_id, title="active")
     paused = await _make_job(user_id, title="paused")
     cancelled = await _make_job(user_id, title="cancelled")
@@ -500,8 +559,8 @@ async def test_cancel_blocked_when_latest_message_has_no_cancel_intent(
 async def test_cancel_blocked_when_flag_is_false(authenticated_client: AsyncClient) -> None:
     """Cancel intent in the message is not enough without the explicit flag."""
     user_id = authenticated_client.seeded_user_id
-    chat_id = await _seed_chat(user_id, "отмени задание")
     job = await _make_job(user_id)
+    chat_id = await _seed_chat(user_id, f"отмени задание {job.id}")
 
     result = await _dispatch(
         user_id,
@@ -519,8 +578,8 @@ async def test_cancel_blocked_when_leaf_is_not_a_user_message(
 ) -> None:
     """An assistant leaf carrying cancel words does not authorise a cancel."""
     user_id = authenticated_client.seeded_user_id
-    chat_id = await _seed_chat(user_id, "отмени задание", role="assistant")
     job = await _make_job(user_id)
+    chat_id = await _seed_chat(user_id, f"отмени задание {job.id}", role="assistant")
 
     result = await _dispatch(
         user_id,
@@ -535,8 +594,8 @@ async def test_cancel_blocked_when_leaf_is_not_a_user_message(
 async def test_cancel_succeeds_when_user_asked(authenticated_client: AsyncClient) -> None:
     """A cancel request plus the flag soft-cancels the job and keeps its runs."""
     user_id = authenticated_client.seeded_user_id
-    chat_id = await _seed_chat(user_id, "отмени задание")
     job = await _make_job(user_id)
+    chat_id = await _seed_chat(user_id, f"отмени задание {job.id}")
     await _add_run(job.id, user_id)
 
     result = await _dispatch(
@@ -559,9 +618,9 @@ async def test_cancel_foreign_missing_and_finished_jobs(
     """Foreign and missing ids are not_found; an already cancelled job is a conflict."""
     user_id = authenticated_client.seeded_user_id
     other_id = second_authenticated_client.seeded_user_id
-    chat_id = await _seed_chat(user_id, "cancel job")
     foreign = await _make_job(other_id)
     mine = await _make_job(user_id)
+    chat_id = await _seed_chat(user_id, f"cancel jobs {foreign.id}, {mine.id}, 9999")
 
     foreign_result = await _dispatch(
         user_id,
@@ -608,8 +667,8 @@ async def test_cancel_uses_only_own_chat(
     """Another user's chat cannot authorise a cancel."""
     user_id = authenticated_client.seeded_user_id
     other_id = second_authenticated_client.seeded_user_id
-    foreign_chat = await _seed_chat(other_id, "cancel job")
     job = await _make_job(user_id)
+    foreign_chat = await _seed_chat(other_id, f"cancel job {job.id}")
 
     result = await _dispatch(
         user_id,
@@ -626,7 +685,7 @@ async def test_chat_delete_keeps_job_with_null_origin(
 ) -> None:
     """Deleting the origin chat leaves the job in place with origin_chat_id NULL."""
     user_id = authenticated_client.seeded_user_id
-    chat_id = await _seed_chat(user_id)
+    chat_id = await _seed_chat(user_id, "напомни через минуту")
     result = await _dispatch(
         user_id,
         chat_id,
@@ -764,7 +823,7 @@ def test_ws_turn_with_out_of_range_schedule_task_call_keeps_the_socket_alive() -
         with client.websocket_connect(
             f"/ws/chat/{chat_id}", headers={"Origin": WS_ORIGIN}
         ) as ws:
-            ws.send_json({"content": "run p at the dawn of time", "model": WS_MODEL})
+            ws.send_json({"content": "run p in a minute", "model": WS_MODEL})
             first = _read_turn(ws)
             ws.send_json({"content": "thanks", "model": WS_MODEL})
             second = _read_turn(ws)
@@ -776,3 +835,79 @@ def test_ws_turn_with_out_of_range_schedule_task_call_keeps_the_socket_alive() -
         assert second[-1]["type"] == "done"
         assert client.portal.call(_all_jobs) == []
 
+
+
+@pytest.mark.parametrize("leaf", [None, "покажи задания"])
+async def test_schedule_blocked_without_user_intent(
+    authenticated_client: AsyncClient, chat_model: str, leaf: str | None
+) -> None:
+    """No leaf or a leaf without scheduling intent creates nothing."""
+    user_id = authenticated_client.seeded_user_id
+    chat_id = await _seed_chat(user_id, leaf)
+
+    result = await _dispatch(
+        user_id,
+        chat_id,
+        "schedule_task",
+        {"schedule_type": "once", "delay_seconds": 60, "title": "t", "prompt": "p"},
+    )
+
+    assert result["ok"] is False
+    assert json.loads(result["content"])["code"] == "schedule_not_requested"
+    assert await _all_jobs() == []
+
+
+async def test_schedule_blocked_when_leaf_is_assistant_message(
+    authenticated_client: AsyncClient, chat_model: str
+) -> None:
+    """An assistant leaf carrying scheduling words does not authorise a job."""
+    user_id = authenticated_client.seeded_user_id
+    chat_id = await _seed_chat(user_id, "напомни через минуту", role="assistant")
+
+    result = await _dispatch(
+        user_id,
+        chat_id,
+        "schedule_task",
+        {"schedule_type": "once", "delay_seconds": 60, "title": "t", "prompt": "p"},
+    )
+
+    assert json.loads(result["content"])["code"] == "schedule_not_requested"
+    assert await _all_jobs() == []
+
+
+async def test_cancel_blocked_when_message_names_a_different_job(
+    authenticated_client: AsyncClient,
+) -> None:
+    """Naming another job id does not authorise cancelling this one."""
+    user_id = authenticated_client.seeded_user_id
+    job = await _make_job(user_id)
+    chat_id = await _seed_chat(user_id, f"отмени задание {job.id + 100}")
+
+    result = await _dispatch(
+        user_id,
+        chat_id,
+        "cancel_scheduled_task",
+        {"task_id": job.id, "user_requested_cancellation": True},
+    )
+
+    assert json.loads(result["content"])["code"] == "cancel_not_requested"
+    assert (await _job(job.id)).status == ScheduledTaskStatus.ACTIVE
+
+
+async def test_cancel_succeeds_when_message_names_a_title_word(
+    authenticated_client: AsyncClient,
+) -> None:
+    """A significant title word in the message binds the cancel to that job."""
+    user_id = authenticated_client.seeded_user_id
+    job = await _make_job(user_id, title="Weather check")
+    chat_id = await _seed_chat(user_id, "please cancel the weather job")
+
+    result = await _dispatch(
+        user_id,
+        chat_id,
+        "cancel_scheduled_task",
+        {"task_id": job.id, "user_requested_cancellation": True},
+    )
+
+    assert result["ok"] is True
+    assert (await _job(job.id)).status == ScheduledTaskStatus.CANCELLED

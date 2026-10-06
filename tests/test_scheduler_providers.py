@@ -19,6 +19,7 @@ from shared.config import settings
 from shared.database import async_session_factory
 from shared.models import (
     Chat,
+    Message,
     RunStatus,
     ScheduledTask,
     ScheduledTaskStatus,
@@ -143,6 +144,13 @@ async def test_schedule_task_tool_inherits_chat_provider(
         session.add(chat)
         await session.commit()
         await session.refresh(chat)
+        message = Message(chat_id=chat.id, role="user", content="напомни через минуту")
+        session.add(message)
+        await session.commit()
+        await session.refresh(message)
+        chat.current_leaf_message_id = message.id
+        session.add(chat)
+        await session.commit()
         chat_id = chat.id
     call = {
         "id": "c1",
