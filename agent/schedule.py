@@ -58,6 +58,9 @@ def as_aware_utc(value: datetime) -> datetime:
     return value.astimezone(timezone.utc)
 
 
+_CRON_MAX_FOLD_STEPS = 1000
+
+
 def _to_local_naive(value_utc: datetime, tz: tzinfo | None) -> datetime:
     """Convert a UTC instant to naive wall-clock time in tz (OS local zone when None)."""
     try:
@@ -94,12 +97,24 @@ def validate_cron(expr: str) -> str:
 
 def next_cron_run(expr: str, after_utc: datetime, tz: tzinfo | None = None) -> datetime:
     """Return the first cron slot strictly after after_utc, evaluated in local wall time."""
-    local_after = _to_local_naive(after_utc, tz)
-    try:
-        local_next = next(CronSim(expr, local_after))
-    except (CronSimError, StopIteration, ValueError) as exc:
-        raise ScheduleValidationError(MSG_CRON_INVALID) from exc
-    return _from_local_naive(local_next, tz)
+    after = as_aware_utc(after_utc)
+    local_cursor = _to_local_naive(after_utc, tz)
+    # CronSim walks naive wall time and ignores fold. On a DST fall-back night a naive slot in
+    # the repeated hour can map to an instant before `after`, so retry its second occurrence
+    # (fold=1) and otherwise keep walking until the result is strictly in the future.
+    for _ in range(_CRON_MAX_FOLD_STEPS):
+        try:
+            local_next = next(CronSim(expr, local_cursor))
+        except (CronSimError, StopIteration, ValueError) as exc:
+            raise ScheduleValidationError(MSG_CRON_INVALID) from exc
+        candidate = _from_local_naive(local_next.replace(fold=0), tz)
+        if candidate > after:
+            return candidate
+        second = _from_local_naive(local_next.replace(fold=1), tz)
+        if second > after:
+            return second
+        local_cursor = local_next
+    raise ScheduleValidationError(MSG_CRON_INVALID)
 
 
 def _add_seconds(value: datetime, seconds: int) -> datetime:
