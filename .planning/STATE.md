@@ -27,7 +27,7 @@ stopped_at: Phase 16 complete (8/8) — ready to discuss Phase 17
 Phase: 17
 Plan: Not started
 Status: Ready to plan
-Last activity: 2026-10-04
+Last activity: 2026-10-06 - Completed quick task 261006-l4o: citations backlog 999.13-999.16
 
 ## Performance Metrics
 
@@ -90,6 +90,7 @@ None.
 | 260925-qvd | Strip TOOL_USE_RULE from the system message after the first tool round (rule + follow-up caused empty replies: 12/12 with tools, 5/16 without) | 2026-09-25 | 0514344 | Tested (555 passed; real-model recheck pending) | [260925-qvd-strip-tool-use-rule-from-system-message-](./quick/260925-qvd-strip-tool-use-rule-from-system-message-/) |
 | 260926-38j | Multi-step tool scenarios: text-leaked tool calls recovered (hermes/qwen XML) + tool_calls flushed on stream stop, announce/MCP-error nudges, fallback summary for empty replies, clock + local-vs-remote hint, MAX_TOOL_ROUNDS 15 | 2026-09-26 | 166e5c8 | Tested (635 passed); real model + real GitLab Sandbox: A ok, B ok on 3rd run (commit 55903a8a on Test, MR !1; model also merged MR unprompted, see follow-ups) | [260926-38j-fix-complex-multi-step-tool-scenarios-le](./quick/260926-38j-fix-complex-multi-step-tool-scenarios-le/) |
 | fast-day20-defer | Defer Day 16 leftovers to Day 20: backlog 999.1-999.3, manual Ctrl+C check, real-model/browser rechecks of 260924-1ic/2n8, 260925-oya/q0s/qj5/qvd | 2026-09-26 | — | Docs only | — |
+| 261006-l4o | Fix backlog 999.13-999.16: citations WR-01..WR-04 (exact min length, auto quote state/chip, MAX_QUOTE_LINES leak, gated-turn rollback) | 2026-10-06 | 44e986b | | [261006-l4o-fix-backlog-999-13-999-16-citations-wr-0](./quick/261006-l4o-fix-backlog-999-13-999-16-citations-wr-0/) |
 | Phase 12 P01 | 25min | 3 tasks | 13 files |
 | Phase 12 P02 | 15min | 2 tasks | 4 files |
 | Phase 12 P03 | 45min | 2 tasks | 7 files |
