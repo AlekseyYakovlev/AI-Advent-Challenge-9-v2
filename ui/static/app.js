@@ -2023,6 +2023,9 @@ function renderMcpServerRow(server) {
     actions.appendChild(delBtn);
     header.appendChild(actions);
     card.appendChild(header);
+    if (server.enabled && server.auto_connect === false && conn.status !== 'connected') {
+        card.appendChild(mcpEl('p', 'text-xs text-slate-500', 'Отключён вручную — не подключается автоматически'));
+    }
 
     if (!connecting && conn.status === 'connected') {
         const info = conn.server_info;

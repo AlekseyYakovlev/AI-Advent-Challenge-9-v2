@@ -350,6 +350,7 @@ class McpServerResponse(BaseModel):
     env_keys: list[str]
     cwd: Optional[str] = None
     enabled: bool
+    auto_connect: bool = True
     created_at: datetime
     updated_at: datetime
     connection: McpConnectResult

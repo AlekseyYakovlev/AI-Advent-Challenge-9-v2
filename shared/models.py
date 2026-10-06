@@ -571,6 +571,8 @@ class McpServerConfig(SQLModel, table=True):
     env_json: str = Field(default="{}")
     cwd: Optional[str] = Field(default=None, max_length=1000)
     enabled: bool = Field(default=True)
+    # False means the user pressed disconnect; lazy auto-connect must skip the server.
+    auto_connect: bool = Field(default=True)
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
     )
