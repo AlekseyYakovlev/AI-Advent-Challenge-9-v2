@@ -118,11 +118,90 @@ _NEGATION_WORDS = frozenset(
 _NEGATION_WINDOW_WORDS = 2
 
 
+_POLITE_REQUEST_RE = re.compile(
+    r"^(?:не\s+могли\s+бы|могли\s+бы|можешь|можете|можно|could\s+you|can\s+you"
+    r"|would\s+you|will\s+you|please|пожалуйста)(?!\w)",
+    re.IGNORECASE,
+)
+
+
+def _sentence_requests(text: str, pattern: re.Pattern[str]) -> bool:
+    """Return True when a sentence makes a non-negated, non-question request matching pattern.
+
+    A sentence ending in "?" counts only when phrased as a polite request, so
+    "How do I cancel a job?" is rejected while "Could you cancel the job?" passes.
+    """
+    for sentence in _SENTENCE_SPLIT_RE.split(text):
+        stripped = sentence.strip()
+        if not stripped:
+            continue
+        is_question = stripped.endswith("?") and _POLITE_REQUEST_RE.match(stripped) is None
+        if is_question:
+            continue
+        for match in pattern.finditer(stripped):
+            preceding = re.findall(r"[\w'’]+", stripped[: match.start()].lower())
+            if not _NEGATION_WORDS.intersection(preceding[-_NEGATION_WINDOW_WORDS:]):
+                return True
+    return False
+
+
 def user_asked_to_cancel(text: str) -> bool:
-    """Return True when the text asks to cancel/stop/delete something and does not negate it."""
-    for match in _CANCEL_INTENT_RE.finditer(text):
-        preceding = re.findall(r"[\w'’]+", text[: match.start()].lower())
-        if not _NEGATION_WORDS.intersection(preceding[-_NEGATION_WINDOW_WORDS:]):
+    """Return True when the text asks to cancel/stop/delete something and does not negate it.
+
+    Questions and hypotheticals are rejected unless phrased as a polite request.
+    """
+    return _sentence_requests(text, _CANCEL_INTENT_RE)
+
+
+_SCHEDULE_INTENT_RE = re.compile(
+    r"(?<!\w)(?:"
+    r"напомни(?:те)?|напомнить|запланируй(?:те)?|запланировать|по\s+расписанию|расписани\w*"
+    r"|кажд(?:ый|ую|ое|ые|ого)|ежедневно|ежечасно|еженедельно"
+    r"|через\s+(?:\d+|минуту|час|день|неделю|полчаса)|завтра|послезавтра|в\s+\d{1,2}[:.]\d{2}"
+    r"|remind|schedule|scheduled|every|daily|hourly|weekly|tomorrow|later|cron"
+    r"|in\s+(?:a|an|\d+)\s+(?:sec|second|min|minute|hour|day|week)s?"
+    r"|at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?"
+    r")(?!\w)",
+    re.IGNORECASE,
+)
+
+
+def user_asked_to_schedule(text: str) -> bool:
+    """Return True when the text asks to do something later/periodically and does not negate it."""
+    return _sentence_requests(text, _SCHEDULE_INTENT_RE)
+
+
+_GENERIC_TITLE_STEMS = frozenset(
+    {"зада", "задач", "задан", "task", "tasks", "job", "jobs", "sched", "распи", "напом", "remin"}
+)
+_STEM_LENGTH = 5
+
+
+def _normalize_for_match(text: str) -> str:
+    """Casefold and fold ё to е so title matching ignores that spelling difference."""
+    return text.casefold().replace("ё", "е")
+
+
+def message_names_task(text: str, task_id: int, title: str) -> bool:
+    """Return True when the message names the job by its numeric id or a significant title word.
+
+    Binds a cancel to what the user named. Residual risk: a message naming several jobs
+    authorises each of them.
+    """
+    normalized = _normalize_for_match(text)
+    if re.search(rf"(?<!\d){task_id}(?!\d)", normalized):
+        return True
+    message_tokens = re.findall(r"\w+", normalized)
+    for token in re.findall(r"\w+", _normalize_for_match(title)):
+        if len(token) < 4:
+            continue
+        stem = token[:_STEM_LENGTH]
+        if any(
+            stem.startswith(generic) or generic.startswith(stem)
+            for generic in _GENERIC_TITLE_STEMS
+        ):
+            continue
+        if any(word.startswith(stem) for word in message_tokens):
             return True
     return False
 

@@ -9,7 +9,7 @@ from agent.schedule import ScheduleValidationError, as_aware_utc
 from agent.schemas import CancelScheduledTaskArgs, ListScheduledTasksArgs, ScheduleTaskArgs
 from agent.scheduler import build_task_out
 from agent.state import current_chat_model, current_chat_provider_id
-from agent.tool_guard import user_asked_to_cancel
+from agent.tool_guard import message_names_task, user_asked_to_cancel, user_asked_to_schedule
 from agent.tools import register_tool
 from shared.logger import get_logger
 from shared.models import Chat, Message, ScheduledTask, ScheduledTaskStatus, ScheduleType
@@ -23,7 +23,12 @@ _MSG_MODEL_UNKNOWN = (
 )
 _MSG_CANCEL_NOT_REQUESTED = (
     "The user did not ask to cancel a job in their latest message. "
-    "Do not cancel; ask the user to confirm explicitly."
+    "Do not cancel; ask the user to confirm explicitly; the user must name the job by its id "
+    "or title."
+)
+_MSG_SCHEDULE_NOT_REQUESTED = (
+    "The user did not ask to schedule anything in their latest message. "
+    "Do not create a job; ask the user to confirm explicitly."
 )
 
 
@@ -53,7 +58,8 @@ def _schedule_summary(task: ScheduledTask) -> str:
     "Schedule a background job that the agent will run later WITHOUT the user present: once "
     "(after delay_seconds or at run_at local time), every interval_seconds, or on a 5-field "
     "cron in the machine's local time. prompt is the full instruction to execute at fire time. "
-    "Use only when the user asks to do something later or periodically.",
+    "Refused unless the user's LATEST message explicitly asks to do something later or "
+    "periodically.",
 )
 async def _schedule_task(
     session: AsyncSession,
@@ -62,6 +68,10 @@ async def _schedule_task(
     args: dict[str, Any],
 ) -> dict[str, Any]:
     """Create a job for the chatting user with the chat's model, remembering the origin chat."""
+    text = await _latest_user_message(session, user_id, chat_id)
+    if text is None or not user_asked_to_schedule(text):
+        logger.warning("scheduler_schedule_gate_blocked", user_id=user_id, chat_id=chat_id)
+        return _error("schedule_not_requested", _MSG_SCHEDULE_NOT_REQUESTED)
     model = current_chat_model.get()
     if model is None:
         return _error("model_unknown", _MSG_MODEL_UNKNOWN)
@@ -130,24 +140,25 @@ async def _list_scheduled_tasks(
     return {"status": "ok", "tasks": tasks}
 
 
-async def _latest_message_asks_to_cancel(
+async def _latest_user_message(
     session: AsyncSession, user_id: int, chat_id: int
-) -> bool:
-    """Check the chat's current leaf is the user's own message and asks to cancel a job."""
+) -> str | None:
+    """Return the chat's current leaf text when it is the caller's own user message."""
     chat = await session.get(Chat, chat_id)
     if chat is None or chat.user_id != user_id or chat.current_leaf_message_id is None:
-        return False
+        return None
     message = await session.get(Message, chat.current_leaf_message_id)
     if message is None or message.role != "user":
-        return False
-    return user_asked_to_cancel(message.content)
+        return None
+    return message.content
 
 
 @register_tool(
     "cancel_scheduled_task",
     CancelScheduledTaskArgs,
     "Cancel a scheduled job ONLY when the user explicitly asked to cancel/stop/delete it in "
-    "their LATEST message; never cancel on your own initiative. Requires the explicit numeric "
+    "their LATEST message, naming the job by its id or title; never cancel on your own "
+    "initiative. Requires the explicit numeric "
     "task_id (call list_scheduled_tasks first if unknown) - there is no implicit 'current job'. "
     "Set user_requested_cancellation=true only in that case.",
 )
@@ -159,8 +170,15 @@ async def _cancel_scheduled_task(
 ) -> dict[str, Any]:
     """Soft-cancel a job the user owns, but only after the code-level intent check passes."""
     task_id: int = args["task_id"]
-    if not args["user_requested_cancellation"] or not await _latest_message_asks_to_cancel(
-        session, user_id, chat_id
+    job = await session.get(ScheduledTask, task_id)
+    if job is None or job.user_id != user_id:
+        return _error("not_found", f"scheduled job {task_id} not found")
+    text = await _latest_user_message(session, user_id, chat_id)
+    if (
+        not args["user_requested_cancellation"]
+        or text is None
+        or not user_asked_to_cancel(text)
+        or not message_names_task(text, task_id, job.title)
     ):
         logger.warning("scheduler_cancel_gate_blocked", user_id=user_id, task_id=task_id)
         return _error("cancel_not_requested", _MSG_CANCEL_NOT_REQUESTED)

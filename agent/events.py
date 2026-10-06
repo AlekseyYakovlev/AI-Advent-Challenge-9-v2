@@ -1,22 +1,29 @@
 """Per-user live event hub and the /ws/events WebSocket endpoint."""
 
 import asyncio
+import time
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
+from sqlalchemy.exc import SQLAlchemyError
+from sqlmodel import select
 
 from agent.dependencies import get_current_user_ws
+from agent.schedule import as_aware_utc
 
 # Deliberate reuse: the events socket must apply the exact same Origin policy as /ws/chat.
 from agent.ws import _validate_origin
-from shared.auth import SESSION_COOKIE_NAME
+from shared.auth import SESSION_COOKIE_NAME, hash_session_token
 from shared.database import async_session_factory
 from shared.logger import get_logger
+from shared.models import Session as SessionRow
 
 logger = get_logger(__name__)
 
 EVENTS_QUEUE_MAXSIZE = 100
 EVENTS_RECEIVE_TIMEOUT_SECONDS = 60.0
+EVENTS_SESSION_RECHECK_SECONDS = 60.0
 
 EventFrame = dict[str, Any]
 
@@ -81,6 +88,37 @@ async def _pump(websocket: WebSocket, queue: asyncio.Queue[EventFrame]) -> None:
         logger.debug("events_pump_stopped")
 
 
+async def _session_still_valid(session_id: str, user_id: int) -> bool:
+    """Check the session row still exists, is unexpired and belongs to the user.
+
+    Read-only on purpose: unlike the handshake lookup it never slides expires_at, so an
+    idle open tab cannot keep a session alive forever.
+    """
+    try:
+        async with async_session_factory() as db:
+            result = await db.exec(
+                select(SessionRow).where(SessionRow.token_hash == hash_session_token(session_id)),
+            )
+            row = result.first()
+    except SQLAlchemyError as exc:
+        # A transient DB error must not disconnect every open socket.
+        logger.warning("events_ws_recheck_failed", user_id=user_id, error=str(exc))
+        return True
+    return (
+        row is not None
+        and row.user_id == user_id
+        and as_aware_utc(row.expires_at) > datetime.now(timezone.utc)
+    )
+
+
+async def _safe_close(websocket: WebSocket, code: int, reason: str) -> None:
+    """Close the socket, ignoring the case where it is already closed."""
+    try:
+        await websocket.close(code=code, reason=reason)
+    except RuntimeError:
+        logger.debug("events_ws_already_closed")
+
+
 async def ws_events(websocket: WebSocket) -> None:
     """Serve the user-level events socket after origin and session-cookie checks."""
     if not _validate_origin(websocket):
@@ -96,19 +134,34 @@ async def ws_events(websocket: WebSocket) -> None:
         return
 
     user_id: int = user.id
+    assert session_id is not None  # get_current_user_ws returns None without a cookie
     await websocket.accept()
     queue = hub.subscribe(user_id)
     pump = asyncio.create_task(_pump(websocket, queue))
     logger.info("events_ws_connected", user_id=user_id)
+    last_check = time.monotonic()
     try:
         while not pump.done():
             try:
-                await asyncio.wait_for(
-                    websocket.receive_text(),
+                message = await asyncio.wait_for(
+                    websocket.receive(),
                     timeout=EVENTS_RECEIVE_TIMEOUT_SECONDS,
                 )
             except asyncio.TimeoutError:
-                continue
+                message = None
+            if message is not None:
+                if message["type"] == "websocket.disconnect":
+                    break
+                if "text" not in message:
+                    logger.warning("events_ws_non_text_frame", user_id=user_id)
+                    await _safe_close(websocket, 1003, "Text frames only")
+                    break
+            if time.monotonic() - last_check >= EVENTS_SESSION_RECHECK_SECONDS:
+                if not await _session_still_valid(session_id, user_id):
+                    logger.warning("events_ws_session_gone", user_id=user_id)
+                    await _safe_close(websocket, 1008, "Unauthorized")
+                    break
+                last_check = time.monotonic()
     except WebSocketDisconnect:
         pass
     finally:

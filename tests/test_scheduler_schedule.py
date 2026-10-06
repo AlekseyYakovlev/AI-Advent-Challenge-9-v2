@@ -1,6 +1,6 @@
 """Pure unit tests for scheduler schedule math and validation."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 
 import pytest
 
@@ -32,6 +32,65 @@ from shared.models import ScheduleType
 UTC = timezone.utc
 MSK = timezone(timedelta(hours=3))
 NOW = datetime(2026, 9, 26, 10, 0, 0, tzinfo=UTC)
+
+_FALL_BACK_UTC = datetime(2026, 11, 1, 6, 0)
+_FALL_BACK_REPEAT_START = datetime(2026, 11, 1, 1, 0)
+_FALL_BACK_REPEAT_END = datetime(2026, 11, 1, 2, 0)
+
+
+class _FallBackZone(tzinfo):
+    """PEP 495 zone: EDT (-4h) until 2026-11-01 06:00 UTC, then EST (-5h); 01:00-02:00 repeats."""
+
+    def utcoffset(self, dt: datetime | None) -> timedelta:
+        assert dt is not None
+        naive = dt.replace(tzinfo=None)
+        if naive < _FALL_BACK_REPEAT_START:
+            return timedelta(hours=-4)
+        if naive < _FALL_BACK_REPEAT_END:
+            return timedelta(hours=-4) if dt.fold == 0 else timedelta(hours=-5)
+        return timedelta(hours=-5)
+
+    def dst(self, dt: datetime | None) -> timedelta:
+        assert dt is not None
+        return timedelta(hours=1) + (self.utcoffset(dt) - timedelta(hours=-4))
+
+    def tzname(self, dt: datetime | None) -> str:
+        assert dt is not None
+        return "EDT" if self.utcoffset(dt) == timedelta(hours=-4) else "EST"
+
+    def fromutc(self, dt: datetime) -> datetime:
+        naive_utc = dt.replace(tzinfo=None)
+        if naive_utc < _FALL_BACK_UTC:
+            return (naive_utc - timedelta(hours=4)).replace(tzinfo=self, fold=0)
+        local = naive_utc - timedelta(hours=5)
+        in_repeat = _FALL_BACK_REPEAT_START <= local < _FALL_BACK_REPEAT_END
+        return local.replace(tzinfo=self, fold=1 if in_repeat else 0)
+
+
+_NY = _FallBackZone()
+
+
+def test_next_cron_run_fall_back_first_pass() -> None:
+    after = datetime(2026, 11, 1, 5, 45, tzinfo=UTC)
+    assert next_cron_run("50 1 * * *", after, _NY) == datetime(2026, 11, 1, 5, 50, tzinfo=UTC)
+
+
+def test_next_cron_run_fall_back_second_pass_uses_fold() -> None:
+    after = datetime(2026, 11, 1, 6, 45, tzinfo=UTC)
+    assert next_cron_run("50 1 * * *", after, _NY) == datetime(2026, 11, 1, 6, 50, tzinfo=UTC)
+
+
+def test_next_cron_run_fall_back_every_five_minutes() -> None:
+    after = datetime(2026, 11, 1, 6, 45, tzinfo=UTC)
+    assert next_cron_run("*/5 * * * *", after, _NY) == datetime(2026, 11, 1, 6, 50, tzinfo=UTC)
+
+
+def test_next_cron_run_chain_across_fall_back_is_strictly_increasing() -> None:
+    current = datetime(2026, 11, 1, 4, 0, tzinfo=UTC)
+    for _ in range(60):
+        following = next_cron_run("*/5 * * * *", current, _NY)
+        assert following > current
+        current = following
 
 
 def test_validate_cron_accepts_five_fields() -> None:
