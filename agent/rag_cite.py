@@ -11,6 +11,7 @@ from agent.rag_rank import stems
 
 FUZZY_THRESHOLD: float = 0.9
 FUZZY_MIN_CHARS: int = 25
+EXACT_MIN_CHARS: int = 25
 FUZZY_WINDOW_RATIO: float = 1.15
 FUZZY_STRIDE_DIVISOR: int = 8
 FUZZY_MIN_STEM_OVERLAP: float = 0.5
@@ -19,6 +20,7 @@ MAX_QUOTE_CHARS: int = 2000
 STATE_EXACT: str = "exact"
 STATE_FUZZY: str = "fuzzy"
 STATE_UNVERIFIED: str = "unverified"
+STATE_AUTO: str = "auto"
 
 MAX_QUOTE_LINES: int = 10
 STORED_QUOTE_CHARS: int = 1000
@@ -90,7 +92,7 @@ _MD_ACTIVE_RE: re.Pattern[str] = re.compile(r"[*_`<>\[\]#|]")
 
 @dataclass(frozen=True)
 class Quote:
-    """One verified or unverified quote tied to a fragment rank."""
+    """One quote tied to a fragment rank: verified, unverified or code-picked (auto)."""
 
     text: str
     state: str
@@ -188,7 +190,10 @@ def match_quote(quote: str, chunk_text: str) -> str:
             break
         pos = found + len(part)
     if exact:
-        return STATE_EXACT
+        # A very short quote matches almost any chunk, so it proves nothing.
+        if sum(len(part) for part in parts) >= EXACT_MIN_CHARS:
+            return STATE_EXACT
+        return STATE_UNVERIFIED
     if any(len(part) < FUZZY_MIN_CHARS for part in parts):
         return STATE_UNVERIFIED
     quote_stems = stems(norm_quote)
@@ -248,23 +253,20 @@ def parse_tail(text: str) -> tuple[str, list[tuple[int | None, str]]]:
     if first is not None:
         parsed.append(first)
     for index in range(heading_index + 1, len(lines)):
-        if len(parsed) >= MAX_QUOTE_LINES:
-            resume = index
-            break
         if not lines[index].strip():
             continue
         item = _parse_quote_line(lines[index])
         if item is None:
             resume = index
             break
-        parsed.append(item)
+        # Quote lines past the cap are still consumed so they never leak into the answer.
+        if len(parsed) < MAX_QUOTE_LINES:
+            parsed.append(item)
     if not parsed:
         return text, []
     before = "\n".join(lines[:heading_index]).strip()
     after = "\n".join(lines[resume:]).strip()
     clean = "\n\n".join(piece for piece in (before, after) if piece)
-    if not clean:
-        return text, parsed
     return clean, parsed
 
 
@@ -294,8 +296,7 @@ def _verify_line(
 ) -> Quote:
     """Verify one quote line: cited fragment first, then the others, else unverified."""
     in_range = number is not None and 1 <= number <= len(chunks)
-    if in_range:
-        assert number is not None
+    if number is not None and in_range:
         state = match_quote(text, chunks[number - 1].get("text") or "")
         if state != STATE_UNVERIFIED:
             return Quote(text, state, number)
@@ -366,7 +367,12 @@ def process_answer(
     if not (answer or "").strip():
         return CitationResult(answer=answer or "", answer_empty=True)
     clean, lines = parse_tail(answer)
-    valid, invalid_body = body_refs(clean, len(chunks))
+    if not clean.strip() and lines:
+        clean = "\n\n".join(text for _, text in lines)
+        valid: list[int] = []
+        invalid_body = 0
+    else:
+        valid, invalid_body = body_refs(clean, len(chunks))
     if not lines and is_idk(clean):
         return CitationResult(answer=clean, cited_ranks=valid, model_idk=True)
     quotes: list[Quote] = []
@@ -413,7 +419,7 @@ def _auto_quotes(
         except Exception:  # fail-soft: auto quotes are optional decoration
             text = None
         if text:
-            result.append(Quote(text, STATE_EXACT, rank, auto=True))
+            result.append(Quote(text, STATE_AUTO, rank, auto=True))
     return result
 
 
