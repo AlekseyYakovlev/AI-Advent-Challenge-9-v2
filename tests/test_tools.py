@@ -7,6 +7,7 @@ from httpx import AsyncClient
 from sqlmodel import select
 
 from agent import memory, tasks
+from agent.mcp_tools import McpToolBinding
 from agent.tools import dispatch_tool_calls
 from shared.database import async_session_factory
 from shared.models import Chat, LongTermMemory, TaskState, WorkingMemory
@@ -357,3 +358,71 @@ async def test_rejected_call_does_not_abort_later_calls_in_same_turn(
     assert results[0]["ok"] is False
     assert results[1]["ok"] is True
     assert results[1]["write"]["layer"] == "working"
+
+
+def _mcp_binding(tool_name: str) -> McpToolBinding:
+    return McpToolBinding(
+        exposed_name=f"mcp__gitlab__{tool_name}",
+        user_id=1,
+        server_id=1,
+        server_name="gitlab",
+        tool_name=tool_name,
+    )
+
+
+async def _dispatch_mcp(
+    monkeypatch: pytest.MonkeyPatch,
+    tool_name: str,
+    user_text: str | None,
+) -> tuple[list[dict], list[dict]]:
+    """Dispatch one MCP call with a recording fake; return (results, recorded calls)."""
+    recorded: list[dict] = []
+
+    async def fake_call(binding: McpToolBinding, arguments: dict) -> dict:
+        recorded.append(arguments)
+        return {"ok": True, "is_error": False, "text": "merged", "truncated": False}
+
+    monkeypatch.setattr("agent.tools.call_mcp_tool", fake_call)
+    binding = _mcp_binding(tool_name)
+    kwargs = {} if user_text is None else {"user_text": user_text}
+    async with async_session_factory() as session:
+        results = await dispatch_tool_calls(
+            session,
+            1,
+            1,
+            [_call("c1", binding.exposed_name, "{}")],
+            mcp_bindings={binding.exposed_name: binding},
+            **kwargs,
+        )
+    return results, recorded
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("user_text", ["сделай MR", None])
+async def test_merge_tool_blocked_without_merge_intent(
+    monkeypatch: pytest.MonkeyPatch,
+    user_text: str | None,
+) -> None:
+    """A merge tool is refused (fail closed) unless the user asked to merge."""
+    results, recorded = await _dispatch_mcp(monkeypatch, "merge_merge_request", user_text)
+    assert recorded == []
+    assert results[0]["ok"] is False
+    assert results[0]["blocked"] is True
+    assert results[0]["mcp"]["tool"] == "merge_merge_request"
+    assert "not performed" in results[0]["content"].lower()
+
+
+@pytest.mark.asyncio
+async def test_merge_tool_runs_with_merge_intent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An explicit merge request lets the gated tool through."""
+    results, recorded = await _dispatch_mcp(monkeypatch, "merge_merge_request", "смержи MR !1")
+    assert len(recorded) == 1
+    assert results[0]["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_non_gated_mcp_tool_is_dispatched(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Other MCP tools are not affected by the merge gate."""
+    results, recorded = await _dispatch_mcp(monkeypatch, "create_merge_request", "сделай MR")
+    assert len(recorded) == 1
+    assert results[0]["ok"] is True

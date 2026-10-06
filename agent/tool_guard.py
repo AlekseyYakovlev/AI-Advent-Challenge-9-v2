@@ -32,16 +32,22 @@ TOOL_ERROR_REMINDER = (
     "different tool or approach, and continue the task. Do not give up after one error."
 )
 
+# A reply this long is treated as a real final answer, so an error nudge would only
+# append a second answer after it.
+TOOL_ERROR_NUDGE_MAX_CHARS = 300
+
 MULTI_STEP_TOOL_HINT = (
     "Finish ALL steps of a multi-step request by calling tools one after another before "
     "the final answer. Filesystem tools act on the LOCAL disk; GitLab tools act on the REMOTE "
-    "repository. To find the local folder for a GitLab task, first call list_projects for the "
-    "project path (group/name): the matching local folder is named like its last segment and "
-    "its <folder>/.git/config remote URL points to that project. Never explore folders whose "
-    "remote is another project. Remote file paths are relative to the repository root, never "
-    "local folder names. To commit local changes, read the local files, then call commit_files "
-    "(branch, commit message, actions), then create_merge_request. When a tool returns an "
-    "error, read it and try another approach."
+    "repository. To find the local folder for a GitLab task, call list_projects for the "
+    "project path (group/name): the local folder is named like its last segment and its "
+    "<folder>/.git/config remote URL points to that project. Never explore folders of other "
+    "projects. Call list_allowed_directories and get_file_info at most once per turn and "
+    "reuse the results. Remote file paths are relative to the repository root. To commit local "
+    "changes, read the local files, then call commit_files (branch, message, actions; action "
+    "\"create\" for files missing on the target branch, \"update\" only for existing ones; "
+    "if it reports a missing file, retry with \"create\"), then create_merge_request. "
+    "When a tool returns an error, read it and try another approach."
 )
 
 _CYRILLIC_RE = re.compile(r"[А-Яа-яЁё]")
@@ -169,6 +175,33 @@ _SCHEDULE_INTENT_RE = re.compile(
 def user_asked_to_schedule(text: str) -> bool:
     """Return True when the text asks to do something later/periodically and does not negate it."""
     return _sentence_requests(text, _SCHEDULE_INTENT_RE)
+
+
+_MERGE_INTENT_RE = re.compile(
+    r"(?<!\w)(?:"
+    r"(?:с|за)?мер(?:д)?ж(?:и|ни|ите|ните|ить|нуть)(?:те)?"
+    r"|(?:слей|влей)(?:те)?|слить|влить"
+    r"|merge(?![\s-]*requests?(?!\w))"
+    r")(?!\w)",
+    re.IGNORECASE,
+)
+
+# MCP tools that irreversibly merge; they run only on an explicit merge request from the user.
+MERGE_GATED_MCP_TOOLS: frozenset[str] = frozenset({"merge_merge_request", "accept_merge_request"})
+
+MERGE_BLOCKED_TEXT = (
+    "The merge was NOT performed: the user's latest message did not explicitly ask to merge. "
+    "Do not retry it. Tell the user the merge request is ready and ask them to confirm "
+    "the merge."
+)
+
+
+def user_asked_to_merge(text: str) -> bool:
+    """Return True when the text asks to merge something and does not negate it.
+
+    Creating a merge request ("make an MR", "create a merge request") is not a merge request.
+    """
+    return _sentence_requests(text, _MERGE_INTENT_RE)
 
 
 _GENERIC_TITLE_STEMS = frozenset(
@@ -312,6 +345,22 @@ def build_tool_fallback_summary(results: list[dict[str, Any]], user_text: str) -
         body = result.get("result_text") or result.get("content") or ""
         lines.append(f"- {label}: {status} — {_preview(str(body))}")
     return "\n".join(lines)
+
+
+def should_nudge_after_tool_error(text: str, last_results: list[dict[str, Any]]) -> bool:
+    """Return True when a fail-only MCP round got no substantial answer and merits a nudge."""
+    failed = any(
+        not r["ok"] and r.get("mcp") is not None and not r.get("blocked") for r in last_results
+    )
+    succeeded = any(r["ok"] for r in last_results)
+    return failed and not succeeded and len(text.strip()) < TOOL_ERROR_NUDGE_MAX_CHARS
+
+
+def build_llm_failure_note(detail: str, user_text: str) -> str:
+    """Return the note appended to a turn whose model call failed after tools already ran."""
+    if _CYRILLIC_RE.search(user_text) is not None:
+        return f"Модель не завершила ответ после выполнения инструментов: {detail}"
+    return f"The model did not finish the reply after the tools ran: {detail}"
 
 
 def _hold_start(buf: str) -> int:

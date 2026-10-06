@@ -2,6 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 
+import httpx
 import pytest
 
 from agent import context_engine
@@ -19,7 +20,89 @@ from agent.tool_guard import (
     looks_like_action_announcement,
     looks_like_action_claim,
     strip_tool_use_rule,
+    user_asked_to_merge,
+    build_llm_failure_note,
+    should_nudge_after_tool_error,
+    TOOL_ERROR_NUDGE_MAX_CHARS,
 )
+
+_MCP_FAIL = {"ok": False, "mcp": {"tool": "t"}}
+_MCP_OK = {"ok": True, "mcp": {"tool": "t"}}
+
+
+@pytest.mark.parametrize(
+    ("text", "results", "expected"),
+    [
+        ("The tool failed.", [_MCP_FAIL], True),
+        ("", [_MCP_FAIL], True),
+        ("x" * TOOL_ERROR_NUDGE_MAX_CHARS, [_MCP_FAIL], False),
+        ("Short.", [_MCP_FAIL, _MCP_OK], False),
+        ("Short.", [{"ok": False, "mcp": {"tool": "t"}, "blocked": True}], False),
+        ("Short.", [{"ok": False, "mcp": None}], False),
+    ],
+)
+def test_should_nudge_after_tool_error(text: str, results: list[dict], expected: bool) -> None:
+    """The error nudge fires only for short replies after a fail-only MCP round."""
+    assert should_nudge_after_tool_error(text, results) is expected
+
+from agent.ws import _llm_error_detail
+
+
+def test_llm_error_detail_timeout_is_descriptive() -> None:
+    """An empty-message timeout still names the timeout and the exception type."""
+    detail = _llm_error_detail(httpx.ReadTimeout(""), None)
+    assert "timeout" in detail
+    assert "ReadTimeout" in detail
+
+
+def test_llm_error_detail_empty_message_uses_type_name() -> None:
+    """An exception with no message falls back to its type name."""
+    assert _llm_error_detail(RuntimeError(""), None) == "LLM error: RuntimeError"
+    assert _llm_error_detail(RuntimeError("boom"), None) == "LLM error: boom"
+
+
+def test_build_llm_failure_note_follows_user_language() -> None:
+    """The note is Russian for Cyrillic user text and English otherwise."""
+    detail = "LLM error: timeout (ReadTimeout)"
+    russian = build_llm_failure_note(detail, "сделай")
+    english = build_llm_failure_note(detail, "do it")
+    assert detail in russian and "Модель" in russian
+    assert detail in english and "The model" in english
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "сделай MR и смержи его",
+        "смержи MR !1",
+        "замерджи ветку Test в main",
+        "слей ветку Test в main",
+        "merge MR !1 into main",
+        "Please merge it.",
+        "Could you merge MR !1?",
+    ],
+)
+def test_user_asked_to_merge_true(text: str) -> None:
+    """Explicit merge verbs authorise a merge."""
+    assert user_asked_to_merge(text) is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "сделай MR",
+        "создай merge request из Test в main",
+        "открой мерж-реквест",
+        "create a merge request",
+        "не мержи пока",
+        "don't merge it",
+        "How do I merge a branch?",
+        "",
+    ],
+)
+def test_user_asked_to_merge_false(text: str) -> None:
+    """Creating an MR, negations, questions and the noun form never authorise a merge."""
+    assert user_asked_to_merge(text) is False
 
 
 @pytest.mark.parametrize(
@@ -327,7 +410,7 @@ def test_reminders_and_hint_are_nonempty() -> None:
     """The new prompt fragments exist and the hint stays short for a small local model."""
     assert ACTION_ANNOUNCE_REMINDER
     assert TOOL_ERROR_REMINDER
-    assert 0 < len(MULTI_STEP_TOOL_HINT.split()) <= 130
+    assert 0 < len(MULTI_STEP_TOOL_HINT.split()) <= 170  # grew: discovery and commit_files create/update rules
 
 
 _RESULTS = [

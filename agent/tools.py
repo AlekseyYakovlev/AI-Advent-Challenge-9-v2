@@ -9,6 +9,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from agent import memory, tasks
 from agent.mcp_tools import McpToolBinding, call_mcp_tool
+from agent.tool_guard import MERGE_BLOCKED_TEXT, MERGE_GATED_MCP_TOOLS, user_asked_to_merge
 from agent.schemas import (
     CreateTaskArgs,
     PauseTaskArgs,
@@ -82,6 +83,7 @@ async def dispatch_tool_calls(
     *,
     mcp_bindings: dict[str, McpToolBinding] | None = None,
     allowed_tools: frozenset[str] | None = None,
+    user_text: str | None = None,
 ) -> list[dict[str, Any]]:
     """Execute tool calls strictly sequentially, in the order returned by the LLM.
 
@@ -90,7 +92,9 @@ async def dispatch_tool_calls(
     call in a turn may depend on an earlier one. Names found in `mcp_bindings`
     are routed to the user's live MCP session; everything else uses the built-ins.
     allowed_tools, when given, restricts built-in tools to that set (headless
-    scheduler runs, D-04); MCP bindings are unaffected.
+    scheduler runs, D-04); MCP bindings are unaffected. user_text is the user's latest
+    message; irreversible MCP tools (merge) run only when it explicitly asks for them,
+    and a missing user_text blocks them.
     """
     results: list[dict[str, Any]] = []
     for call in tool_calls:
@@ -100,6 +104,19 @@ async def dispatch_tool_calls(
 
         binding = (mcp_bindings or {}).get(name) if isinstance(name, str) else None
         if binding is not None:
+            if binding.tool_name in MERGE_GATED_MCP_TOOLS and (
+                user_text is None or not user_asked_to_merge(user_text)
+            ):
+                logger.warning(
+                    "mcp_merge_gate_blocked",
+                    tool=binding.tool_name,
+                    user_id=user_id,
+                    chat_id=chat_id,
+                )
+                results.append(
+                    _blocked_mcp_result(binding, tool_call_id, raw_arguments, MERGE_BLOCKED_TEXT),
+                )
+                continue
             results.append(await _dispatch_mcp_call(binding, tool_call_id, raw_arguments))
             continue
 
@@ -198,6 +215,39 @@ async def dispatch_tool_calls(
             },
         )
     return results
+
+
+def _blocked_mcp_result(
+    binding: McpToolBinding,
+    tool_call_id: str | None,
+    raw_arguments: str,
+    text: str,
+) -> dict[str, Any]:
+    """Build a failed MCP-shaped result for a call refused before reaching the server."""
+    return {
+        "tool_call_id": tool_call_id,
+        "name": binding.exposed_name,
+        "ok": False,
+        "blocked": True,
+        "content": json.dumps(
+            {
+                "server": binding.server_name,
+                "tool": binding.tool_name,
+                "is_error": True,
+                "error": text,
+            },
+            ensure_ascii=False,
+        ),
+        "write": None,
+        "arguments": raw_arguments,
+        "mcp": {
+            "server_id": binding.server_id,
+            "server_name": binding.server_name,
+            "tool": binding.tool_name,
+        },
+        "result_text": text,
+        "truncated": False,
+    }
 
 
 async def _dispatch_mcp_call(

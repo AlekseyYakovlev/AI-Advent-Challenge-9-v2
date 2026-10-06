@@ -254,12 +254,12 @@ def test_provider_401_on_tool_follow_up_names_provider_not_key(
         provider_id = _create_deepseek(client, monkeypatch)
         frames = _turn(client, _new_chat(client), provider_id)
 
-    error = frames[-1]
-    assert error["type"] == "error"
-    assert error["code"] == "LLM_ERROR"
-    assert "DeepSeek" in error["detail"]
-    assert "DEEPSEEK_API_KEY" in error["detail"]
-    assert "sk-test" not in error["detail"]
+    # The tool already ran, so the turn is kept and the failure is a note in the reply.
+    assert frames[-1]["type"] == "done"
+    note = "".join(f.get("content", "") for f in frames if f.get("type") == "token")
+    assert "DeepSeek" in note
+    assert "DEEPSEEK_API_KEY" in note
+    assert "sk-test" not in note
 
 
 @respx.mock
