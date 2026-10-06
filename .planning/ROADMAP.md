@@ -408,17 +408,6 @@ Plans:
 
 - [ ] TBD (promote with /bm:review-backlog when ready)
 
-### Phase 999.12: MCP server disable toggle has no effect — servers auto-reconnect on request (BACKLOG)
-
-**Goal:** In Settings → MCP серверы, «Отключить» does not stick: on the next chat request the MCP servers are connected again automatically, so their tool schemas (~11k tokens for filesystem 17 + GitLab 20 + builtin) are still sent to the LLM. This eats the context window and starves RAG fragments (see 14-UAT.md gap, debug session `.planning/debug/rag-k15-context-full.md`). Investigate where the agent re-connects servers (ws.py tool collection / MCP manager) and make the disabled state persistent and respected; consider also excluding tool schemas from RAG turns or showing their tokens in the usage meter.
-**Refs:** .planning/debug/rag-k15-context-full.md; 14-UAT.md test 3
-**Requirements:** TBD
-**Plans:** 0 plans
-
-Plans:
-
-- [ ] TBD (promote with /bm:review-backlog when ready)
-
 ### Phase 999.17: Phase 16 review info items IN-01..IN-03 (BACKLOG)
 
 **Goal:** (IN-01 fixed in quick 261006-l4o.) IN-02 bare empty «Цитаты:» heading stays in stored content when a «не знаю» reply ends with it (`parse_tail`, `agent/rag_cite.py:229-268`); IN-03 new `build_rag_payload` quote parameters are unused because `finalize_rag_turn` merges `payload_fields()` by hand (`agent/rag.py:268-299`, `agent/rag_turn.py:266-294`). Full report: `.planning/phases/16-citations-and-anti-hallucination-day-24/16-REVIEW.md`.
