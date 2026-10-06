@@ -258,6 +258,7 @@ async def run_headless_turn(
         max_tokens=prepared.max_tokens,
         allowed_tools=HEADLESS_TOOL_ALLOWLIST,
         client=client,
+        user_text=prompt,
     )
     try:
         streamed, rounds = await _drive_tool_loop(turn, prepared, provider)

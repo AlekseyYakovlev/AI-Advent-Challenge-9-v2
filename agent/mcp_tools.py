@@ -20,6 +20,7 @@ from agent.mcp_client import (
     has_recorded_failure,
 )
 from agent.schemas import McpToolInfo
+from agent.tool_guard import MERGE_GATED_MCP_TOOLS
 from shared.config import settings
 from shared.logger import get_logger
 from shared.models import McpServerConfig
@@ -105,7 +106,13 @@ def _mcp_parameters(input_schema: Any) -> dict[str, Any]:
 def _describe(server_name: str, tool: McpToolInfo) -> str:
     """Prefix the tool description with its server so the model can tell servers apart."""
     text = f"[MCP server: {server_name}] {tool.description or ''}".strip()
-    return text[:DESCRIPTION_MAX_LENGTH]
+    if tool.name not in MERGE_GATED_MCP_TOOLS:
+        return text[:DESCRIPTION_MAX_LENGTH]
+    suffix = (
+        " Runs ONLY when the user's latest message explicitly asks to merge; "
+        "creating a merge request is not a request to merge."
+    )
+    return text[: DESCRIPTION_MAX_LENGTH - len(suffix)] + suffix
 
 
 def build_toolset_from_servers(

@@ -19,7 +19,43 @@ from agent.tool_guard import (
     looks_like_action_announcement,
     looks_like_action_claim,
     strip_tool_use_rule,
+    user_asked_to_merge,
 )
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "сделай MR и смержи его",
+        "смержи MR !1",
+        "замерджи ветку Test в main",
+        "слей ветку Test в main",
+        "merge MR !1 into main",
+        "Please merge it.",
+        "Could you merge MR !1?",
+    ],
+)
+def test_user_asked_to_merge_true(text: str) -> None:
+    """Explicit merge verbs authorise a merge."""
+    assert user_asked_to_merge(text) is True
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "сделай MR",
+        "создай merge request из Test в main",
+        "открой мерж-реквест",
+        "create a merge request",
+        "не мержи пока",
+        "don't merge it",
+        "How do I merge a branch?",
+        "",
+    ],
+)
+def test_user_asked_to_merge_false(text: str) -> None:
+    """Creating an MR, negations, questions and the noun form never authorise a merge."""
+    assert user_asked_to_merge(text) is False
 
 
 @pytest.mark.parametrize(

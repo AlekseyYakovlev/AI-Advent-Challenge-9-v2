@@ -171,6 +171,33 @@ def user_asked_to_schedule(text: str) -> bool:
     return _sentence_requests(text, _SCHEDULE_INTENT_RE)
 
 
+_MERGE_INTENT_RE = re.compile(
+    r"(?<!\w)(?:"
+    r"(?:с|за)?мер(?:д)?ж(?:и|ни|ите|ните|ить|нуть)(?:те)?"
+    r"|(?:слей|влей)(?:те)?|слить|влить"
+    r"|merge(?![\s-]*requests?(?!\w))"
+    r")(?!\w)",
+    re.IGNORECASE,
+)
+
+# MCP tools that irreversibly merge; they run only on an explicit merge request from the user.
+MERGE_GATED_MCP_TOOLS: frozenset[str] = frozenset({"merge_merge_request", "accept_merge_request"})
+
+MERGE_BLOCKED_TEXT = (
+    "The merge was NOT performed: the user's latest message did not explicitly ask to merge. "
+    "Do not retry it. Tell the user the merge request is ready and ask them to confirm "
+    "the merge."
+)
+
+
+def user_asked_to_merge(text: str) -> bool:
+    """Return True when the text asks to merge something and does not negate it.
+
+    Creating a merge request ("make an MR", "create a merge request") is not a merge request.
+    """
+    return _sentence_requests(text, _MERGE_INTENT_RE)
+
+
 _GENERIC_TITLE_STEMS = frozenset(
     {"зада", "задач", "задан", "task", "tasks", "job", "jobs", "sched", "распи", "напом", "remin"}
 )

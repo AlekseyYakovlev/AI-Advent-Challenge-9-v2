@@ -373,6 +373,7 @@ class _ToolTurn:
     client: LLMClient | None = None
     provider: Any | None = None
     allowed_tools: frozenset[str] | None = None
+    user_text: str | None = None
 
     def __post_init__(self) -> None:
         # Callers that build a turn without a resolved provider keep talking to LM Studio.
@@ -488,6 +489,7 @@ async def _dispatch_round(
         calls,
         mcp_bindings=turn.toolset.bindings,
         allowed_tools=turn.allowed_tools,
+        user_text=turn.user_text,
     )
     for result in results:
         await turn.websocket.send_json(_tool_call_frame(result))
@@ -518,7 +520,9 @@ def _pick_nudge(acc: _ToolRoundsResult, text: str, last_results: list[dict[str, 
     if not acc.announce_nudge_used and looks_like_action_announcement(text):
         acc.announce_nudge_used = True
         return "announce"
-    mcp_failed = any(not r["ok"] and r.get("mcp") is not None for r in last_results)
+    mcp_failed = any(
+        not r["ok"] and r.get("mcp") is not None and not r.get("blocked") for r in last_results
+    )
     # Only MCP failures: native task-tool errors have their own transition re-prompt.
     if not acc.error_nudge_used and mcp_failed:
         acc.error_nudge_used = True
@@ -992,6 +996,7 @@ async def _handle_chat_message(
                     max_tokens=max_tokens,
                     client=client,
                     provider=provider_row,
+                    user_text=payload.content,
                 )
                 rounds = await _run_tool_rounds(turn, pending_tool_calls, echo_text)
                 if rounds.error is not None:
