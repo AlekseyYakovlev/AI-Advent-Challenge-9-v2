@@ -52,6 +52,7 @@ from agent.tool_guard import (
     TOOL_USE_RULE,
     TraceLeakFilter,
     build_clock_line,
+    build_llm_failure_note,
     build_tool_fallback_summary,
     looks_like_action_announcement,
     looks_like_action_claim,
@@ -353,7 +354,12 @@ def _llm_error_detail(exc: BaseException, provider_row: Any | None) -> str:
             f"(HTTP {exc.response.status_code}). "
             f"Проверьте переменную {provider_row.api_key_env or '—'} в .env."
         )
-    return f"LLM error: {str(exc)}"
+    if isinstance(exc, httpx.TimeoutException):
+        return (
+            f"LLM error: timeout ({type(exc).__name__}) — the model did not respond in time"
+        )
+    message = str(exc).strip() or type(exc).__name__
+    return f"LLM error: {message}"
 
 
 @dataclass
@@ -685,6 +691,23 @@ async def _reprompt_rejected_transitions(
     return text
 
 
+async def _send_llm_failure_note(
+    websocket: WebSocket,
+    turn: _ToolTurn,
+    error: Exception,
+    user_text: str,
+) -> str:
+    """Log an LLM failure that came after tool rounds and stream a note about it; return it."""
+    logger.error(
+        "llm_stream_failed_after_tools",
+        chat_id=turn.chat_id,
+        error_type=type(error).__name__,
+    )
+    note = "\n\n" + build_llm_failure_note(_llm_error_detail(error, turn.provider), user_text)
+    await websocket.send_json({"type": "token", "content": note})
+    return note
+
+
 async def _send_fallback_summary(
     websocket: WebSocket,
     results: list[dict[str, Any]],
@@ -934,6 +957,7 @@ async def _handle_chat_message(
                     "llm_stream_failed",
                     chat_id=chat_id,
                     error=str(exc),
+                    error_type=type(exc).__name__,
                 )
                 await websocket.send_json(
                     {
@@ -999,12 +1023,14 @@ async def _handle_chat_message(
                     user_text=payload.content,
                 )
                 rounds = await _run_tool_rounds(turn, pending_tool_calls, echo_text)
-                if rounds.error is not None:
+                llm_failed = rounds.error is not None
+                if rounds.error is not None and not rounds.results:
                     exc = rounds.error
                     logger.error(
                         "llm_stream_failed",
                         chat_id=chat_id,
                         error=str(rounds.error),
+                        error_type=type(exc).__name__,
                     )
                     await websocket.send_json(
                         {
@@ -1022,14 +1048,23 @@ async def _handle_chat_message(
                 memory_writes = _collect_memory_writes(rounds.results)
                 task_writes = _collect_task_writes(rounds.results)
                 await _send_tool_error_frames(websocket, rounds.results)
-                reprompt_text = await _reprompt_rejected_transitions(
-                    turn,
-                    _collect_rejected_transitions(rounds.results),
+                # After an LLM failure another call would only wait out a second timeout.
+                reprompt_text = (
+                    ""
+                    if llm_failed
+                    else await _reprompt_rejected_transitions(
+                        turn,
+                        _collect_rejected_transitions(rounds.results),
+                    )
                 )
                 assistant_text += reprompt_text
                 if not (rounds.text + reprompt_text).strip():
                     assistant_text += await _send_fallback_summary(
                         websocket, rounds.results, payload.content, assistant_text, chat_id,
+                    )
+                if rounds.error is not None:
+                    assistant_text += await _send_llm_failure_note(
+                        websocket, turn, rounds.error, payload.content,
                     )
                 pending_tool_calls = rounds.calls
 

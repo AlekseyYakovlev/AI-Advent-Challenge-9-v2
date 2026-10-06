@@ -341,6 +341,13 @@ def build_tool_fallback_summary(results: list[dict[str, Any]], user_text: str) -
     return "\n".join(lines)
 
 
+def build_llm_failure_note(detail: str, user_text: str) -> str:
+    """Return the note appended to a turn whose model call failed after tools already ran."""
+    if _CYRILLIC_RE.search(user_text) is not None:
+        return f"Модель не завершила ответ после выполнения инструментов: {detail}"
+    return f"The model did not finish the reply after the tools ran: {detail}"
+
+
 def _hold_start(buf: str) -> int:
     """Return the index from which buf may still turn into a header and must be withheld."""
     start = len(buf)

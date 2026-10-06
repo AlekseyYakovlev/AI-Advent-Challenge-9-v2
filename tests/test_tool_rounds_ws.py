@@ -182,8 +182,8 @@ def test_repeated_identical_call_is_not_dispatched_again() -> None:
 
 
 @respx.mock
-def test_round_two_llm_failure_deletes_user_message() -> None:
-    """A failing second-round follow-up sends LLM_ERROR, no done frame and drops the user message."""
+def test_round_two_llm_failure_keeps_turn_and_tool_results() -> None:
+    """A failing second-round follow-up keeps the user message and persists the tool trace."""
     respx.post(f"{BASE_URL}/v1/chat/completions").mock(
         side_effect=_stream_queue(
             [
@@ -200,12 +200,67 @@ def test_round_two_llm_failure_deletes_user_message() -> None:
             f"/ws/chat/{chat_id}", headers={"Origin": WS_ORIGIN},
         ) as ws:
             frames = _drain_until_terminal(ws, "two then fail")
+            messages = client.portal.call(_list_messages, chat_id)
+
+    assert frames[-1]["type"] == "done"
+    assert not [f for f in frames if f.get("code") == "LLM_ERROR"]
+    assert len(_tool_frames(frames)) == 2
+    assert [m for m in messages if m.role == "user"]
+    assistant = [m for m in messages if m.role == "assistant"]
+    assert len(assistant) == 1
+    assert "LLM error" in assistant[0].content
+    assert len(json.loads(assistant[0].tool_trace)) == 2
+
+
+@respx.mock
+def test_followup_timeout_keeps_turn_with_timeout_note() -> None:
+    """A follow-up ReadTimeout with an empty message still names the timeout in the saved note."""
+    state = {"streams": 0}
+    first = _tool_calls_response([_memory_call("c1", "save_working_memory", "k1")])
+
+    def _side_effect(request: httpx.Request) -> httpx.Response:
+        if json.loads(request.content).get("stream") is not True:
+            return httpx.Response(200, json={"choices": [{"message": {"content": "{}"}}]})
+        state["streams"] += 1
+        if state["streams"] == 1:
+            return first
+        raise httpx.ReadTimeout("")
+
+    respx.post(f"{BASE_URL}/v1/chat/completions").mock(side_effect=_side_effect)
+    with TestClient(app) as client:
+        login_test_client(client)
+        chat_id = client.post("/api/v1/chats", json={"title": "Timeout"}).json()["id"]
+        with client.websocket_connect(
+            f"/ws/chat/{chat_id}", headers={"Origin": WS_ORIGIN},
+        ) as ws:
+            frames = _drain_until_terminal(ws, "save then time out")
+            messages = client.portal.call(_list_messages, chat_id)
+
+    assert frames[-1]["type"] == "done"
+    assert len(_tool_frames(frames)) == 1
+    assert [m for m in messages if m.role == "user"]
+    assistant = [m for m in messages if m.role == "assistant"]
+    assert len(assistant) == 1
+    assert "timeout" in assistant[0].content
+    assert json.loads(assistant[0].tool_trace)
+
+
+@respx.mock
+def test_first_stream_failure_deletes_user_message() -> None:
+    """A failure before any tool ran keeps the old behaviour: LLM_ERROR and no user message."""
+    respx.post(f"{BASE_URL}/v1/chat/completions").mock(
+        side_effect=_stream_queue([httpx.Response(500, json={"error": "boom"})]),
+    )
+    with TestClient(app) as client:
+        login_test_client(client)
+        chat_id = client.post("/api/v1/chats", json={"title": "First"}).json()["id"]
+        with client.websocket_connect(
+            f"/ws/chat/{chat_id}", headers={"Origin": WS_ORIGIN},
+        ) as ws:
+            frames = _drain_until_terminal(ws, "fail at once")
             messages = _wait_for_user_message_removal(client, chat_id)
 
-    assert frames[-1]["type"] == "error"
     assert frames[-1]["code"] == "LLM_ERROR"
-    assert not [f for f in frames if f.get("type") == "done"]
-    assert len(_tool_frames(frames)) == 2
     assert not [m for m in messages if m.role in ("user", "assistant")]
 
 

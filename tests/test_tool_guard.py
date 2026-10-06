@@ -2,6 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 
+import httpx
 import pytest
 
 from agent import context_engine
@@ -20,7 +21,31 @@ from agent.tool_guard import (
     looks_like_action_claim,
     strip_tool_use_rule,
     user_asked_to_merge,
+    build_llm_failure_note,
 )
+from agent.ws import _llm_error_detail
+
+
+def test_llm_error_detail_timeout_is_descriptive() -> None:
+    """An empty-message timeout still names the timeout and the exception type."""
+    detail = _llm_error_detail(httpx.ReadTimeout(""), None)
+    assert "timeout" in detail
+    assert "ReadTimeout" in detail
+
+
+def test_llm_error_detail_empty_message_uses_type_name() -> None:
+    """An exception with no message falls back to its type name."""
+    assert _llm_error_detail(RuntimeError(""), None) == "LLM error: RuntimeError"
+    assert _llm_error_detail(RuntimeError("boom"), None) == "LLM error: boom"
+
+
+def test_build_llm_failure_note_follows_user_language() -> None:
+    """The note is Russian for Cyrillic user text and English otherwise."""
+    detail = "LLM error: timeout (ReadTimeout)"
+    russian = build_llm_failure_note(detail, "сделай")
+    english = build_llm_failure_note(detail, "do it")
+    assert detail in russian and "Модель" in russian
+    assert detail in english and "The model" in english
 
 
 @pytest.mark.parametrize(
