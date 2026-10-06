@@ -27,7 +27,7 @@ stopped_at: Phase 16 complete (8/8) — ready to discuss Phase 17
 Phase: 17
 Plan: Not started
 Status: Ready to plan
-Last activity: 2026-10-06 - Completed quick task 261006-mby: scheduler backlog 999.7-999.9
+Last activity: 2026-10-06 - Completed quick task 261006-ncq: Day-20 backlog 999.1-999.3
 
 ## Performance Metrics
 
@@ -93,6 +93,7 @@ None.
 | 261006-l4o | Fix backlog 999.13-999.16: citations WR-01..WR-04 (exact min length, auto quote state/chip, MAX_QUOTE_LINES leak, gated-turn rollback) | 2026-10-06 | 44e986b | | [261006-l4o-fix-backlog-999-13-999-16-citations-wr-0](./quick/261006-l4o-fix-backlog-999-13-999-16-citations-wr-0/) |
 | 261006-lrs | Fix backlog 999.12: MCP «Отключить» persists (auto_connect flag), no auto-reconnect of manually disconnected servers | 2026-10-06 | c30a3e6 | | [261006-lrs-fix-backlog-999-12-mcp-disable-toggle-in](./quick/261006-lrs-fix-backlog-999-12-mcp-disable-toggle-in/) |
 | 261006-mby | Fix scheduler backlog 999.7-999.9: schedule_task intent gate + cancel bound to named job, DST fall-back fold in next_cron_run, /ws/events session re-check | 2026-10-06 | d98e35f | | [261006-mby-fix-scheduler-backlog-999-7-999-9-schedu](./quick/261006-mby-fix-scheduler-backlog-999-7-999-9-schedu/) |
+| 261006-ncq | Fix Day-20 backlog 999.1-999.3: merge intent gate, descriptive LLM timeout + keep turn after tools ran, trim wasted tool rounds/nudge | 2026-10-06 | dbc4c6e | | [261006-ncq-fix-day-20-backlog-999-1-999-3-merge-gat](./quick/261006-ncq-fix-day-20-backlog-999-1-999-3-merge-gat/) |
 | Phase 12 P01 | 25min | 3 tasks | 13 files |
 | Phase 12 P02 | 15min | 2 tasks | 4 files |
 | Phase 12 P03 | 45min | 2 tasks | 7 files |
