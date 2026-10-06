@@ -1,14 +1,18 @@
 """Tests for the per-user EventHub and the /ws/events WebSocket endpoint."""
 
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pytest
+from sqlmodel import delete, select
 from starlette.testclient import TestClient
 
 from agent.events import EVENTS_QUEUE_MAXSIZE, EventHub, hub
 from agent.main import app
 from shared.auth import SESSION_COOKIE_NAME
+from shared.database import async_session_factory
+from shared.models import Session as SessionRow
 from tests.conftest import login_test_client
 
 WS_ORIGIN = "http://localhost:8000"
@@ -185,3 +189,82 @@ async def test_hub_unsubscribe_last_queue_removes_user() -> None:
     event_hub.unsubscribe(1, queue)
     event_hub.unsubscribe(99, queue)
     assert event_hub.subscriber_count(1) == 0
+
+
+async def _delete_sessions(user_id: int) -> None:
+    async with async_session_factory() as db:
+        await db.exec(delete(SessionRow).where(SessionRow.user_id == user_id))
+        await db.commit()
+
+
+async def _expire_sessions(user_id: int) -> None:
+    async with async_session_factory() as db:
+        rows = (await db.exec(select(SessionRow).where(SessionRow.user_id == user_id))).all()
+        for row in rows:
+            row.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+            db.add(row)
+        await db.commit()
+
+
+async def _session_expiries(user_id: int) -> list[datetime]:
+    async with async_session_factory() as db:
+        rows = (await db.exec(select(SessionRow).where(SessionRow.user_id == user_id))).all()
+        return [row.expires_at for row in rows]
+
+
+@pytest.fixture
+def fast_recheck(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the events socket re-validate its session every 50 ms."""
+    monkeypatch.setattr("agent.events.EVENTS_RECEIVE_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr("agent.events.EVENTS_SESSION_RECHECK_SECONDS", 0.05)
+
+
+def _receive_until_close(ws: Any) -> int:
+    """Return the close code of the next websocket.close message."""
+    while True:
+        message = ws.receive()
+        if message["type"] == "websocket.close":
+            return int(message["code"])
+
+
+@pytest.mark.parametrize("mutate", [_delete_sessions, _expire_sessions], ids=["deleted", "expired"])
+def test_events_ws_closes_1008_when_session_gone(fast_recheck: None, mutate: Any) -> None:
+    """A deleted or expired session closes the open socket with 1008 and unsubscribes."""
+    with TestClient(app) as client:
+        user_id = login_test_client(client)
+        with client.websocket_connect(EVENTS_PATH, headers={"Origin": WS_ORIGIN}) as ws:
+            assert _wait_for_subscribers(client, user_id, 1) == 1
+            client.portal.call(mutate, user_id)
+            assert _receive_until_close(ws) == 1008
+        assert _wait_for_no_subscribers(client, user_id) == 0
+
+
+def test_events_ws_binary_frame_closes_1003(fast_recheck: None) -> None:
+    """A binary frame closes the socket with 1003 instead of crashing the handler."""
+    with TestClient(app) as client:
+        user_id = login_test_client(client)
+        with client.websocket_connect(EVENTS_PATH, headers={"Origin": WS_ORIGIN}) as ws:
+            assert _wait_for_subscribers(client, user_id, 1) == 1
+            ws.send_bytes(b"\x00")
+            assert _receive_until_close(ws) == 1003
+        assert _wait_for_no_subscribers(client, user_id) == 0
+
+
+def test_events_ws_recheck_keeps_valid_socket_and_does_not_slide_expiry(
+    fast_recheck: None,
+) -> None:
+    """While the session is valid pings and frames work and expires_at is never extended."""
+    frame = {"type": "task_deleted", "task_id": 11}
+    with TestClient(app) as client:
+        user_id = login_test_client(client)
+        with client.websocket_connect(EVENTS_PATH, headers={"Origin": WS_ORIGIN}) as ws:
+            assert _wait_for_subscribers(client, user_id, 1) == 1
+            # The handshake itself slides expiry; only later rechecks must not.
+            before = client.portal.call(_session_expiries, user_id)
+            for _ in range(4):
+                ws.send_text("ping")
+                time.sleep(0.08)
+            client.portal.call(_publish, user_id, frame)
+            assert ws.receive_json() == frame
+            after = client.portal.call(_session_expiries, user_id)
+        assert after == before
