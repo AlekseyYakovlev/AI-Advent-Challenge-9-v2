@@ -199,6 +199,29 @@ async def _get_mcp_server_or_404(
     return row
 
 
+async def _set_mcp_auto_connect(
+    session: AsyncSession,
+    row: McpServerConfig,
+    value: bool,
+) -> None:
+    """Persist the user's connect/disconnect intent for lazy MCP auto-connect."""
+    row.auto_connect = value
+    row.updated_at = datetime.now(timezone.utc)
+    try:
+        session.add(row)
+        await session.commit()
+        await session.refresh(row)
+    except Exception:
+        await session.rollback()
+        raise
+    logger.info(
+        "mcp_auto_connect_changed",
+        user_id=row.user_id,
+        server_id=row.id,
+        auto_connect=value,
+    )
+
+
 def _mcp_server_to_response(
     row: McpServerConfig,
     connection: McpConnectResult,
@@ -212,6 +235,7 @@ def _mcp_server_to_response(
         env_keys=sorted(mcp_config.load_env(row).keys()),
         cwd=row.cwd,
         enabled=row.enabled,
+        auto_connect=row.auto_connect,
         created_at=row.created_at,
         updated_at=row.updated_at,
         connection=connection,
@@ -1201,6 +1225,8 @@ async def connect_mcp_server(
             status_code=status.HTTP_409_CONFLICT,
             detail="MCP server is disabled",
         )
+    if not row.auto_connect:
+        await _set_mcp_auto_connect(session, row, True)
     logger.info("mcp_connect_requested", user_id=current_user.id, server_id=row.id)
     try:
         result = await mcp_client.connect_server(
@@ -1238,10 +1264,11 @@ async def disconnect_mcp_server(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> McpServerResponse:
-    """Close the live session of an MCP server."""
+    """Close the live session of an MCP server and stop lazy auto-connect for it."""
     row = await _get_mcp_server_or_404(session, current_user.id, server_id)
     logger.info("mcp_disconnect_requested", user_id=current_user.id, server_id=row.id)
     result = await mcp_client.disconnect_server(current_user.id, row.id)
+    await _set_mcp_auto_connect(session, row, False)
     return _mcp_server_to_response(row, result)
 
 

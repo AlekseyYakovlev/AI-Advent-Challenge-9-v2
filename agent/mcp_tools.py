@@ -180,11 +180,13 @@ async def _auto_connect_one(user_id: int, row: McpServerConfig) -> None:
 
 
 async def _auto_connect_missing(user_id: int, rows: list[McpServerConfig]) -> None:
-    """Concurrently connect enabled servers that have no live session and no recorded failure."""
+    """Concurrently connect enabled servers with auto_connect on that have no live session
+    and no recorded failure."""
     candidates = [
         row
         for row in rows
         if row.enabled
+        and row.auto_connect
         and row.id is not None
         and get_live_tools(user_id, row.id) is None
         and not has_recorded_failure(user_id, row.id)
@@ -220,7 +222,8 @@ async def build_mcp_toolset(
 ) -> McpToolset:
     """Build the toolset from the user's enabled servers, connecting idle ones first.
 
-    With MCP_AUTO_CONNECT on, enabled servers without a live session or a recorded failure
+    With MCP_AUTO_CONNECT on, enabled servers with auto_connect on and without a live session
+    or a recorded failure
     are connected concurrently before their tools are read; failures add no tools.
     """
     rows = await mcp_config.list_servers(session, user_id)

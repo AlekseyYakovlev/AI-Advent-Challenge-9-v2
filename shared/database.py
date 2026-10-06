@@ -236,6 +236,26 @@ async def migrate_add_scheduledtask_provider_id(conn: Any) -> None:
         )
 
 
+async def migrate_add_mcpserverconfig_auto_connect(conn: Any) -> None:
+    """Add auto_connect column to mcpserverconfig when missing (idempotent)."""
+    table_check = await conn.execute(
+        text(
+            "SELECT name FROM sqlite_master "
+            "WHERE type='table' AND name='mcpserverconfig'",
+        ),
+    )
+    if table_check.fetchone() is None:
+        return
+
+    result = await conn.execute(text("PRAGMA table_info(mcpserverconfig)"))
+    columns = [row[1] for row in result.fetchall()]
+    if "auto_connect" not in columns:
+        logger.info("migrating_mcpserverconfig_add_auto_connect")
+        await conn.execute(
+            text("ALTER TABLE mcpserverconfig ADD COLUMN auto_connect BOOLEAN DEFAULT 1"),
+        )
+
+
 async def migrate_add_user_id_columns(conn: Any) -> None:
     """Add nullable user_id columns to chat and settings when missing (idempotent)."""
     for table in ("chat", "settings"):
@@ -354,6 +374,7 @@ async def init_db() -> None:
         await migrate_add_message_tool_trace(conn)
         await migrate_add_message_rag_sources(conn)
         await migrate_add_scheduledtask_provider_id(conn)
+        await migrate_add_mcpserverconfig_auto_connect(conn)
         await migrate_add_chatragconfig_rank_columns(conn)
         await conn.run_sync(SQLModel.metadata.create_all)
         try:

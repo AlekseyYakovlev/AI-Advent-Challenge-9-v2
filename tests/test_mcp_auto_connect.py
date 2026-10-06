@@ -15,6 +15,7 @@ from agent.schemas import McpConnectionStatus, McpErrorCode
 from agent.tools import TOOL_REGISTRY
 from shared.config import settings
 from shared.database import async_session_factory
+from shared.models import McpServerConfig
 from tests.conftest import _create_user
 
 FIXTURE = str(Path(__file__).parent / "fixtures" / "mcp_stdio_server.py")
@@ -242,3 +243,43 @@ async def test_dead_session_is_not_respawned(monkeypatch: pytest.MonkeyPatch) ->
     assert outcome.error_code == McpErrorCode.PROCESS_EXITED
     assert spawns() == 0
     assert mcp_client.has_recorded_failure(user_id, server_id)
+
+
+async def _set_auto_connect(server_id: int, value: bool) -> None:
+    async with async_session_factory() as session:
+        row = await session.get(McpServerConfig, server_id)
+        row.auto_connect = value
+        session.add(row)
+        await session.commit()
+
+
+async def test_manual_disconnect_is_not_reconnected(monkeypatch: pytest.MonkeyPatch) -> None:
+    user_id = await _create_user("auto_disc", "pw")
+    server_id = await _add(user_id)
+    await _build(user_id)
+    assert mcp_client.is_connected(user_id, server_id)
+
+    await _set_auto_connect(server_id, False)
+    await mcp_client.disconnect_server(user_id, server_id)
+    spawns = _count_spawns(monkeypatch)
+    toolset = await _build(user_id)
+
+    assert ECHO not in toolset.bindings
+    assert toolset.schemas == []
+    assert spawns() == 0
+    assert not mcp_client.is_connected(user_id, server_id)
+
+
+async def test_auto_connect_off_skips_only_that_server(monkeypatch: pytest.MonkeyPatch) -> None:
+    user_id = await _create_user("auto_sib", "pw")
+    off_id = await _add(user_id, name="Off")
+    on_id = await _add(user_id, name="On")
+    await _set_auto_connect(off_id, False)
+    spawns = _count_spawns(monkeypatch)
+
+    toolset = await _build(user_id)
+
+    assert spawns() == 1
+    assert mcp_client.is_connected(user_id, on_id)
+    assert not mcp_client.is_connected(user_id, off_id)
+    assert toolset.schemas

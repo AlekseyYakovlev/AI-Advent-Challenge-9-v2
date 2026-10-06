@@ -370,3 +370,24 @@ async def test_repeated_edits_do_not_grow_locks(authenticated_client: AsyncClien
 
     assert key not in mcp_client._locks
     assert len(mcp_client._locks) == before
+
+
+async def test_disconnect_persists_auto_connect_and_connect_restores(
+    authenticated_client: AsyncClient,
+) -> None:
+    """Disconnect turns auto_connect off (persisted); connect turns it back on."""
+    created = await _create(authenticated_client)
+    assert created["auto_connect"] is True
+    await authenticated_client.post(f"{BASE}/{created['id']}/connect")
+
+    resp = await authenticated_client.post(f"{BASE}/{created['id']}/disconnect")
+    assert resp.status_code == 200
+    assert resp.json()["auto_connect"] is False
+    listed = (await authenticated_client.get(BASE)).json()
+    assert [s["auto_connect"] for s in listed if s["id"] == created["id"]] == [False]
+
+    resp = await authenticated_client.post(f"{BASE}/{created['id']}/connect")
+    assert resp.status_code == 200
+    assert resp.json()["auto_connect"] is True
+    listed = (await authenticated_client.get(BASE)).json()
+    assert [s["auto_connect"] for s in listed if s["id"] == created["id"]] == [True]
