@@ -419,49 +419,9 @@ Plans:
 
 - [ ] TBD (promote with /bm:review-backlog when ready)
 
-### Phase 999.13: Citations: trivial quotes reach exact status (Phase 16 review WR-01) (BACKLOG)
-
-**Goal:** quotes of 8 or more characters (e.g. «в базе знаний») get `exact` status and can rebind to any fragment, which makes `answer_supported` true and hides the «не подтверждён» warning (`agent/rag_cite.py:179-191`). Require a minimum total quote length (or distinctiveness) for `exact`; update the 16-01 tests that pin the current behaviour.
-**Requirements:** TBD
-**Plans:** 0 plans
-
-Plans:
-
-- [ ] TBD (promote with /bm:review-backlog when ready)
-
-### Phase 999.14: Citations: auto-picked quotes shown as verified (Phase 16 review WR-02) (BACKLOG)
-
-**Goal:** auto quotes are stored as `exact` and rendered with the green «✓ подтверждена» chip although they are picked by word overlap and confirm nothing (`agent/rag_cite.py:416`, `ui/static/app.js:4296`). Give them their own state or a neutral chip; tests from 16-03/16-06 probably pin the current state.
-**Requirements:** TBD
-**Plans:** 0 plans
-
-Plans:
-
-- [ ] TBD (promote with /bm:review-backlog when ready)
-
-### Phase 999.15: Citations: quote lines past MAX_QUOTE_LINES leak into the answer (Phase 16 review WR-03) (BACKLOG)
-
-**Goal:** past `MAX_QUOTE_LINES` (10) the extra quote lines stay in the visible answer, and `body_refs` counts their `[N]` markers, inflating `valid` and possibly setting `supported` falsely (`agent/rag_cite.py:250-265`). Related: an answer made only of quote lines keeps them in the visible text.
-**Requirements:** TBD
-**Plans:** 0 plans
-
-Plans:
-
-- [ ] TBD (promote with /bm:review-backlog when ready)
-
-### Phase 999.16: Strict mode: gated-turn error handling and migration default (Phase 16 review WR-04) (BACKLOG)
-
-**Goal:** `_complete_gated_turn` (`agent/ws.py:700-863`) has no error/rollback handling and sits outside the stream try/finally and `active_streams`. Also: the migration default `strict=1` (`shared/database.py:150`) silently turns every existing RAG chat strict (documented D-15 decision; revisit if it surprises users).
-**Requirements:** TBD
-**Plans:** 0 plans
-
-Plans:
-
-- [ ] TBD (promote with /bm:review-backlog when ready)
-
 ### Phase 999.17: Phase 16 review info items IN-01..IN-03 (BACKLOG)
 
-**Goal:** IN-01 `assert` used for type narrowing (`agent/rag_cite.py:298`); IN-02 bare empty «Цитаты:» heading stays in stored content when a «не знаю» reply ends with it (`parse_tail`, `agent/rag_cite.py:229-268`); IN-03 new `build_rag_payload` quote parameters are unused because `finalize_rag_turn` merges `payload_fields()` by hand (`agent/rag.py:268-299`, `agent/rag_turn.py:266-294`). Full report: `.planning/phases/16-citations-and-anti-hallucination-day-24/16-REVIEW.md`.
+**Goal:** (IN-01 fixed in quick 261006-l4o.) IN-02 bare empty «Цитаты:» heading stays in stored content when a «не знаю» reply ends with it (`parse_tail`, `agent/rag_cite.py:229-268`); IN-03 new `build_rag_payload` quote parameters are unused because `finalize_rag_turn` merges `payload_fields()` by hand (`agent/rag.py:268-299`, `agent/rag_turn.py:266-294`). Full report: `.planning/phases/16-citations-and-anti-hallucination-day-24/16-REVIEW.md`.
 **Requirements:** TBD
 **Plans:** 0 plans
 
