@@ -4296,7 +4296,11 @@ function buildRagQuoteChip(quote) {
     let text = '✗ не подтверждена';
     let tone = 'border-red-700 bg-red-900/30 text-red-400';
     let title = 'Цитата не найдена ни в одном из фрагментов, отправленных модели';
-    if (quote.state === 'exact') {
+    if (quote.auto || quote.state === 'auto') {
+        text = 'подобрана автоматически';
+        tone = 'bg-slate-800 text-slate-300 border-slate-700';
+        title = 'Предложение выбрано кодом из фрагмента по совпадению слов; ответ модели оно не подтверждает';
+    } else if (quote.state === 'exact') {
         text = '✓ подтверждена';
         tone = 'border-emerald-700 bg-emerald-900/30 text-emerald-400';
         title = 'Цитата дословно найдена в указанном фрагменте';
@@ -4316,11 +4320,7 @@ function buildRagQuoteRow(quote) {
     const card = mcpEl('div', 'rag-quote-row bg-slate-800 border border-slate-700 rounded-lg p-3 space-y-1');
     const head = mcpEl('div', 'text-xs flex flex-wrap items-center gap-x-2 gap-y-1');
     head.appendChild(buildRagQuoteChip(quote));
-    if (quote.auto) {
-        const chip = mcpEl('span', RAG_CHIP_NEUTRAL, 'подобрана автоматически');
-        chip.title = 'Модель не дала подтверждённых цитат; предложение выбрано кодом из фрагмента по совпадению слов';
-        head.appendChild(chip);
-    } else if (quote.rebound) {
+    if (!quote.auto && quote.rebound) {
         const chip = mcpEl('span', RAG_CHIP_NEUTRAL, 'источник исправлен');
         chip.title = 'Цитата не нашлась в указанном фрагменте, но найдена в другом; источник заменён';
         head.appendChild(chip);
@@ -4334,7 +4334,7 @@ function buildRagQuoteRow(quote) {
     }
     card.appendChild(head);
     const body = String(quote.text || '');
-    const tone = quote.state === 'unverified' ? 'text-slate-400' : 'text-slate-200';
+    const tone = quote.state === 'unverified' ? 'text-slate-400' : (quote.auto || quote.state === 'auto') ? 'text-slate-300' : 'text-slate-200';
     const para = mcpEl('p', `text-sm ${tone} line-clamp-4 whitespace-pre-wrap`, `«${body}»`);
     card.appendChild(para);
     if (body.length > 300) {
