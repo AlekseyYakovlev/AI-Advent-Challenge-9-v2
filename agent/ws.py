@@ -706,46 +706,73 @@ async def _complete_gated_turn(
     payload: MessagePayload,
     rag_turn: RagTurn,
 ) -> None:
-    """Send and store the code-built reply of a gated strict turn without calling the LLM."""
+    """Send and store the code-built reply of a gated strict turn without calling the LLM.
+
+    A storage failure rolls the session back, removes the user message and sends an error frame.
+    """
     reply_text: str = rag_turn.reply_text or ""
-    await websocket.send_json({"type": "token", "content": reply_text})
-    assistant_msg = await _persist_assistant_message(
-        session,
-        chat,
-        user_msg.id,
-        reply_text,
-        rag_sources=rag_turn.sources_json,
-    )
-    extract_and_update_facts(
-        session,
-        chat_id,
-        payload.content,
-        payload.model,
-        user_id=chat.user_id,
-        provider_id=payload.provider_id,
-    )
-    stats = await compute_chat_stats(session, chat_id, payload.model)
-    if chat.title == DEFAULT_CHAT_TITLE and user_msg.parent_id is None:
-        schedule_title_generation(
+    active_streams[chat_id] = asyncio.current_task()
+    try:
+        try:
+            assistant_msg = await _persist_assistant_message(
+                session,
+                chat,
+                user_msg.id,
+                reply_text,
+                rag_sources=rag_turn.sources_json,
+            )
+            stats = await compute_chat_stats(session, chat_id, payload.model)
+        except Exception as exc:
+            logger.error("rag_gated_reply_failed", chat_id=chat_id, error=str(exc))
+            await session.rollback()
+            try:
+                await session.delete(user_msg)
+                await session.commit()
+            except Exception as cleanup_exc:
+                await session.rollback()
+                logger.error(
+                    "rag_gated_cleanup_failed", chat_id=chat_id, error=str(cleanup_exc),
+                )
+            await websocket.send_json(
+                {
+                    "type": "error",
+                    "detail": "Не удалось сохранить ответ. Попробуйте ещё раз.",
+                    "code": "RAG_GATED_FAILED",
+                },
+            )
+            return
+        extract_and_update_facts(
+            session,
             chat_id,
-            chat.user_id,
             payload.content,
-            reply_text,
             payload.model,
-            payload.provider_id,
+            user_id=chat.user_id,
+            provider_id=payload.provider_id,
         )
-    await websocket.send_json(
-        {
-            "type": "done",
-            "message_id": assistant_msg.id,
-            "stats": stats,
-            "memory_writes": [],
-            "task_writes": [],
-            "invariant_conflict": None,
-            "rag": rag_turn.done_payload,
-        },
-    )
-    logger.info("rag_gated_reply_sent", chat_id=chat_id, message_id=assistant_msg.id)
+        if chat.title == DEFAULT_CHAT_TITLE and user_msg.parent_id is None:
+            schedule_title_generation(
+                chat_id,
+                chat.user_id,
+                payload.content,
+                reply_text,
+                payload.model,
+                payload.provider_id,
+            )
+        await websocket.send_json({"type": "token", "content": reply_text})
+        await websocket.send_json(
+            {
+                "type": "done",
+                "message_id": assistant_msg.id,
+                "stats": stats,
+                "memory_writes": [],
+                "task_writes": [],
+                "invariant_conflict": None,
+                "rag": rag_turn.done_payload,
+            },
+        )
+        logger.info("rag_gated_reply_sent", chat_id=chat_id, message_id=assistant_msg.id)
+    finally:
+        active_streams.pop(chat_id, None)
 
 
 async def _handle_chat_message(

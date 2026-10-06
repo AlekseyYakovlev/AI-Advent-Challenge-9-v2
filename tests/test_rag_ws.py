@@ -538,3 +538,35 @@ def test_strict_off_keeps_tail_and_has_no_quotes(monkeypatch: pytest.MonkeyPatch
     frames, done, assistant = _strict_turn(monkeypatch, lambda body: text, strict=False)
     assert assistant.content == text
     assert done["rag"].get("quotes", []) == []
+
+
+@respx.mock
+def test_gated_turn_persist_failure_rolls_back_and_chat_recovers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent import ws as ws_module
+    from agent.state import active_streams
+
+    captured: list[dict[str, Any]] = []
+    _stage_route(captured, stage_ok=True)
+    original = ws_module._persist_assistant_message
+
+    async def failing_persist(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("disk full")
+
+    with TestClient(app) as client:
+        chat_id = _open_rag_chat(client, monkeypatch, threshold=0.99, strict=True)
+        with client.websocket_connect(
+            f"/ws/chat/{chat_id}", headers={"Origin": WS_ORIGIN}
+        ) as ws:
+            monkeypatch.setattr(ws_module, "_persist_assistant_message", failing_persist)
+            frames = _send_and_drain(ws, QUESTION)
+            assert [f["type"] for f in frames] == ["error"]
+            assert frames[0]["code"] == "RAG_GATED_FAILED"
+            assert client.portal.call(_messages, chat_id) == []
+            assert chat_id not in active_streams
+            monkeypatch.setattr(ws_module, "_persist_assistant_message", original)
+            second = _send_and_drain(ws, QUESTION)
+        assert [f["type"] for f in second] == ["token", "done"]
+        assert len(client.portal.call(_messages, chat_id)) == 2
+        assert chat_id not in active_streams
