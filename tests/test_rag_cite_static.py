@@ -141,3 +141,9 @@ def test_answer_line_functions_have_no_html_injection(name: str) -> None:
     src = _function_source(name)
     for forbidden in ("innerHTML", "insertAdjacentHTML", "outerHTML"):
         assert forbidden not in src
+
+
+def test_auto_quote_chip_is_neutral_and_checked_before_exact() -> None:
+    src = _function_source("buildRagQuoteChip")
+    assert "quote.auto" in src
+    assert src.index("quote.auto") < src.index("'exact'")

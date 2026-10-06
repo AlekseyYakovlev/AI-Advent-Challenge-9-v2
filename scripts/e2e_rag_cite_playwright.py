@@ -226,7 +226,7 @@ async def scenarios(page: Any, creds: dict[str, str]) -> None:
         sources_by_rank.get(q["rank"], {}).get("file") == q.get("file")
         for q in p_quotes if isinstance(q.get("rank"), int)
     )
-    states_ok = all(q.get("state") in ("exact", "fuzzy", "unverified") for q in p_quotes)
+    states_ok = all(q.get("state") in ("exact", "fuzzy", "unverified", "auto") for q in p_quotes)
     report("S4 stored payload: v3, strict, quote states, quote files match the source of their rank",
            payload.get("v") == 3 and payload.get("strict") is True and states_ok and files_ok,
            f"v={payload.get('v')} strict={payload.get('strict')} verdict={payload.get('verdict')} "

@@ -147,6 +147,8 @@ _CHATRAGCONFIG_RANK_COLUMNS: tuple[tuple[str, str], ...] = (
     ("llm_rerank", "BOOLEAN DEFAULT 0"),
     ("hybrid", "BOOLEAN DEFAULT 0"),
     ("rewrite", "BOOLEAN DEFAULT 0"),
+    # Strict mode is on by default for existing and new RAG chats (decision D-15);
+    # users opt out with the «Строгий режим» switch.
     ("strict", "BOOLEAN DEFAULT 1"),
 )
 

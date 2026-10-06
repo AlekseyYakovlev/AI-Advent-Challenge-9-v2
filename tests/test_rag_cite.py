@@ -9,6 +9,7 @@ import agent.rag_cite as rc
 from agent.rag_cite import (
     IDK_NO_CANDIDATES,
     IDK_SENTENCE,
+    STATE_AUTO,
     STATE_EXACT,
     STATE_FUZZY,
     STATE_UNVERIFIED,
@@ -201,11 +202,56 @@ def test_parse_tail_no_heading_unchanged() -> None:
     assert parse_tail("Просто ответ [1].") == ("Просто ответ [1].", [])
 
 
-def test_parse_tail_empty_clean_returns_original() -> None:
-    text = "Цитаты:\n[1] «q»"
-    clean, lines = parse_tail(text)
-    assert clean == text
+def test_parse_tail_quotes_only_returns_empty_clean() -> None:
+    clean, lines = parse_tail("Цитаты:\n[1] «q»")
+    assert clean == ""
     assert lines == [(1, "q")]
+
+
+def test_parse_tail_swallows_quote_lines_past_cap() -> None:
+    quotes = "\n".join(f"[{n}] «цитата номер {n}»" for n in range(1, 13))
+    text = f"Ответ [1].\n\nЦитаты:\n{quotes}\n\nХвост абзаца."
+    clean, lines = parse_tail(text)
+    assert len(lines) == rc.MAX_QUOTE_LINES
+    assert clean == "Ответ [1].\n\nХвост абзаца."
+    assert "[11]" not in clean and "[12]" not in clean
+
+
+def test_process_discarded_quote_lines_do_not_count_as_body_refs() -> None:
+    quotes = "\n".join(f"[1] «цитата номер {n}»" for n in range(1, 11))
+    text = f"Ответ без ссылок.\n\nЦитаты:\n{quotes}\n[2] «лишняя строка»"
+    result = process_answer("q", text, _two_chunks())
+    assert result.answer == "Ответ без ссылок."
+    assert result.answer_supported is False
+    assert result.invalid_refs == 0
+
+
+def test_match_short_quote_is_never_exact() -> None:
+    chunk = "В тексте сказано, что в базе знаний нет ответа на вопрос."
+    assert match_quote("в базе знаний", chunk) == STATE_UNVERIFIED
+    assert match_quote("в базе знаний … нет ответа", chunk) == STATE_UNVERIFIED
+
+
+def test_process_short_quote_does_not_support_answer() -> None:
+    chunks = [_chunk("c", "f.docx", "В тексте сказано, что в базе знаний нет ответа на вопрос.")]
+    result = process_answer("q", "Ответ.\n\nЦитаты:\n[1] «в базе знаний»", chunks)
+    assert result.answer_supported is False
+    assert result.quotes[0].state == STATE_UNVERIFIED
+    assert any(item.auto for item in result.quotes)
+
+
+def test_auto_quotes_have_auto_state() -> None:
+    result = process_answer("q", "Какой-то ответ без ссылок.", _two_chunks())
+    assert result.quotes and all(item.state == STATE_AUTO == "auto" for item in result.quotes)
+    assert all(entry["state"] == "auto" for entry in result.payload_fields(_two_chunks())["quotes"])
+
+
+def test_process_quotes_only_answer_shows_plain_quote_text() -> None:
+    result = process_answer("q", f"Цитаты:\n[1] «{SENTENCE}»", _two_chunks())
+    assert result.answer == SENTENCE
+    assert result.answer_empty is False
+    assert result.answer_supported is True
+    assert result.invalid_refs == 0
 
 
 # --- body_refs / is_idk ----------------------------------------------------
