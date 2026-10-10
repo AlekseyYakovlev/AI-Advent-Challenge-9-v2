@@ -8,7 +8,7 @@
 
 ### Modals (carried over from v2.0, Day 21)
 
-- [ ] **MODAL-01**: Every modal in the app closes only via its "×" button; a click on the backdrop (outside the dialog) and the Escape key no longer close it
+- [x] **MODAL-01**: Every modal in the app closes only via its "×" button; a click on the backdrop (outside the dialog) and the Escape key no longer close it
 
 ### Long-term memory editing (carried over from v2.0, Day 21)
 
@@ -21,17 +21,17 @@
 
 ### Knowledge base indexing (Day 21)
 
-- [ ] **KB-01**: User sees a collapsible "База знаний" block in the left sidebar with a "Добавить" button and the list of their knowledge bases (name, status, file/chunk counts), each with a "Удалить" button; knowledge bases are scoped by `user_id`
-- [ ] **KB-02**: "Добавить" opens a modal with: KB name (string); files area showing one or more selected files with a "Выбрать файлы" button; chunking strategy switch "по фиксированному размеру" / "по структуре (заголовки/разделы/файлы)"; "Размер чанка" and "Перекрытие" number fields shown only for the fixed-size strategy; embedding model dropdown built like the main model picker with default `giga-embeddings-instruct-480m-0826`; "Индексировать" button
-- [ ] **KB-03**: User can upload PDF, TXT and MD files; PDF text is extracted with PyMuPDF and cleaned (repeated headers/footers and page numbers stripped, hyphenation and whitespace normalized); a file without a text layer (scan) fails with a readable message
-- [ ] **KB-04**: Fixed-size chunking splits text into chunks of the given size (characters) with the given overlap; the server validates size and overlap (`0 <= overlap < size`) and rejects invalid values with a Russian message
-- [ ] **KB-05**: Structural chunking splits by document structure — files, headings/sections and, for legal texts, "Глава" / "Статья N" boundaries — and sub-splits sections that exceed the embedding model's input limit
-- [ ] **KB-06**: Every chunk is embedded through the selected LM Studio embedding model (`/v1/embeddings`, batched, explicit model load when LM Studio does not auto-load it, per-model query/document prefixes); embedding models typed `llm` by LM Studio (e.g. giga-embeddings) remain selectable
-- [ ] **KB-07**: The index is persisted as one FAISS index per knowledge base (cosine via normalized inner product) plus SQLite rows for the KB, its documents and chunks; each chunk carries metadata `source`, `title`/file, `section`, `chunk_id` (plus page/char range); the KB row records embedding model and vector dimension
-- [ ] **KB-08**: Indexing runs as a background job without blocking the Agent (health checks keep passing); the UI shows live status and progress (queued / indexing x of y / ready / failed with a readable error) via `/ws/events` with REST fallback; a job interrupted by an Agent restart is marked failed
-- [ ] **KB-09**: Deleting a knowledge base removes its SQLite rows (cascade), its on-disk index and uploaded files, and in-memory caches; another user's KB is never visible or accessible (404)
-- [ ] **KB-10**: User can run a test search against a KB ("тест поиска" field in the KB UI, backed by `POST /api/v1/kb/{id}/search`) and see the top chunks with scores and metadata
-- [ ] **KB-11**: Both PDFs from `C:\Projects\RAG` (ФЗ-196, КоАП РФ) index successfully with each chunking strategy; pytest covers chunking, persistence, scoping and delete with mocked embeddings and isolated index directories
+- [x] **KB-01**: User sees a collapsible "База знаний" block in the left sidebar with a "Добавить" button and the list of their knowledge bases (name, status, file/chunk counts), each with a "Удалить" button; knowledge bases are scoped by `user_id`
+- [x] **KB-02**: "Добавить" opens a modal with: KB name (string); files area showing one or more selected files with a "Выбрать файлы" button; chunking strategy switch "по фиксированному размеру" / "по структуре (заголовки/разделы/файлы)"; "Размер чанка" and "Перекрытие" number fields shown only for the fixed-size strategy; embedding model dropdown built like the main model picker with default `giga-embeddings-instruct-480m-0826`; "Индексировать" button
+- [x] **KB-03**: User can upload PDF, TXT and MD files; PDF text is extracted with PyMuPDF and cleaned (repeated headers/footers and page numbers stripped, hyphenation and whitespace normalized); a file without a text layer (scan) fails with a readable message
+- [x] **KB-04**: Fixed-size chunking splits text into chunks of the given size (characters) with the given overlap; the server validates size and overlap (`0 <= overlap < size`) and rejects invalid values with a Russian message
+- [x] **KB-05**: Structural chunking splits by document structure — files, headings/sections and, for legal texts, "Глава" / "Статья N" boundaries — and sub-splits sections that exceed the embedding model's input limit
+- [x] **KB-06**: Every chunk is embedded through the selected LM Studio embedding model (`/v1/embeddings`, batched, explicit model load when LM Studio does not auto-load it, per-model query/document prefixes); embedding models typed `llm` by LM Studio (e.g. giga-embeddings) remain selectable
+- [x] **KB-07**: The index is persisted as one FAISS index per knowledge base (cosine via normalized inner product) plus SQLite rows for the KB, its documents and chunks; each chunk carries metadata `source`, `title`/file, `section`, `chunk_id` (plus page/char range); the KB row records embedding model and vector dimension
+- [x] **KB-08**: Indexing runs as a background job without blocking the Agent (health checks keep passing); the UI shows live status and progress (queued / indexing x of y / ready / failed with a readable error) via `/ws/events` with REST fallback; a job interrupted by an Agent restart is marked failed
+- [x] **KB-09**: Deleting a knowledge base removes its SQLite rows (cascade), its on-disk index and uploaded files, and in-memory caches; another user's KB is never visible or accessible (404)
+- [x] **KB-10**: User can run a test search against a KB ("тест поиска" field in the KB UI, backed by `POST /api/v1/kb/{id}/search`) and see the top chunks with scores and metadata
+- [x] **KB-11**: Both PDFs from `C:\Projects\RAG` (ФЗ-196, КоАП РФ) index successfully with each chunking strategy; pytest covers chunking, persistence, scoping and delete with mocked embeddings and isolated index directories
 
 ### First RAG query (Day 22)
 
@@ -94,24 +94,24 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| MODAL-01 | Phase 10 | Pending |
+| MODAL-01 | Phase 10 | Complete |
 | MEMUI-01 | Phase 11 | Complete |
 | MEMUI-02 | Phase 11 | Complete |
 | MEMUI-03 | Phase 11 | Complete |
 | MEMUI-04 | Phase 11 | Complete |
 | MEMUI-05 | Phase 11 | Complete |
 | MEMUI-06 | Phase 11 | Complete |
-| KB-01 | Phase 13 | Pending |
-| KB-02 | Phase 13 | Pending |
-| KB-03 | Phase 13 | Pending |
-| KB-04 | Phase 13 | Pending |
-| KB-05 | Phase 13 | Pending |
-| KB-06 | Phase 13 | Pending |
-| KB-07 | Phase 13 | Pending |
-| KB-08 | Phase 13 | Pending |
-| KB-09 | Phase 13 | Pending |
-| KB-10 | Phase 13 | Pending |
-| KB-11 | Phase 13 | Pending |
+| KB-01 | Phase 13 | Complete |
+| KB-02 | Phase 13 | Complete |
+| KB-03 | Phase 13 | Complete |
+| KB-04 | Phase 13 | Complete |
+| KB-05 | Phase 13 | Complete |
+| KB-06 | Phase 13 | Complete |
+| KB-07 | Phase 13 | Complete |
+| KB-08 | Phase 13 | Complete |
+| KB-09 | Phase 13 | Complete |
+| KB-10 | Phase 13 | Complete |
+| KB-11 | Phase 13 | Complete |
 | RAG-01 | Phase 14 | Complete |
 | RAG-02 | Phase 14 | Complete |
 | RAG-03 | Phase 14 | Complete |
