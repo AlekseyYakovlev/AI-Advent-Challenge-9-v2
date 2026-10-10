@@ -508,6 +508,19 @@ def _app_alive(proc: asyncio.subprocess.Process) -> None:
         raise RuntimeError(f"isolated app exited with code {proc.returncode}")
 
 
+# The agent accepts 10 messages per chat per minute; the driver stays one below it.
+SEND_WINDOW_S = 60.0
+SEND_WINDOW_MAX = 9
+
+
+def send_delay(sent: list[float], now: float) -> float:
+    """Seconds to wait before the next message so the chat rate limit is not hit."""
+    recent = [ts for ts in sent if now - ts < SEND_WINDOW_S]
+    if len(recent) < SEND_WINDOW_MAX:
+        return 0.0
+    return recent[-SEND_WINDOW_MAX] + SEND_WINDOW_S - now + 0.5
+
+
 async def run_scenario(
     run_name: str,
     scenario: dict[str, Any],
@@ -523,9 +536,14 @@ async def run_scenario(
     turns: list[dict[str, Any]] = []
     first_goal: str | None = None
     ws: Any = None
+    sent: list[float] = []
     try:
         for spec in scenario["turns"]:
             _app_alive(proc)
+            delay = send_delay(sent, time.monotonic())
+            if delay > 0:
+                await asyncio.sleep(delay)
+            sent.append(time.monotonic())
             if ws is None:
                 ws = await _connect(chat_id, token)
             began = time.monotonic()

@@ -272,6 +272,14 @@ async def test_read_timeout_becomes_error_record() -> None:
     assert record["rag"] is None and record["task_memory"] is None
 
 
+def test_send_delay_keeps_under_chat_rate_limit() -> None:
+    assert rag_dialog.send_delay([], 100.0) == 0.0
+    nine = [float(i) for i in range(9)]
+    assert rag_dialog.send_delay(nine[:8], 10.0) == 0.0
+    assert rag_dialog.send_delay(nine, 10.0) == pytest.approx(50.5)
+    assert rag_dialog.send_delay(nine, 100.0) == 0.0
+
+
 def test_turn_record_keeps_whole_rag_and_snapshot() -> None:
     rag = make_rag(task_memory=snapshot())
     outcome = ("done", "ответ", {"type": "done", "rag": rag}, None)
