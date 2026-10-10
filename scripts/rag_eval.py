@@ -1885,6 +1885,9 @@ def _add_dialog_parser(sub: Any) -> None:
         "--check", action="store_true", help="start the isolated app, log in, verify the KB; no chat"
     )
     dialog.add_argument("--force", action="store_true", help="re-run scenarios whose raw file exists")
+    dialog.add_argument(
+        "--render-only", action="store_true", help="re-render all outputs from the raw files; no model"
+    )
 
 
 async def dialog_command(args: argparse.Namespace) -> int:

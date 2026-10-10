@@ -2,7 +2,9 @@
 
 import argparse
 import asyncio
+import csv
 import hashlib
+import io
 import json
 import os
 import re
@@ -677,6 +679,8 @@ async def _check_only(args: argparse.Namespace) -> int:
 
 async def dialog_command(args: argparse.Namespace) -> int:
     """Entry point of the dialog sub-command; returns the process exit code."""
+    if getattr(args, "render_only", False):
+        return render_only(args)
     try:
         runs = parse_runs(args.runs)
         scenarios = load_scenarios(args.fixture, require_frozen=True)
@@ -704,4 +708,364 @@ async def dialog_command(args: argparse.Namespace) -> int:
         if todo:
             ok = await _execute_run(run_name, todo, by_id, args, counts) and ok
     write_run_meta(args, runs, started, counts)
+    raw_dir = args.out / "raw"
+    if raw_dir.is_dir() and list(raw_dir.glob("*.json")):
+        _render_outputs(args.out, scenarios, load_raws(raw_dir))
     return EXIT_OK if ok else EXIT_ABORTED
+
+
+VERDICT_LABELS: dict[str, str] = {
+    "ok": "ответ",
+    "gated": "шлюз: не знаю",
+    "model_idk": "модель: не знаю",
+    "no_rag": "без RAG",
+    "error": "ошибка",
+}
+NO_DATA: str = "нет данных"
+DASH: str = "—"
+MEMORY_FAILED_TEXT: str = "память не обновлена"
+ANSWER_COLUMNS: tuple[str, ...] = (
+    "run", "scenario", "turn", "kind", "question", "answer", "scenario_goal", "memory", "verdict",
+    "sources_present", "quotes", "memory_ok", "article_ok", "goal_kept", "condensed_query",
+    "judge_goal", "judge_goal_reason",
+)
+JUDGE_COLUMNS: tuple[str, ...] = ("judge_goal", "judge_goal_reason")
+SUMMARY_HEADER: tuple[str, ...] = (
+    "run", "сценарий", "ходов", "ответов", "ошибок", "gated", "model_idk", "с источниками",
+    "статья найдена", "память совпала", "цель сохранена", "память не обновлена", "переписано запросов",
+)
+
+
+def _run_order(raw: dict[str, Any]) -> tuple[int, str]:
+    """Sort key: main before baseline, then scenario id."""
+    run = raw.get("run")
+    return (RUN_NAMES.index(run) if run in RUN_NAMES else len(RUN_NAMES), str(raw.get("scenario")))
+
+
+def _checks(turn: dict[str, Any]) -> dict[str, Any]:
+    """Checks block of a turn record; empty when the record has an unexpected shape."""
+    checks = turn.get("checks")
+    return checks if isinstance(checks, dict) else {}
+
+
+def _turn_verdict(turn: dict[str, Any]) -> str:
+    """Verdict code of a turn; an error frame always counts as an error."""
+    if turn.get("frame_type") == "error":
+        return "error"
+    return str(_checks(turn).get("verdict") or "error")
+
+
+def _verdict_text(turn: dict[str, Any]) -> str:
+    """Russian verdict label; an error turn carries its error detail."""
+    code = _turn_verdict(turn)
+    label = VERDICT_LABELS.get(code, code)
+    if code == "error" and turn.get("error"):
+        return f"{label}: {turn['error']}"
+    return label
+
+
+def _sources_text(turn: dict[str, Any]) -> str:
+    """Source file and article per source, «нет» when the turn had none."""
+    rag = turn.get("rag")
+    if not isinstance(rag, dict):
+        return NO_DATA if turn.get("frame_type") == "done" else "нет"
+    parts: list[str] = []
+    for source in rag.get("sources") or []:
+        article = rag_eval.parse_article(source.get("section"))
+        label = str(source.get("file") or source.get("source") or "?")
+        parts.append(f"{label} ст. {article}" if article else label)
+    return "; ".join(parts) if parts else "нет"
+
+
+def _quotes_text(turn: dict[str, Any]) -> str:
+    """Quote counts: verified by the model, automatic and unverified."""
+    checks = _checks(turn)
+    if not checks:
+        return NO_DATA
+    return (
+        f"модель {checks.get('quotes_model', 0)}, авто {checks.get('quotes_auto', 0)}, "
+        f"не подтв. {checks.get('quotes_unverified', 0)}"
+    )
+
+
+def _memory_items(snapshot: dict[str, Any], field: str, new_ids: set[Any]) -> list[str]:
+    """Texts of one snapshot list; items added in this turn get «новое»."""
+    texts: list[str] = []
+    for item in snapshot.get(field) or []:
+        if isinstance(item, dict):
+            text = str(item.get("text") or "")
+            texts.append(f"{text} (новое)" if item.get("id") in new_ids else text)
+        else:
+            texts.append(str(item))
+    return texts
+
+
+def _memory_text(turn: dict[str, Any]) -> str:
+    """Task-memory contents after the turn, with the items new in this turn marked."""
+    snapshot = turn.get("task_memory")
+    if not isinstance(snapshot, dict):
+        return DASH
+    new = snapshot.get("new") or {}
+    new_ids = set(new.get("ids") or [])
+    parts: list[str] = []
+    goal = snapshot.get("goal")
+    if goal:
+        parts.append(f"цель: {goal}" + (" (новое)" if new.get("goal") else ""))
+    clarified = _memory_items(snapshot, "clarified", new_ids)
+    if clarified:
+        parts.append("уточнено: " + "; ".join(clarified))
+    constraints = _memory_items(snapshot, "constraints", new_ids)
+    if constraints:
+        parts.append("ограничения: " + "; ".join(constraints))
+    text = " | ".join(parts) if parts else "пусто"
+    if snapshot.get("failed"):
+        text += f" [{MEMORY_FAILED_TEXT}]"
+    return text
+
+
+def _plain_memory(turn: dict[str, Any]) -> str:
+    """Memory text for the CSV and the judge: contents only, no turn markers."""
+    snapshot = turn.get("task_memory")
+    if not isinstance(snapshot, dict):
+        return ""
+    parts: list[str] = []
+    if snapshot.get("goal"):
+        parts.append(f"цель: {snapshot['goal']}")
+    for field, label in (("clarified", "уточнено"), ("constraints", "ограничения")):
+        texts = _memory_items(snapshot, field, set())
+        if texts:
+            parts.append(f"{label}: " + "; ".join(texts))
+    return " | ".join(parts)
+
+
+def _flag(value: Any) -> str:
+    """Check flag as 1, 0 or n/a."""
+    return rag_eval._mark(None if value is None else bool(value))
+
+
+def _checks_text(turn: dict[str, Any]) -> str:
+    """Automatic checks of a turn in one cell."""
+    checks = _checks(turn)
+    if not checks:
+        return NO_DATA
+    expected = checks.get("memory_expected")
+    memory = f"{checks.get('memory_found')}/{expected}" if expected else "n/a"
+    return (
+        f"источники {_flag(checks.get('sources_present'))}; память {memory}; "
+        f"статья {checks.get('article_expected') or '—'} {_flag(checks.get('article_ok'))}; "
+        f"цель сохранена {_flag(checks.get('goal_kept'))}"
+    )
+
+
+def _condensed_text(turn: dict[str, Any]) -> str:
+    """Condensed retrieval query, or «—» when none was built."""
+    return str(_checks(turn).get("condensed_query") or DASH)
+
+
+def _memory_failed(turn: dict[str, Any]) -> bool:
+    """True when the task-memory extraction failed in this turn."""
+    snapshot = turn.get("task_memory")
+    return bool(isinstance(snapshot, dict) and snapshot.get("failed"))
+
+
+def _table(header: list[str], rows: list[list[str]]) -> str:
+    """Markdown table with escaped cells."""
+    lines = ["| " + " | ".join(header) + " |", "|" + "|".join("---" for _ in header) + "|"]
+    for cells in rows:
+        lines.append("| " + " | ".join(rag_eval._cell(str(cell)) for cell in cells) + " |")
+    return "\n".join(lines) + "\n"
+
+
+def render_transcript_md(raw: dict[str, Any], scenario: dict[str, Any]) -> str:
+    """Russian transcript table of one run and scenario: one row per turn, nothing filtered."""
+    header = [
+        "ход", "вид", "вопрос", "переписанный запрос", "источники", "вердикт", "цитаты",
+        "память задачи", "проверки",
+    ]
+    rows: list[list[str]] = []
+    for turn in raw.get("turns") or []:
+        rows.append([
+            str(turn.get("id", "?")), str(turn.get("kind", "?")), str(turn.get("question") or ""),
+            _condensed_text(turn), _sources_text(turn), _verdict_text(turn), _quotes_text(turn),
+            _memory_text(turn), _checks_text(turn),
+        ])
+    title = f"# Диалог {raw.get('scenario')}, прогон {raw.get('run')}\n\n"
+    goal = f"Цель сценария: {scenario.get('goal', '')}\n\n"
+    return title + goal + _table(header, rows)
+
+
+def _followup_cells(turn: dict[str, Any] | None) -> list[str]:
+    """Condensed query, verdict, article hit and best cosine of one follow-up turn."""
+    if turn is None:
+        return [NO_DATA] * 4
+    rag = turn.get("rag")
+    search = rag.get("search") if isinstance(rag, dict) else None
+    cosine = (search or {}).get("best_cosine")
+    return [
+        _condensed_text(turn),
+        _verdict_text(turn),
+        rag_eval._mark(_checks(turn).get("article_ok")),
+        f"{cosine:.3f}" if isinstance(cosine, (int, float)) else "n/a",
+    ]
+
+
+def render_followups_md(raws: list[dict[str, Any]], scenarios: list[dict[str, Any]]) -> str:
+    """Side-by-side table of every marked follow-up in the main run and the baseline run."""
+    by_key = {(raw.get("run"), raw.get("scenario")): raw for raw in raws}
+    header = [
+        "ход", "вопрос", "статья",
+        "main: запрос", "main: вердикт", "main: статья найдена", "main: cos",
+        "baseline: запрос", "baseline: вердикт", "baseline: статья найдена", "baseline: cos",
+    ]
+    rows: list[list[str]] = []
+    for scenario in scenarios:
+        for spec in scenario.get("turns") or []:
+            if spec.get("kind") != "followup" or not spec.get("expect_article"):
+                continue
+            cells = [spec["id"], spec["text"], spec["expect_article"]]
+            for run in RUN_NAMES:
+                raw = by_key.get((run, scenario["id"]))
+                turns = (raw or {}).get("turns") or []
+                turn = next((t for t in turns if t.get("id") == spec["id"]), None)
+                cells += _followup_cells(turn)
+            rows.append(cells)
+    return "# Уточняющие вопросы: с памятью и без\n\n" + _table(header, rows)
+
+
+def dialog_metrics(raw: dict[str, Any]) -> dict[str, int]:
+    """Counts of one raw record for the summary table."""
+    turns = raw.get("turns") or []
+    checks = [_checks(t) for t in turns]
+
+    def passed(key: str) -> tuple[int, int]:
+        flags = [c.get(key) for c in checks if c.get(key) is not None]
+        return sum(1 for f in flags if f), len(flags)
+
+    article_ok, article_total = passed("article_ok")
+    memory_ok, memory_total = passed("memory_ok")
+    goal_ok, goal_total = passed("goal_kept")
+    verdicts = [_turn_verdict(t) for t in turns]
+    return {
+        "turns": len(turns),
+        "done": sum(1 for t in turns if t.get("frame_type") == "done"),
+        "errors": verdicts.count("error"),
+        "gated": verdicts.count("gated"),
+        "model_idk": verdicts.count("model_idk"),
+        "with_sources": sum(1 for c in checks if c.get("sources_present")),
+        "article_ok": article_ok,
+        "article_total": article_total,
+        "memory_ok": memory_ok,
+        "memory_total": memory_total,
+        "goal_ok": goal_ok,
+        "goal_total": goal_total,
+        "extraction_failures": sum(1 for t in turns if _memory_failed(t)),
+        "condensed": sum(1 for c in checks if c.get("condensed")),
+    }
+
+
+def render_summary_md(raws: list[dict[str, Any]]) -> str:
+    """One summary row per run and scenario."""
+    rows: list[list[str]] = []
+    share = rag_eval._share
+    for raw in sorted(raws, key=_run_order):
+        m = dialog_metrics(raw)
+        rows.append([
+            str(raw.get("run")), str(raw.get("scenario")), str(m["turns"]), str(m["done"]),
+            str(m["errors"]), str(m["gated"]), str(m["model_idk"]),
+            share(m["with_sources"], m["turns"]),
+            share(m["article_ok"], m["article_total"]), share(m["memory_ok"], m["memory_total"]),
+            share(m["goal_ok"], m["goal_total"]), str(m["extraction_failures"]), str(m["condensed"]),
+        ])
+    return "# Сводка диалогов\n\n" + _table(list(SUMMARY_HEADER), rows)
+
+
+def render_answers_csv(
+    raws: list[dict[str, Any]],
+    scenarios: list[dict[str, Any]],
+    existing: dict[tuple[str, str, str], dict[str, str]] | None = None,
+) -> str:
+    """CSV of every turn; judge columns are carried over from `existing` on re-render."""
+    goals = {s["id"]: s.get("goal", "") for s in scenarios}
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, lineterminator="\n")
+    writer.writerow(ANSWER_COLUMNS)
+    for raw in raws:
+        for turn in raw.get("turns") or []:
+            checks = _checks(turn)
+            key = (str(raw.get("run")), str(raw.get("scenario")), str(turn.get("id")))
+            carried = (existing or {}).get(key, {})
+            quotes = (
+                f"модель {checks.get('quotes_model', 0)}; авто {checks.get('quotes_auto', 0)}; "
+                f"не подтв. {checks.get('quotes_unverified', 0)}"
+                if checks else ""
+            )
+            writer.writerow([
+                raw.get("run"), raw.get("scenario"), turn.get("id"), turn.get("kind"),
+                turn.get("question") or "", turn.get("answer") or "",
+                goals.get(raw.get("scenario"), ""), _plain_memory(turn), _turn_verdict(turn),
+                _flag(checks.get("sources_present")), quotes, _flag(checks.get("memory_ok")),
+                _flag(checks.get("article_ok")), _flag(checks.get("goal_kept")),
+                checks.get("condensed_query") or "",
+                carried.get("judge_goal", ""), carried.get("judge_goal_reason", ""),
+            ])
+    return buffer.getvalue()
+
+
+def load_existing_judge(path: Path) -> dict[tuple[str, str, str], dict[str, str]]:
+    """Judge columns of a previous answers.csv keyed by run, scenario and turn."""
+    if not path.exists():
+        return {}
+    carried: dict[tuple[str, str, str], dict[str, str]] = {}
+    with path.open(encoding="utf-8", newline="") as handle:
+        for row in csv.DictReader(handle):
+            values = {col: row.get(col) or "" for col in JUDGE_COLUMNS}
+            if any(values.values()):
+                key = (row.get("run") or "", row.get("scenario") or "", row.get("turn") or "")
+                carried[key] = values
+    return carried
+
+
+def load_raws(raw_dir: Path) -> list[dict[str, Any]]:
+    """Every raw run file, ordered by run then scenario."""
+    raws = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(raw_dir.glob("*.json"))]
+    return sorted(raws, key=_run_order)
+
+
+def _render_outputs(
+    out_dir: Path, scenarios: list[dict[str, Any]], raws: list[dict[str, Any]]
+) -> list[Path]:
+    """Write transcripts, the follow-up table, the summary and the CSV; returns the paths."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    by_id = {s["id"]: s for s in scenarios}
+    written: list[Path] = []
+    for raw in raws:
+        path = out_dir / f"dialog_{raw['scenario']}_{raw['run']}.md"
+        path.write_text(render_transcript_md(raw, by_id.get(raw["scenario"], {})), encoding="utf-8")
+        written.append(path)
+    carried = load_existing_judge(out_dir / "answers.csv")
+    for name, text in (
+        ("followups.md", render_followups_md(raws, scenarios)),
+        ("dialog_summary.md", render_summary_md(raws)),
+    ):
+        (out_dir / name).write_text(text, encoding="utf-8")
+        written.append(out_dir / name)
+    (out_dir / "answers.csv").write_text(
+        render_answers_csv(raws, scenarios, carried), encoding="utf-8", newline=""
+    )
+    written.append(out_dir / "answers.csv")
+    return written
+
+
+def render_only(args: argparse.Namespace) -> int:
+    """Re-render every output from the raw files; no model, no process."""
+    raw_dir = args.out / "raw"
+    if not raw_dir.is_dir() or not list(raw_dir.glob("*.json")):
+        report(f"preflight: no raw files in {raw_dir}")
+        return EXIT_PREFLIGHT
+    try:
+        scenarios = load_scenarios(args.fixture, require_frozen=True)
+    except SystemExit:
+        return EXIT_PREFLIGHT
+    written = _render_outputs(args.out, scenarios, load_raws(raw_dir))
+    report(f"rendered {len(written)} files into {args.out}")
+    return EXIT_OK
