@@ -93,6 +93,7 @@ async def test_init_db_creates_all_tables() -> None:
         "kbdocument",
         "kbchunk",
         "chatragconfig",
+        "chattaskmemory",
     }
 
 
@@ -384,3 +385,47 @@ async def test_ensure_kb_chunk_fts_is_idempotent_and_backfills() -> None:
         await ensure_kb_chunk_fts(conn)
     _, again = await _fts_state()
     assert again == 2
+
+
+@pytest.mark.asyncio
+async def test_migrate_adds_history_turns_default_three(tmp_path) -> None:
+    """The history_turns column is added once and existing rows read 3."""
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    legacy = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'history.db'}")
+    async with legacy.begin() as conn:
+        await conn.execute(
+            text(
+                "CREATE TABLE chatragconfig (chat_id INTEGER PRIMARY KEY, kb_id INTEGER, "
+                "mode VARCHAR, top_k INTEGER, updated_at DATETIME)"
+            )
+        )
+        await conn.execute(
+            text("INSERT INTO chatragconfig (chat_id, mode, top_k) VALUES (1, 'rag', 5)")
+        )
+        await migrate_add_chatragconfig_rank_columns(conn)
+        await migrate_add_chatragconfig_rank_columns(conn)
+    async with legacy.connect() as conn:
+        columns = [
+            row[1] for row in (await conn.execute(text("PRAGMA table_info(chatragconfig)"))).fetchall()
+        ]
+        value = (await conn.execute(text("SELECT history_turns FROM chatragconfig"))).scalar_one()
+    await legacy.dispose()
+
+    assert columns.count("history_turns") == 1
+    assert value == 3
+
+
+def test_new_rag_config_history_turns_default() -> None:
+    """A new ChatRagConfig row has history_turns == 3."""
+    from shared.models import ChatRagConfig
+
+    assert ChatRagConfig(chat_id=1).history_turns == 3
+
+
+def test_task_memory_settings_defaults() -> None:
+    """Task memory is on by default with a 30 second extraction timeout."""
+    from shared.config import settings
+
+    assert settings.TASK_MEMORY_ENABLED is True
+    assert settings.TASK_MEMORY_TIMEOUT == 30.0

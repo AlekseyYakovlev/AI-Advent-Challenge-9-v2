@@ -52,6 +52,11 @@ class Settings(BaseSettings):
     RAG_EMBED_TIMEOUT: float = 30.0
     # Timeout in seconds for one query-rewrite or LLM-rerank call.
     RAG_LLM_STAGE_TIMEOUT: float = 45.0
+    # Timeout in seconds for the post-turn task-memory extraction call.
+    TASK_MEMORY_TIMEOUT: float = 30.0
+    # Eval-only switch: false turns off task memory and history-aware query condensing
+    # for the "no memory" baseline run; it has no UI and no API surface.
+    TASK_MEMORY_ENABLED: bool = True
 
 
 settings = Settings()

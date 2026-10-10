@@ -11,6 +11,7 @@ from shared.models import (
     Chat,
     ChatInvariant,
     ChatRagConfig,
+    ChatTaskMemory,
     InvariantConflict,
     Message,
     Settings,
@@ -259,3 +260,26 @@ async def test_delete_kb_nulls_rag_config_kb_id(authenticated_client: AsyncClien
         assert row is not None
         assert row.kb_id is None
         assert row.mode == "rag"
+
+
+@pytest.mark.asyncio
+async def test_chat_delete_cascades_task_memory(authenticated_client: AsyncClient) -> None:
+    """Deleting a chat cascades to its ChatTaskMemory row."""
+    async with async_session_factory() as session:
+        chat = Chat(title="Memory cascade", user_id=authenticated_client.seeded_user_id)
+        session.add(chat)
+        await session.commit()
+        await session.refresh(chat)
+        session.add(
+            ChatTaskMemory(
+                chat_id=chat.id, user_id=authenticated_client.seeded_user_id, doc_json="{}"
+            )
+        )
+        await session.commit()
+        chat_id = chat.id
+
+    resp = await authenticated_client.delete(f"/api/v1/chats/{chat_id}")
+    assert resp.status_code == 204
+
+    async with async_session_factory() as session:
+        assert (await session.get(ChatTaskMemory, chat_id)) is None

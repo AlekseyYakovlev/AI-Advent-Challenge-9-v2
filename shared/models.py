@@ -722,7 +722,9 @@ class ChatRagConfig(SQLModel, table=True):
     The four stage flags (lexical, llm_rerank, hybrid, rewrite) are independent
     switches, not a mode ladder. A None threshold means the calibrated value of
     the attached KB's embedding model; a number is a user override. The strict
-    flag turns on quotes plus the «не знаю» gate together.
+    flag turns on quotes plus the «не знаю» gate together. history_turns is how
+    many recent question/answer pairs the history-aware query condensing sees
+    (0 means task memory only).
     """
 
     chat_id: int = Field(
@@ -745,4 +747,24 @@ class ChatRagConfig(SQLModel, table=True):
     hybrid: bool = Field(default=False)
     rewrite: bool = Field(default=False)
     strict: bool = Field(default=True)
+    history_turns: int = Field(default=3)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class ChatTaskMemory(SQLModel, table=True):
+    """One task-memory document per chat: goal, clarified points, constraints."""
+
+    chat_id: int = Field(
+        sa_column=Column(
+            Integer, ForeignKey("chat.id", ondelete="CASCADE"), primary_key=True
+        )
+    )
+    user_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("user.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+    )
+    doc_json: str = Field(default="{}", max_length=20_000)
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
