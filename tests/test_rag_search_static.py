@@ -31,6 +31,7 @@ SEARCH_IDS: list[str] = [
     "rag-candidate-k",
     "rag-threshold",
     "rag-threshold-reset",
+    "rag-history-turns",
     "rag-stage-lexical",
     "rag-stage-llm",
     "rag-stage-hybrid",
@@ -133,3 +134,17 @@ def test_input_bounds() -> None:
 def test_details_wired_into_message_rendering() -> None:
     assert "buildRagDetailsBlock(rag)" in _function_source("renderMessages")
     assert "buildRagThresholdLine(rag)" in _function_source("buildRagMeta")
+
+
+def test_history_turns_input() -> None:
+    tag = re.search(r'<input id="rag-history-turns"[^>]*>', INDEX_HTML)
+    assert tag
+    for attr in ('type="number"', 'min="0"', 'max="10"', 'value="3"'):
+        assert attr in tag.group(0)
+    assert INDEX_HTML.index('id="rag-threshold"') < INDEX_HTML.index('id="rag-history-turns"')
+    assert INDEX_HTML.index('id="rag-history-turns"') < INDEX_HTML.index('id="rag-strict"')
+    assert "'history_turns'" in APP_JS
+    start = APP_JS.index("$('rag-history-turns').addEventListener('change'")
+    handler = APP_JS[start : APP_JS.index("});", start)]
+    assert "Number.isNaN" in handler
+    assert "|| 3" not in handler

@@ -209,6 +209,8 @@ function renderMessages() {
         }
         const detailsBlock = isUser ? null : buildRagDetailsBlock(rag);
         if (detailsBlock) container.appendChild(wrapToolCard(detailsBlock));
+        const taskMemoryBlock = isUser || !rag ? null : buildTaskMemoryBlock(rag.task_memory);
+        if (taskMemoryBlock) container.appendChild(wrapToolCard(taskMemoryBlock));
         state.lastConflicts
             .filter((conflict) => conflict.message_id === msg.id)
             .forEach((conflict) => {
@@ -4191,6 +4193,7 @@ function renderRagSearchPopover() {
     const candidate = $('rag-candidate-k');
     candidate.min = String(cfg.top_k || 1);
     candidate.value = String(cfg.candidate_k || 20);
+    $('rag-history-turns').value = String(Number.isInteger(cfg.history_turns) ? cfg.history_turns : 3);
 
     const threshold = $('rag-threshold');
     const note = $('rag-threshold-note');
@@ -4254,6 +4257,13 @@ function bindRagSearchUi() {
         e.target.value = String(clamped);
         saveRagSearchSetting({ candidate_k: clamped });
     });
+    $('rag-history-turns').addEventListener('change', (e) => {
+        if (!state.rag) return;
+        const parsed = parseInt(e.target.value, 10);
+        const clamped = Number.isNaN(parsed) ? 3 : Math.min(10, Math.max(0, parsed));
+        e.target.value = String(clamped);
+        saveRagSearchSetting({ history_turns: clamped });
+    });
     $('rag-threshold').addEventListener('change', (e) => {
         if (e.target.value.trim() === '') {
             saveRagSearchSetting({ threshold: null });
@@ -4284,7 +4294,8 @@ async function saveChatRag(patch, errorText) {
         kb_id: prev.kb_id,
         top_k: prev.top_k,
     };
-    ['mode', 'kb_id', 'top_k', 'candidate_k', 'threshold', 'lexical', 'llm_rerank', 'hybrid', 'rewrite', 'strict']
+    ['mode', 'kb_id', 'top_k', 'candidate_k', 'threshold', 'lexical', 'llm_rerank', 'hybrid', 'rewrite', 'strict',
+        'history_turns']
         .forEach((key) => {
             if (key in patch) body[key] = patch[key];
         });
@@ -4374,9 +4385,13 @@ const RAG_SKIP_STAGE_NAMES = {
     rewrite: 'Переписывание',
     hybrid: 'Гибрид (FTS5)',
     lexical: 'Лексич. реранк',
+    history: 'Уточнение запроса',
 };
 
 function ragSkipReasonText(stage, reason) {
+    if (stage === 'history' && reason === 'bad_output') {
+        return 'ответ модели не подошёл, искали по исходному вопросу';
+    }
     if (reason === 'timeout') return 'таймаут';
     if (reason === 'fts_error') return 'ошибка запроса FTS5';
     if (reason === 'bad_output') {
@@ -4508,7 +4523,8 @@ function buildRagDetailsBlock(rag) {
 
     body.appendChild(buildRagDetailRow('Запрос:', mcpEl('span', 'text-slate-300', search.query || '')));
     if (typeof search.rewritten === 'string' && search.rewritten) {
-        body.appendChild(buildRagDetailRow('Переписан:', mcpEl('span', 'text-slate-300', search.rewritten)));
+        const rewrittenLabel = search.condensed === true ? 'Уточнён:' : 'Переписан:';
+        body.appendChild(buildRagDetailRow(rewrittenLabel, mcpEl('span', 'text-slate-300', search.rewritten)));
     }
 
     const stageValue = mcpEl('span', 'text-slate-300');
@@ -4516,6 +4532,14 @@ function buildRagDetailsBlock(rag) {
     [['lexical', 'лексич.'], ['llm', 'LLM'], ['hybrid', 'FTS5'], ['rewrite', 'rewrite']].forEach(([key, text]) => {
         if (stages.includes(key)) parts.push(mcpEl('span', 'font-semibold text-slate-200', text));
     });
+    if (stages.includes('history')) {
+        const historyPart = mcpEl('span', '');
+        historyPart.append(
+            mcpEl('span', 'font-semibold text-slate-200', 'история'),
+            document.createTextNode(` ×${Number(search.history_pairs) || 0}`),
+        );
+        parts.push(historyPart);
+    }
     const finalCount = candidates.filter((c) => c.status === 'in_answer').length;
     parts.push(mcpEl('span', '', `${candidates.length}→${finalCount}`));
     parts.push(mcpEl('span', '', `${search.latency_ms} мс`));
@@ -4536,6 +4560,70 @@ function buildRagDetailsBlock(rag) {
         body.appendChild(mcpEl('div', 'text-slate-500', 'Кандидатов нет: в базе нечего сравнивать'));
     } else {
         body.appendChild(buildRagCandidatesTable({ ...search, candidates }));
+    }
+    details.appendChild(body);
+    return details;
+}
+
+function buildTaskMemoryItemList(items, newIds) {
+    const list = mcpEl('div', 'space-y-1');
+    if (!items.length) {
+        list.appendChild(mcpEl('span', 'text-slate-500', '—'));
+        return list;
+    }
+    items.forEach((item) => {
+        const line = mcpEl('span', 'block text-slate-300');
+        line.appendChild(document.createTextNode(item.text));
+        if (newIds.has(item.id)) {
+            line.appendChild(document.createTextNode(' '));
+            line.appendChild(mcpEl('span', 'text-indigo-400 font-semibold', 'новое'));
+        }
+        list.appendChild(line);
+    });
+    return list;
+}
+
+function buildTaskMemoryBlock(taskMemory) {
+    if (!taskMemory || typeof taskMemory !== 'object') return null;
+    const clarified = Array.isArray(taskMemory.clarified) ? taskMemory.clarified : [];
+    const constraints = Array.isArray(taskMemory.constraints) ? taskMemory.constraints : [];
+    const goal = typeof taskMemory.goal === 'string' && taskMemory.goal ? taskMemory.goal : null;
+    if (!goal && clarified.length === 0 && constraints.length === 0) return null;
+
+    const fresh = taskMemory.new && typeof taskMemory.new === 'object' ? taskMemory.new : {};
+    const newIds = new Set(Array.isArray(fresh.ids) ? fresh.ids : []);
+    const goalIsNew = fresh.goal === true && goal !== null;
+    const total = clarified.length + constraints.length + (goal ? 1 : 0);
+    const newCount = newIds.size + (goalIsNew ? 1 : 0);
+    const summaryText = `Память задачи (${total})${newCount > 0 ? ` · новое: ${newCount}` : ''}`;
+
+    const details = mcpEl(
+        'details',
+        'rag-task-memory rounded-lg border border-slate-700 bg-slate-900 text-xs text-slate-300 px-3 py-2 mt-2 max-w-[75%]',
+    );
+    details.appendChild(mcpEl(
+        'summary',
+        'cursor-pointer select-none font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500',
+        summaryText,
+    ));
+    const body = mcpEl('div', 'mt-2 space-y-2');
+
+    const goalValue = mcpEl('span', goal ? 'text-slate-300' : 'text-slate-500');
+    goalValue.appendChild(document.createTextNode(goal || '—'));
+    if (goalIsNew) {
+        goalValue.appendChild(document.createTextNode(' '));
+        goalValue.appendChild(mcpEl('span', 'text-indigo-400 font-semibold', 'новое'));
+    }
+    body.appendChild(buildRagDetailRow('Цель:', goalValue));
+    body.appendChild(buildRagDetailRow('Уточнено:', buildTaskMemoryItemList(clarified, newIds)));
+    body.appendChild(buildRagDetailRow('Ограничения и термины:', buildTaskMemoryItemList(constraints, newIds)));
+
+    if (taskMemory.failed === true) {
+        const chip = mcpEl('span', RAG_CHIP_NEUTRAL, 'память не обновлена');
+        chip.title = 'Не удалось обновить память задачи на этом ходу; сохранено прежнее состояние';
+        const chipRow = mcpEl('div', '');
+        chipRow.appendChild(chip);
+        body.appendChild(chipRow);
     }
     details.appendChild(body);
     return details;

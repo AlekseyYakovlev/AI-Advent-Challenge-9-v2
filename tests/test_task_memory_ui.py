@@ -144,3 +144,41 @@ def test_branch_changes_reload_memory() -> None:
 def test_render_memory_panel_renders_task_block() -> None:
     """renderMemoryPanel passes the task_state to the block."""
     assert "renderTaskMemoryBlock(data.task_state)" in _function_source("renderMemoryPanel")
+
+
+def test_snapshot_block_contract() -> None:
+    """The per-message block is collapsed, read-only and marks new items as text."""
+    block: str = _function_source("buildTaskMemoryBlock")
+    items: str = _function_source("buildTaskMemoryItemList")
+    assert "rag-task-memory" in block
+    assert "новое" in block + items
+    assert "память не обновлена" in block
+    assert "RAG_CHIP_NEUTRAL" in block
+    assert ".open" not in block and "setAttribute('open'" not in block
+    for name in ("buildTaskMemoryBlock", "buildTaskMemoryItemList"):
+        source: str = _function_source(name)
+        for banned in BANNED_HTML_SINKS:
+            assert banned not in source, f"{banned} in {name}"
+        assert "confirm(" not in source and "apiFetch" not in source
+
+
+def test_snapshot_block_wired_after_details() -> None:
+    """renderMessages places the snapshot after the search details."""
+    render: str = _function_source("renderMessages")
+    assert "buildTaskMemoryBlock(rag.task_memory)" in render
+    assert render.index("buildRagDetailsBlock(rag)") < render.index("buildTaskMemoryBlock(")
+
+
+def test_condensed_query_label_and_history_stage() -> None:
+    """The details block labels a condensed query and shows the history stage."""
+    details: str = _function_source("buildRagDetailsBlock")
+    assert "'Уточнён:'" in details
+    assert "'Переписан:'" in details
+    assert "search.condensed" in details
+    assert "'история'" in details
+    assert "history_pairs" in details
+    skip_names = re.search(r"const RAG_SKIP_STAGE_NAMES = \{.*?\};", APP_JS, re.DOTALL)
+    assert skip_names is not None
+    assert "history: 'Уточнение запроса'" in skip_names.group(0)
+    skip_text: str = _function_source("ragSkipReasonText")
+    assert "ответ модели не подошёл, искали по исходному вопросу" in skip_text
