@@ -4,19 +4,9 @@
 
 A local-first, two-process AI chat application (FastAPI UI + Agent servers, vanilla JS frontend) that is being extended with an explicit agent memory model, personalization, and a formal task state machine with invariant enforcement. This is coursework for the "AI Advent Challenge" (9th cohort) — Week 3, Days 11-15 — where each day is a self-contained assignment building on the previous one's output, implemented in its own git branch and merged to `main` once its acceptance criteria pass.
 
-## Current Milestone: v3.0 Week 5: RAG
+## Current Milestone
 
-**Goal:** Give the agent a local, inspectable knowledge base and make it answer from documents — with retrieval, relevance filtering, mandatory sources and quotes, an explicit "не знаю" mode, and task memory across a long dialog (Days 21-25).
-
-**Target features:**
-- Knowledge-base indexing pipeline (Day 21): PDF/text loading, chunking (fixed size + overlap, or by structure: headings/sections/files), embeddings via an LM Studio embedding model (default `giga-embeddings-instruct-480m-0826`), FAISS vector index + SQLite chunk metadata (source, title/file, section, chunk_id); sidebar "База знаний" block with "Добавить" modal and per-entry delete
-- First RAG query (Day 22): question → retrieve relevant chunks → merge with question → LLM; agent mode with RAG / without RAG; `Day22_report.md` with 10 control questions (expectation + expected sources) and with/without comparison
-- Reranking and filtering (Day 23): second stage after retrieval (similarity threshold / reranker / heuristic), configurable cut-off and top-K before/after, query rewrite; `Day23_report.md` comparing modes
-- Citations and anti-hallucination (Day 24): every answer carries sources (source + section/chunk_id) and quotes from retrieved chunks; below-threshold relevance forces "не знаю" + a clarification request; checked on 10 questions
-- Mini-chat with RAG + task memory (Day 25): history kept, retrieval on every turn, sources always shown, task state (clarified facts, fixed constraints/terms, dialog goal); verified on 2 long scenarios of 10-15 messages
-- Carried over from v2.0: Phase 10 (modals close only via ×), Phase 11 (edit/delete long-term memory in UI)
-
-**Test corpus:** `C:\Projects\RAG` — ФЗ №196 «О безопасности дорожного движения» and КоАП РФ (№195-ФЗ), both PDF.
+None active. Last shipped: **v3.0 Week 5: RAG** (2026-10-10). Test corpus for RAG: `C:\Projects\RAG` — ФЗ №196 «О безопасности дорожного движения» (file `ПДД.pdf`) and КоАП РФ (№195-ФЗ), both PDF. Start the next one with `/bm:new-milestone`.
 
 ## Core Value
 
@@ -68,15 +58,17 @@ The agent must demonstrably separate and manage distinct kinds of state — shor
 
 - ✓ **SCHED-01..14**: Scheduler (Day 18) — user-scoped delayed/periodic jobs (once / interval / cron in machine-local time) stored in SQLite, run in the background of the Agent process (atomic slot claim, overlap skip, restart recovery, catch-up-once with `is_late`), executed by a headless LLM+MCP runner; manageable through REST `/api/v1/scheduler/*`, the "Расписание" sidebar panel with live `/ws/events` updates, and LLM chat tools with a cancel gate — Phase 8 (v2.0)
 
+- ✓ **MODAL-01**: Modals close only via their "×" button — Phase 10 (v3.0)
+- ✓ **MEMUI-01..06**: Edit/delete of long-term memory entries in the sidebar with server-side validation and 404/409 handling — Phase 11 (v3.0)
+- ✓ **KB-01..11**: Knowledge bases from PDF/TXT/MD with fixed/structural chunking, LM Studio embeddings, FAISS + SQLite, background indexing with live progress, test search, user-scoped delete — Phase 13 (v3.0)
+- ✓ **RAG-01..08**: Per-chat KB attach and RAG toggle, retrieval merged outbound-only, sources on answers, fail-soft, frozen control set and `Day22_report.md` — Phase 14 (v3.0)
+- ✓ **RANK-01..09**: Two-stage retrieval, calibrated threshold, lexical/LLM rerank, hybrid FTS5, rewrite, "Детали поиска", `Day23_report.md` — Phase 15 (v3.0)
+- ✓ **CITE-01..04**: Verified quotes, metadata-built sources, code-enforced "не знаю", `Day24_report.md` — Phase 16 (v3.0)
+- ✓ **RCHAT-01..05**: Mini-chat with per-chat task memory, history-aware retrieval, two scenarios, `Day25_report.md` — Phase 17 (v3.0)
+
 ### Active
 
-- [ ] Knowledge-base indexing with FAISS + SQLite metadata (Day 21)
-- [ ] RAG query with/without RAG modes + Day22 report (Day 22)
-- [ ] Reranking/filtering + query rewrite + Day23 report (Day 23)
-- [ ] Mandatory sources/quotes + "не знаю" mode (Day 24)
-- [ ] Mini-chat with RAG + task memory (Day 25)
-
-See `.planning/REQUIREMENTS.md` for REQ-IDs.
+(None — define with `/bm:new-milestone`.)
 
 ### Out of Scope
 
@@ -148,4 +140,4 @@ This document evolves at phase transitions and milestone boundaries.
 Phase 16 (Citations and Anti-Hallucination, Day 24) complete (2026-10-04): per-chat strict mode (on by default, existing RAG chats migrate to on); answers carry quotes verified on the server (exact, fuzzy, unverified, auto) with source rows built from chunk metadata only; when no fragment passes the threshold the code answers «Не знаю» with a clarifying question and makes no model call; quotes block and strict switch in the chat UI; `Day24_report.md` with a live run on the 10 control questions. Honest result: the unchanged 0.67 threshold falsely refused 3 of 8 answerable questions (Q01, Q07, Q08); out-of-corpus 2/2 refused. Review findings WR-01..04 and IN-01..03 parked as backlog 999.13-999.17 (see .planning/phases/16-citations-and-anti-hallucination-day-24/16-REVIEW.md). Open: 16-HUMAN-UAT.md (supervisor restart test never run).
 
 ---
-*Last updated: 2026-10-10 — Phase 17 complete*
+*Last updated: 2026-10-10 after v3.0 milestone*

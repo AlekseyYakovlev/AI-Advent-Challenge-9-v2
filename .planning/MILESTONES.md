@@ -1,5 +1,22 @@
 # Milestones
 
+## v3.0 Week 5: RAG (Shipped: 2026-10-10)
+
+**Phases completed:** 7 phases (10, 11, 13, 14, 15, 16, 17), 53 plans, 44/44 requirements
+
+**Key accomplishments:**
+
+- Knowledge-base indexing (Day 21): PDF/TXT/MD upload, fixed and structural chunking, LM Studio embeddings, FAISS + SQLite persistence, background indexing with live progress, sidebar "База знаний" block.
+- First RAG query (Day 22): per-chat KB attach and RAG toggle, top-K retrieval merged outbound-only, sources under answers, frozen 10-question control set and `Day22_report.md` (nomic vs bge-m3).
+- Reranking and filtering (Day 23): two-stage retrieval, calibrated per-embedder threshold, lexical/LLM rerank, hybrid FTS5 + RRF, query rewrite, "Детали поиска", `Day23_report.md`.
+- Citations and anti-hallucination (Day 24): server-verified quotes, sources from chunk metadata, code-enforced "не знаю" with a clarifying question, `Day24_report.md`.
+- Mini-chat with RAG and task memory (Day 25): per-chat task memory, history-aware retrieval, two scripted 12-turn scenarios, `Day25_report.md`.
+- Carried over from v2.0: modals close only via ×; edit/delete of long-term memory entries in the UI.
+
+Known deferred items at close: 9 (see STATE.md Deferred Items). Audit: `milestones/v3.0-MILESTONE-AUDIT.md` (status tech_debt).
+
+---
+
 ## v2.0 Week 4: MCP Integration (Shipped: 2026-10-02)
 
 **Phases completed:** 4 phases (7, 8, 9, 12), 27 plans
