@@ -48,6 +48,7 @@ from agent.schemas import (
     SettingsResponse,
     SettingsUpdate,
     TaskResponse,
+    TaskStateOut,
     TaskTransitionResponse,
     UserResponse,
 )
@@ -61,6 +62,8 @@ from agent.scheduler import scheduler
 from agent.kb_api import router as kb_router
 from agent.rag import parse_rag_payload
 from agent.rag_api import router as rag_router
+from agent.task_memory_api import router as task_memory_router
+from agent import task_memory
 from agent.providers_api import router as providers_router
 from agent.scheduler_api import router as scheduler_router
 from agent.ws import ws_chat
@@ -451,6 +454,7 @@ app.include_router(scheduler_router)
 app.include_router(providers_router)
 app.include_router(kb_router)
 app.include_router(rag_router)
+app.include_router(task_memory_router)
 
 
 @app.get("/debug/routes")
@@ -698,9 +702,14 @@ async def get_chat_memory(
     # user-scoped by design (D-02): long-term memory is cross-chat
     long_term = await memory.list_long_term_memory(session, current_user.id)
     path = await _build_tree_path(session, chat)
+    task_state: TaskStateOut | None = None
+    if app_config.TASK_MEMORY_ENABLED and await task_memory.chat_has_rag(session, chat_id):
+        doc = await task_memory.load_doc(session, chat_id)
+        task_state = TaskStateOut(**task_memory.task_state_dict(doc))
     return ChatMemoryResponse(
         chat_id=chat_id,
         short_term_message_count=len(path),
+        task_state=task_state,
         working=[
             MemoryEntryResponse(id=row.id, key=row.key, value=row.value, updated_at=row.updated_at)
             for row in working
@@ -946,7 +955,10 @@ async def branch_chat(
     session: AsyncSession = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ) -> ChatResponse:
-    """Switch the active branch to the given message."""
+    """Switch the active branch to the given message.
+
+    Also restores the chat's task memory from the new active path in the same commit.
+    """
     chat = await _get_chat_or_404(session, chat_id, current_user.id)
     message = await session.get(Message, body.message_id)
     if message is None or message.chat_id != chat_id:
@@ -954,10 +966,21 @@ async def branch_chat(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Message {body.message_id} not found in chat {chat_id}",
         )
-    chat.current_leaf_message_id = body.message_id
-    session.add(chat)
-    await session.commit()
-    await session.refresh(chat)
+    if chat_id not in chat_locks:
+        chat_locks[chat_id] = asyncio.Lock()
+    async with chat_locks[chat_id]:
+        try:
+            moved = body.message_id != chat.current_leaf_message_id
+            chat.current_leaf_message_id = body.message_id
+            session.add(chat)
+            if moved:
+                path = await _build_tree_path(session, chat)
+                await task_memory.restore_from_path(session, chat, path)
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        await session.refresh(chat)
     return _chat_to_response(chat)
 
 

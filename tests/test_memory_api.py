@@ -24,10 +24,13 @@ async def test_get_chat_memory_returns_expected_shape(authenticated_client: Asyn
     resp = await authenticated_client.get(f"/api/v1/chats/{chat_id}/memory")
     assert resp.status_code == 200
     body = resp.json()
-    assert set(body.keys()) == {"chat_id", "short_term_message_count", "working", "long_term"}
+    assert set(body.keys()) == {
+        "chat_id", "short_term_message_count", "working", "long_term", "task_state",
+    }
     assert body["chat_id"] == chat_id
     assert body["working"] == []
     assert body["long_term"] == []
+    assert body["task_state"] is None
 
 
 @pytest.mark.asyncio

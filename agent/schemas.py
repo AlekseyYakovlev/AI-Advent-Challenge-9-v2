@@ -418,13 +418,44 @@ class MemoryEntryResponse(BaseModel):
     updated_at: datetime
 
 
+class TaskMemoryItemOut(BaseModel):
+    """One clarified point or constraint of a chat's task memory."""
+
+    id: int
+    text: str
+
+
+class TaskStateOut(BaseModel):
+    """A chat's task memory: goal, clarified points and constraints."""
+
+    goal: str | None = None
+    clarified: list[TaskMemoryItemOut] = Field(default_factory=list)
+    constraints: list[TaskMemoryItemOut] = Field(default_factory=list)
+
+
+class TaskGoalUpdate(BaseModel):
+    """Body of a manual task-memory goal edit."""
+
+    goal: str = Field(min_length=1, max_length=300)
+
+    @field_validator("goal")
+    @classmethod
+    def _strip_goal(cls, value: str) -> str:
+        """Strip the goal and reject a blank one."""
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("must not be empty")
+        return stripped
+
+
 class ChatMemoryResponse(BaseModel):
-    """GET /api/v1/chats/{chat_id}/memory response: all three memory layers."""
+    """GET /api/v1/chats/{chat_id}/memory response: all memory layers plus task memory."""
 
     chat_id: int
     short_term_message_count: int
     working: list[MemoryEntryResponse]
     long_term: list[MemoryEntryResponse]
+    task_state: TaskStateOut | None = None
 
 
 class LongTermMemoryUpdate(BaseModel):
