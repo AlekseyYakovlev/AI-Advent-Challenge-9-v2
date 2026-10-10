@@ -23,6 +23,7 @@ router = APIRouter(tags=["rag"])
 MSG_KB_NOT_READY = "База знаний ещё не готова"
 MSG_CHUNK_NOT_FOUND = "Фрагмент не найден"
 DEFAULT_TOP_K = 5
+DEFAULT_HISTORY_TURNS = 3
 
 
 class RagConfigIn(BaseModel):
@@ -38,6 +39,7 @@ class RagConfigIn(BaseModel):
     hybrid: StrictBool | None = None
     rewrite: StrictBool | None = None
     strict: StrictBool | None = None
+    history_turns: int | None = Field(default=None, ge=0, le=10)
 
 
 class RagConfigOut(BaseModel):
@@ -59,6 +61,7 @@ class RagConfigOut(BaseModel):
     hybrid: bool
     rewrite: bool
     strict: bool
+    history_turns: int
 
 
 async def _get_owned_chat(session: AsyncSession, chat_id: int, user_id: int) -> Chat:
@@ -83,7 +86,7 @@ async def _config_out(
             kb_status=None, top_k=DEFAULT_TOP_K, candidate_k=DEFAULT_CANDIDATE_K,
             threshold=None, calibrated_threshold=None, effective_threshold=0.0,
             threshold_source="none", lexical=False, llm_rerank=False, hybrid=False,
-            rewrite=False, strict=True,
+            rewrite=False, strict=True, history_turns=DEFAULT_HISTORY_TURNS,
         )
     kb: KnowledgeBase | None = None
     if row.kb_id is not None:
@@ -109,6 +112,9 @@ async def _config_out(
         hybrid=bool(row.hybrid),
         rewrite=bool(row.rewrite),
         strict=bool(row.strict) if row.strict is not None else True,
+        history_turns=(
+            row.history_turns if row.history_turns is not None else DEFAULT_HISTORY_TURNS
+        ),
     )
 
 
@@ -123,6 +129,8 @@ def _apply_search_settings(row: ChatRagConfig, body: RagConfigIn) -> None:
         value = getattr(body, name)
         if value is not None:
             setattr(row, name, value)
+    if body.history_turns is not None:
+        row.history_turns = body.history_turns
     row.candidate_k = max(row.candidate_k or DEFAULT_CANDIDATE_K, row.top_k)
 
 
@@ -185,6 +193,7 @@ async def put_rag_config(
         hybrid=row.hybrid,
         rewrite=row.rewrite,
         strict=row.strict,
+        history_turns=row.history_turns,
     )
     return await _config_out(session, chat, row)
 

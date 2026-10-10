@@ -18,7 +18,7 @@ SEARCH_DEFAULTS: dict[str, Any] = {
     "candidate_k": 20, "threshold": None, "calibrated_threshold": None,
     "effective_threshold": 0.0, "threshold_source": "none",
     "lexical": False, "llm_rerank": False, "hybrid": False, "rewrite": False,
-    "strict": True,
+    "strict": True, "history_turns": 3,
 }
 
 
@@ -307,6 +307,24 @@ async def test_candidate_k_clamped_to_top_k(authenticated_client: AsyncClient) -
     await authenticated_client.put(url, json={**base, "top_k": 5, "candidate_k": 8})
     raised = (await authenticated_client.put(url, json={**base, "top_k": 15})).json()
     assert raised["candidate_k"] == 15
+
+
+async def test_history_turns_default_zero_and_range(authenticated_client: AsyncClient) -> None:
+    chat_id = await _chat(authenticated_client)
+    kb_id = await _kb(authenticated_client.seeded_user_id)
+    url = f"/api/v1/chats/{chat_id}/rag"
+    assert (await authenticated_client.get(url)).json()["history_turns"] == 3
+    base = {"mode": "rag", "kb_id": kb_id}
+    stored = await authenticated_client.put(url, json={**base, "history_turns": 0})
+    assert stored.json()["history_turns"] == 0
+    assert (await authenticated_client.get(url)).json()["history_turns"] == 0
+    kept = await authenticated_client.put(url, json=base)
+    assert kept.json()["history_turns"] == 0
+    changed = await authenticated_client.put(url, json={**base, "history_turns": 7})
+    assert changed.json()["history_turns"] == 7
+    for bad in (-1, 11, 2.5):
+        resp = await authenticated_client.put(url, json={**base, "history_turns": bad})
+        assert resp.status_code == 422
 
 
 async def test_calibrated_threshold_follows_kb_model(
