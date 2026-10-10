@@ -69,7 +69,7 @@
 - [ ] **RCHAT-02**: Task memory per chat records the dialog goal, what the user has already clarified, and fixed constraints/terms; it is updated after each turn deterministically and shown in the UI
 - [ ] **RCHAT-03**: Task memory and recent history feed both the system prompt and the retrieval query rewrite, so follow-up questions retrieve correctly
 - [x] **RCHAT-04**: Two scripted long scenarios of 10-15 messages run end to end; the assistant keeps the goal and gives answers with sources on every turn
-- [ ] **RCHAT-05**: `Day25_report.md` contains both scenario transcripts with per-turn checks (goal kept, sources present, task memory contents)
+- [x] **RCHAT-05**: `Day25_report.md` contains both scenario transcripts with per-turn checks (goal kept, sources present, task memory contents)
 
 ## Future Requirements
 
@@ -137,7 +137,7 @@
 | RCHAT-02 | Phase 17 | Pending |
 | RCHAT-03 | Phase 17 | Pending |
 | RCHAT-04 | Phase 17 | Complete |
-| RCHAT-05 | Phase 17 | Pending |
+| RCHAT-05 | Phase 17 | Complete |
 
 **Coverage:**
 - v3.0 requirements: 44 total
