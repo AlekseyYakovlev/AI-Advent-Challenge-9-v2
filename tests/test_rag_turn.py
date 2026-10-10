@@ -233,7 +233,7 @@ async def test_payload_v3_ok_with_trace_and_no_chunk_text(monkeypatch: pytest.Mo
     chat_id = await _chat(user_id, kb_id, top_k=3)
     turn = await _run(chat_id, _messages())
     payload = turn.payload
-    assert payload["v"] == 3
+    assert payload["v"] == 4
     assert payload["verdict"] == "ok"
     assert len(payload["search"]["candidates"]) >= len(payload["sources"])
     assert "verdict" not in payload["search"]

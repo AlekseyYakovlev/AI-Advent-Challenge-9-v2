@@ -227,8 +227,8 @@ async def scenarios(page: Any, creds: dict[str, str]) -> None:
         for q in p_quotes if isinstance(q.get("rank"), int)
     )
     states_ok = all(q.get("state") in ("exact", "fuzzy", "unverified", "auto") for q in p_quotes)
-    report("S4 stored payload: v3, strict, quote states, quote files match the source of their rank",
-           payload.get("v") == 3 and payload.get("strict") is True and states_ok and files_ok,
+    report("S4 stored payload: v>=3, strict, quote states, quote files match the source of their rank",
+           isinstance(payload.get("v"), int) and payload.get("v") >= 3 and payload.get("strict") is True and states_ok and files_ok,
            f"v={payload.get('v')} strict={payload.get('strict')} verdict={payload.get('verdict')} "
            f"states={[q.get('state') for q in p_quotes]} files_ok={files_ok} "
            f"answer_supported={payload.get('answer_supported')}")

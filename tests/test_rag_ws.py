@@ -294,7 +294,7 @@ def test_done_frame_carries_search_trace_v2(monkeypatch: pytest.MonkeyPatch) -> 
         ) as ws:
             frames = _send_and_drain(ws, QUESTION)
         rag = frames[-1]["rag"]
-        assert rag["v"] == 3
+        assert rag["v"] == 4
         assert rag["verdict"] == "ok"
         assert rag["search"]["candidates"]
         assert rag["search"]["query"] == QUESTION
@@ -337,7 +337,9 @@ def test_rewrite_runs_through_answer_client_before_stream(monkeypatch: pytest.Mo
         assert frames[-1]["type"] == "done"
     assert captured[0]["stream"] is False
     assert captured[0]["model"] == MODEL
-    assert captured[-1].get("stream") is not False
+    # The task-memory extraction call follows the stream, so the answer is the last streamed request.
+    streamed = [body for body in captured if body.get("stream") is not False]
+    assert streamed and captured.index(streamed[-1]) > 0
 
 
 @respx.mock

@@ -300,7 +300,7 @@ def test_payload_defaults_are_v3_ok_without_search() -> None:
         context_tokens=0,
         warning=None,
     )
-    assert payload["v"] == 3
+    assert payload["v"] == 4
     assert payload["verdict"] == "ok"
     assert payload["search"] is None
     assert payload["strict"] is False
