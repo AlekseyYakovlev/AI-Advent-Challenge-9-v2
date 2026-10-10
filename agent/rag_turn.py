@@ -7,6 +7,7 @@ from typing import Any
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from agent import task_memory
 from agent.context_engine import _message_tokens
 from agent.llm_client import count_tokens
 from agent.rag import (
@@ -22,6 +23,7 @@ from agent.rag import (
     build_rag_payload,
     merge_no_fragments_note,
     merge_rag_block,
+    parse_rag_payload,
     rag_budget,
     serialize_rag_payload,
     sources_from_chunks,
@@ -29,14 +31,20 @@ from agent.rag import (
 from agent.rag_cite import build_idk_reply, process_answer
 from agent.rag_pipeline import (
     VERDICT_BELOW_THRESHOLD,
+    HistoryContext,
     config_from_row,
     mark_over_budget,
     run_retrieval_pipeline,
 )
+from shared.config import settings
 from shared.logger import get_logger
-from shared.models import Chat, ChatRagConfig, KnowledgeBase
+from shared.models import Chat, ChatRagConfig, KnowledgeBase, Message
 
 logger = get_logger(__name__)
+
+IDK_HISTORY_MARKER = "(ответа в базе знаний не нашлось)"
+DEFAULT_HISTORY_TURNS = 3
+MAX_HISTORY_TURNS = 10
 
 
 @dataclass(frozen=True)
@@ -59,6 +67,12 @@ class RagTurn:
     def done_payload(self) -> dict[str, Any]:
         """Payload sent as done.rag."""
         return self.payload
+
+    def with_task_memory(self, snapshot: dict[str, Any] | None) -> "RagTurn":
+        """Return the turn with the task-memory snapshot added to its payload."""
+        if snapshot is None:
+            return self
+        return replace(self, payload={**self.payload, "task_memory": snapshot})
 
 
 def _payload(
@@ -106,6 +120,67 @@ async def _load_kb(
     return kb
 
 
+def _assistant_history_text(message: Message) -> str:
+    """Stored answer text, or a marker when the turn was a «не знаю» answer."""
+    payload = parse_rag_payload(message.rag_sources)
+    if payload is not None and (
+        payload.get("gated") or payload.get("verdict") == VERDICT_MODEL_IDK
+    ):
+        return IDK_HISTORY_MARKER
+    return message.content
+
+
+async def load_history_pairs(
+    session: AsyncSession, parent_id: int | None, limit: int
+) -> list[tuple[str, str]]:
+    """Last user/assistant pairs of the branch ending at parent_id, oldest first."""
+    if parent_id is None or limit <= 0:
+        return []
+    chain: list[Message] = []
+    current_id: int | None = parent_id
+    steps = 2 * limit + 2
+    while current_id is not None and len(chain) < steps:
+        message = await session.get(Message, current_id)
+        if message is None:
+            break
+        chain.append(message)
+        current_id = message.parent_id
+    chain.reverse()
+    pairs: list[tuple[str, str]] = []
+    for index in range(1, len(chain)):
+        if chain[index].role == "assistant" and chain[index - 1].role == "user":
+            pairs.append((chain[index - 1].content, _assistant_history_text(chain[index])))
+    return pairs[-limit:]
+
+
+async def _history_context(
+    session: AsyncSession, chat: Chat, config: ChatRagConfig, parent_id: int | None
+) -> HistoryContext | None:
+    """History and task memory for condensing a follow-up; None on the first turn or when off."""
+    if not settings.TASK_MEMORY_ENABLED or parent_id is None:
+        return None
+    try:
+        if await session.get(Message, parent_id) is None:
+            return None
+        turns = getattr(config, "history_turns", None)
+        limit = DEFAULT_HISTORY_TURNS if turns is None else max(0, min(MAX_HISTORY_TURNS, turns))
+        pairs = await load_history_pairs(session, parent_id, limit)
+        doc = await task_memory.load_doc(session, chat.id)
+        memory_text = task_memory.render_prompt_lines(doc)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.warning(
+            "rag_history_load_failed", chat_id=chat.id, error=type(exc).__name__
+        )
+        if isinstance(exc, SQLAlchemyError):
+            await session.rollback()
+        return None
+    if not pairs and not memory_text:
+        return None
+    return HistoryContext(tuple(pairs), memory_text)
+
+
 async def prepare_rag_turn(
     session: AsyncSession,
     chat: Chat,
@@ -116,6 +191,7 @@ async def prepare_rag_turn(
     extra_tokens: int = 0,
     client: Any | None = None,
     model: str | None = None,
+    parent_id: int | None = None,
 ) -> RagTurn:
     """Retrieve and merge fragments into the outbound list; never raises except on cancel."""
     chat_id = chat.id
@@ -139,7 +215,8 @@ async def prepare_rag_turn(
             _log(chat_id, turn)
             return turn
         strict = True if config.strict is None else bool(config.strict)
-        pipeline_config = config_from_row(config, kb)
+        history = await _history_context(session, chat, config, parent_id)
+        pipeline_config = config_from_row(config, kb, history)
         chunks, trace = await run_retrieval_pipeline(
             session, kb, question, pipeline_config, client, model
         )
@@ -259,6 +336,8 @@ def _log(chat_id: int, turn: RagTurn, budget_info: dict[str, int] | None = None)
         gated=payload.get("gated", False),
         candidates=len(search.get("candidates", [])),
         skipped=len(search.get("skipped", [])),
+        history_pairs=search.get("history_pairs", 0),
+        condensed=search.get("condensed", False),
         **(budget_info or {}),
     )
 
