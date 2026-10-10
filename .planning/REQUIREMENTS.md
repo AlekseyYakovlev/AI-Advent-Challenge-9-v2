@@ -66,8 +66,8 @@
 ### Mini-chat with RAG and task memory (Day 25)
 
 - [x] **RCHAT-01**: The existing chat works as the RAG mini-chat: dialog history is kept, retrieval runs on every new question, and every answer shows its sources
-- [ ] **RCHAT-02**: Task memory per chat records the dialog goal, what the user has already clarified, and fixed constraints/terms; it is updated after each turn deterministically and shown in the UI
-- [ ] **RCHAT-03**: Task memory and recent history feed both the system prompt and the retrieval query rewrite, so follow-up questions retrieve correctly
+- [x] **RCHAT-02**: Task memory per chat records the dialog goal, what the user has already clarified, and fixed constraints/terms; it is updated after each turn deterministically and shown in the UI
+- [x] **RCHAT-03**: Task memory and recent history feed both the system prompt and the retrieval query rewrite, so follow-up questions retrieve correctly
 - [x] **RCHAT-04**: Two scripted long scenarios of 10-15 messages run end to end; the assistant keeps the goal and gives answers with sources on every turn
 - [x] **RCHAT-05**: `Day25_report.md` contains both scenario transcripts with per-turn checks (goal kept, sources present, task memory contents)
 
@@ -134,8 +134,8 @@
 | CITE-03 | Phase 16 | Complete |
 | CITE-04 | Phase 16 | Complete |
 | RCHAT-01 | Phase 17 | Complete |
-| RCHAT-02 | Phase 17 | Pending |
-| RCHAT-03 | Phase 17 | Pending |
+| RCHAT-02 | Phase 17 | Complete |
+| RCHAT-03 | Phase 17 | Complete |
 | RCHAT-04 | Phase 17 | Complete |
 | RCHAT-05 | Phase 17 | Complete |
 

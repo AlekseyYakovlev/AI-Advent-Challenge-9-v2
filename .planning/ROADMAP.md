@@ -46,7 +46,7 @@ Full details: [milestones/v2.0-ROADMAP.md](milestones/v2.0-ROADMAP.md)
  (completed 2026-10-03)
 - [x] **Phase 15: Reranking and filtering (Day 23)** — two-stage retrieval with threshold, lexical/LLM rerank, hybrid FTS5, query rewrite, "Детали поиска", Day23 report (completed 2026-10-03)
 - [x] **Phase 16: Citations and anti-hallucination (Day 24)** — sources and verified quotes on every answer, code-enforced "не знаю" with a clarifying question (completed 2026-10-04)
-- [ ] **Phase 17: Mini-chat with RAG and task memory (Day 25)** — the existing chat as RAG mini-chat with per-chat task memory, two long scripted scenarios, Day25 report
+- [x] **Phase 17: Mini-chat with RAG and task memory (Day 25)** — the existing chat as RAG mini-chat with per-chat task memory, two long scripted scenarios, Day25 report (completed 2026-10-10)
 
 ## Phase Details
 
@@ -314,7 +314,7 @@ Plans:
 | 14. First RAG query (Day 22) | v3.0 | 8/8 | Complete    | 2026-10-03 |
 | 15. Reranking and filtering (Day 23) | v3.0 | 13/13 | Complete    | 2026-10-03 |
 | 16. Citations and anti-hallucination (Day 24) | v3.0 | 8/8 | Complete    | 2026-10-04 |
-| 17. Mini-chat with RAG and task memory (Day 25) | v3.0 | 10/11 | In Progress|  |
+| 17. Mini-chat with RAG and task memory (Day 25) | v3.0 | 11/11 | Complete   | 2026-10-10 |
 
 ## Backlog
 
