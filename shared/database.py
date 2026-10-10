@@ -150,6 +150,8 @@ _CHATRAGCONFIG_RANK_COLUMNS: tuple[tuple[str, str], ...] = (
     # Strict mode is on by default for existing and new RAG chats (decision D-15);
     # users opt out with the «Строгий режим» switch.
     ("strict", "BOOLEAN DEFAULT 1"),
+    # How many recent Q/A pairs the history-aware query condensing sees (D-13).
+    ("history_turns", "INTEGER DEFAULT 3"),
 )
 
 

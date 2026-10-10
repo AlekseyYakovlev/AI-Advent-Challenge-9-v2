@@ -67,14 +67,19 @@ async def _complete(
     )
 
 
-async def _call(
-    stage: str, client: Any, messages: list[dict[str, str]], model: str, max_tokens: int
+async def complete_stage(
+    stage: str,
+    client: Any,
+    messages: list[dict[str, str]],
+    model: str,
+    max_tokens: int,
+    timeout: float,
 ) -> tuple[ChatCompletionResult | None, str | None]:
-    """Run one stage call under the stage timeout; failures become a reason code."""
+    """Run one stage call under the given timeout; failures become a reason code."""
     try:
         result = await asyncio.wait_for(
             _complete(client, messages, model, max_tokens),
-            timeout=settings.RAG_LLM_STAGE_TIMEOUT,
+            timeout=timeout,
         )
     except asyncio.CancelledError:
         raise
@@ -89,6 +94,15 @@ async def _call(
         )
         return None, REASON_HTTP_ERROR
     return result, None
+
+
+async def _call(
+    stage: str, client: Any, messages: list[dict[str, str]], model: str, max_tokens: int
+) -> tuple[ChatCompletionResult | None, str | None]:
+    """Run one stage call under the RAG stage timeout."""
+    return await complete_stage(
+        stage, client, messages, model, max_tokens, settings.RAG_LLM_STAGE_TIMEOUT
+    )
 
 
 def _log_unusable(event: str, model: str, result: ChatCompletionResult) -> None:
