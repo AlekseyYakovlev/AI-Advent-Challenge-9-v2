@@ -11,7 +11,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from agent.kb_search import cosine_for_ids
 from agent.rag import DEFAULT_CANDIDATE_K, RagFailure, resolve_threshold, retrieve_vectors
 from agent.rag_fts import fts_search, load_chunks_by_ids
-from agent.rag_llm import llm_rerank, rewrite_query
+from agent.rag_llm import condense_query, llm_rerank, rewrite_query
 from agent.rag_rank import (
     RERANK_TOP_N,
     article_numbers,
@@ -37,6 +37,7 @@ STAGE_LEXICAL = "lexical"
 STAGE_LLM = "llm"
 STAGE_HYBRID = "hybrid"
 STAGE_REWRITE = "rewrite"
+STAGE_HISTORY = "history"
 
 REASON_NO_LLM = "no_llm"
 REASON_SEARCH_FAILED = "search_failed"
@@ -47,6 +48,14 @@ _REASON_UNCHANGED = "unchanged"
 FOUND_ORIGINAL = "original"
 FOUND_REWRITTEN = "rewritten"
 FOUND_BOTH = "both"
+
+
+@dataclass(frozen=True)
+class HistoryContext:
+    """Recent dialog pairs and rendered task memory used to condense a follow-up."""
+
+    pairs: tuple[tuple[str, str], ...]
+    memory_text: str | None
 
 
 @dataclass(frozen=True)
@@ -61,6 +70,7 @@ class PipelineConfig:
     llm_rerank: bool = False
     hybrid: bool = False
     rewrite: bool = False
+    history: HistoryContext | None = None
 
 
 @dataclass
@@ -96,7 +106,9 @@ class _Run:
         self.stage_ms[stage] = int((time.perf_counter() - started) * 1000)
 
 
-def config_from_row(row: ChatRagConfig, kb: KnowledgeBase | None) -> PipelineConfig:
+def config_from_row(
+    row: ChatRagConfig, kb: KnowledgeBase | None, history: HistoryContext | None = None
+) -> PipelineConfig:
     """Build the effective pipeline settings from a chat's RAG config row."""
     threshold, source = resolve_threshold(row.threshold, kb.embedding_model if kb else None)
     return PipelineConfig(
@@ -108,6 +120,7 @@ def config_from_row(row: ChatRagConfig, kb: KnowledgeBase | None) -> PipelineCon
         llm_rerank=bool(row.llm_rerank),
         hybrid=bool(row.hybrid),
         rewrite=bool(row.rewrite),
+        history=history,
     )
 
 
@@ -127,30 +140,37 @@ async def _rewrite_stage(
     vectors: list[tuple[np.ndarray, str]],
     run: _Run,
 ) -> tuple[str | None, float | None]:
-    """Rewrite the query and merge the second search into the candidates (D-12)."""
+    """Rewrite or condense the query and merge the second search into the candidates."""
     started = time.perf_counter()
+    history = config.history
+    stage = STAGE_HISTORY if history is not None else STAGE_REWRITE
     if client is None or model is None:
-        run.skip(STAGE_REWRITE, REASON_NO_LLM)
+        run.skip(stage, REASON_NO_LLM)
         return None, None
     try:
-        outcome = await rewrite_query(client, model, question)
+        if history is not None:
+            outcome = await condense_query(
+                client, model, question, history.pairs, history.memory_text
+            )
+        else:
+            outcome = await rewrite_query(client, model, question)
     except asyncio.CancelledError:
         raise
     except Exception as exc:
-        logger.warning("rag_stage_failed", stage=STAGE_REWRITE, error=type(exc).__name__)
-        run.skip(STAGE_REWRITE, REASON_STAGE_ERROR)
+        logger.warning("rag_stage_failed", stage=stage, error=type(exc).__name__)
+        run.skip(stage, REASON_STAGE_ERROR)
         return None, None
     if outcome.reason == _REASON_UNCHANGED:
-        run.done(STAGE_REWRITE, started)
+        run.done(stage, started)
         return None, None
     if outcome.reason is not None or not outcome.value:
-        run.skip(STAGE_REWRITE, outcome.reason or REASON_STAGE_ERROR)
+        run.skip(stage, outcome.reason or REASON_STAGE_ERROR)
         return None, None
     rewritten = str(outcome.value)
     try:
         results, vector = await retrieve_vectors(session, kb, rewritten, config.candidate_k)
     except RagFailure:
-        run.skip(STAGE_REWRITE, REASON_SEARCH_FAILED)
+        run.skip(stage, REASON_SEARCH_FAILED)
         return None, None
     for item in results:
         existing = candidates.get(item["row_id"])
@@ -164,7 +184,7 @@ async def _rewrite_stage(
             existing.cos = item["score"]
             existing.chunk["score"] = item["score"]
     vectors.append((vector, FOUND_REWRITTEN))
-    run.done(STAGE_REWRITE, started)
+    run.done(stage, started)
     return rewritten, round(float(np.dot(vectors[0][0], vector)), 4)
 
 
@@ -354,7 +374,7 @@ async def run_retrieval_pipeline(
 
     rewritten: str | None = None
     rewrite_cosine: float | None = None
-    if config.rewrite:
+    if config.rewrite or config.history is not None:
         rewritten, rewrite_cosine = await _rewrite_stage(
             session, kb, question, config, client, model, candidates, vectors, run
         )
@@ -391,6 +411,8 @@ async def run_retrieval_pipeline(
         "query": question,
         "rewritten": rewritten,
         "rewrite_cosine": rewrite_cosine,
+        "condensed": config.history is not None and rewritten is not None,
+        "history_pairs": len(config.history.pairs) if config.history is not None else 0,
         "config": {
             "candidate_k": config.candidate_k,
             "top_k": config.top_k,
@@ -400,6 +422,7 @@ async def run_retrieval_pipeline(
             "llm": config.llm_rerank,
             "hybrid": config.hybrid,
             "rewrite": config.rewrite,
+            "history": config.history is not None,
         },
         "stages": [STAGE_THRESHOLD, *run.stages],
         "stage_ms": dict(run.stage_ms),

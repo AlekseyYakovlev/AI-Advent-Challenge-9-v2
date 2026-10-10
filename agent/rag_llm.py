@@ -1,6 +1,7 @@
-"""Non-streaming LLM stages of RAG retrieval: query rewrite and batched rerank."""
+"""Non-streaming LLM stages of RAG retrieval: query rewrite, history condensing and batched rerank."""
 
 import asyncio
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -9,9 +10,11 @@ import httpx
 from agent.llm_client import ChatCompletionResult
 from agent.rag_rank import (
     RERANK_TOP_N,
+    build_condense_messages,
     build_rerank_messages,
     build_rewrite_messages,
     parse_rerank_scores,
+    validate_condensed,
     validate_rewrite,
 )
 from shared.config import settings
@@ -23,6 +26,7 @@ STAGE_TEMPERATURE = 0.0
 STAGE_REASONING_EFFORT = "none"
 REJECTED_STATUS_CODES = frozenset({400, 422})
 REWRITE_MAX_TOKENS = 96
+CONDENSE_MAX_TOKENS = 160
 RERANK_MAX_TOKENS = 200
 
 REASON_BAD_OUTPUT = "bad_output"
@@ -127,6 +131,29 @@ async def rewrite_query(client: Any, model: str, question: str) -> StageOutcome:
     text, reason = validate_rewrite(question, result.content)
     if reason == REASON_BAD_OUTPUT:
         _log_unusable("rag_rewrite_unusable", model, result)
+    return StageOutcome(text, reason)
+
+
+async def condense_query(
+    client: Any,
+    model: str,
+    question: str,
+    pairs: Sequence[tuple[str, str]],
+    memory_text: str | None,
+) -> StageOutcome:
+    """Condense a follow-up with recent history and task memory into a standalone query."""
+    result, reason = await _call(
+        "history",
+        client,
+        build_condense_messages(question, pairs, memory_text),
+        model,
+        CONDENSE_MAX_TOKENS,
+    )
+    if result is None:
+        return StageOutcome(None, reason)
+    text, reason = validate_condensed(question, result.content)
+    if reason == REASON_BAD_OUTPUT:
+        _log_unusable("rag_condense_unusable", model, result)
     return StageOutcome(text, reason)
 
 
