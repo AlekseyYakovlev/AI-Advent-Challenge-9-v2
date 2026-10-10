@@ -374,3 +374,18 @@ def test_merge_no_fragments_note_without_user_message_is_noop() -> None:
     llm = [{"role": "system", "content": "sys", "token_count": 1}]
     rag.merge_no_fragments_note(llm)
     assert llm == [{"role": "system", "content": "sys", "token_count": 1}]
+
+
+@pytest.mark.parametrize("top_k", [1, 5, 15, 20])
+def test_build_rag_block_keeps_rank_one_regardless_of_k(top_k: int) -> None:
+    """Fitting is a prefix: a larger K may drop tail chunks but never the rank-1 chunk."""
+    chunks = [{"source": "f", "section": "s", "text": f"фрагмент {i} " * 80} for i in range(top_k)]
+    budget = rag.rag_budget(16384, 499, 4096)
+    block, kept, dropped = rag.build_rag_block(chunks, budget, strict=True)
+    assert block is not None and kept and kept[0] is chunks[0]
+    assert len(kept) + dropped == top_k
+    assert count_tokens(block) * rag.CYRILLIC_SAFETY <= budget
+
+
+def test_rag_budget_with_realistic_settings_is_30_percent() -> None:
+    assert rag.rag_budget(16384, 499, 4096) == int(16384 * rag.RAG_BUDGET_RATIO)
