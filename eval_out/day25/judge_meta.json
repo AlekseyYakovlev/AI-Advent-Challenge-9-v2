@@ -1,0 +1,19 @@
+{
+  "rubric": "goal_adherence",
+  "model": "deepseek-flash",
+  "base_url": "https://api.deepseek.com",
+  "temperature": 0.0,
+  "max_tokens": 4000,
+  "rows": 48,
+  "judge_verdicts": {
+    "—": 30,
+    "да": 16,
+    "частично": 1,
+    "нет": 1
+  },
+  "agreement": {
+    "matching": 0,
+    "compared": 0
+  },
+  "timestamp": "2026-10-10T18:22:20.723552+00:00"
+}
