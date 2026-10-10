@@ -4,13 +4,15 @@ import asyncio
 import json
 from typing import Any
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from agent.llm_client import LLMClient, count_tokens
 from agent.providers import ProviderUnavailableError, resolve_client
-from agent import invariants, memory, profile, tasks
+from agent import invariants, memory, profile, task_memory, tasks
 from agent.tool_guard import TOOL_TRACE_HEADER  # noqa: F401  re-exported for compatibility
+from shared.config import settings
 from shared.database import async_session_factory
 from shared.logger import get_logger
 from shared.models import Chat, ContextStrategy, Message, Profile, Settings
@@ -238,8 +240,10 @@ async def build_system_prompt(session: AsyncSession, chat_id: int) -> str:
     parts = [settings_row.system_prompt or "You are a helpful assistant."]
 
     chat = await session.get(Chat, chat_id)
-    if chat is not None and chat.user_id is not None:
-        profile_row = await profile.get_profile(session, chat.user_id)
+    # Read before any rollback below expires the chat instance.
+    owner_id: int | None = chat.user_id if chat is not None else None
+    if owner_id is not None:
+        profile_row = await profile.get_profile(session, owner_id)
         if profile_row is not None:
             profile_text = _format_profile(profile_row)
             if profile_text:
@@ -258,8 +262,22 @@ async def build_system_prompt(session: AsyncSession, chat_id: int) -> str:
             + json.dumps({row.key: row.value for row in working}),
         )
 
-    if chat is not None and chat.user_id is not None:
-        long_term = await memory.list_long_term_memory(session, chat.user_id)
+    if settings.TASK_MEMORY_ENABLED:
+        try:
+            if await task_memory.chat_has_rag(session, chat_id):
+                task_lines = task_memory.render_prompt_lines(
+                    await task_memory.load_doc(session, chat_id),
+                )
+                if task_lines is not None:
+                    parts.append(task_lines)
+        except SQLAlchemyError as exc:
+            logger.warning(
+                "task_memory_prompt_failed", chat_id=chat_id, error=type(exc).__name__,
+            )
+            await session.rollback()
+
+    if owner_id is not None:
+        long_term = await memory.list_long_term_memory(session, owner_id)
         if long_term:
             parts.append(
                 "Long-term memory (persists across all your chats): "
