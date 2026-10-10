@@ -475,6 +475,10 @@ where `entry = { "id": 7, "key": "...", "value": "...", "updated_at": "..." }`. 
 list from every chat of the user. Status codes: 200, 401 (no session), 404 (chat of another user or
 unknown).
 
+Since Day 25 the response also carries `task_state` (see "Task memory" below): the task memory of the chat
+as `{ "goal": str or null, "clarified": [{"id": int, "text": str}], "constraints": [{"id": int, "text": str}] }`,
+or `null` when the chat has no RAG (mode `off`, no knowledge base) or `TASK_MEMORY_ENABLED` is off.
+
 ### PUT /api/v1/memory/long-term/{entry_id}
 
 Request body (JSON, at least one field):
@@ -659,6 +663,68 @@ sends over the WebSocket exactly one `token` frame with the whole reply, followe
 payload under `rag`; no completion request is made to the model. The streamed text of a normal strict
 turn still contains the «Цитаты:» tail; the stored `Message.content` and the history do not.
 
+### History settings (Day 25)
+
+`GET` and `PUT /api/v1/chats/{chat_id}/rag` carry one more field, `history_turns`: how many of the last
+question-answer pairs of the active branch the search sees when it condenses a follow-up into a standalone
+query. Integer 0..10, default 3; `0` means the condensing step sees the task memory only. It is optional in
+`PUT` (omitted leaves it unchanged); a value outside 0..10 or a non-integer answers `422`. Changes apply from
+the next message.
+
+### Task memory (Day 25)
+
+Task memory belongs to chats with RAG on. The three routes below need the session cookie and an owned chat
+(another user's chat answers `404`). Mutating routes check the `Origin`.
+
+| Method | Path | Body | Response |
+|--------|------|------|----------|
+| PUT | `/api/v1/chats/{chat_id}/task-memory/goal` | `{"goal": "..."}`, 1..300 characters after trimming | the new `task_state` |
+| DELETE | `/api/v1/chats/{chat_id}/task-memory/items/{item_id}` | none | the new `task_state` without that item |
+| POST | `/api/v1/chats/{chat_id}/task-memory/reset` | `{}` | an empty `task_state` (`goal: null`, empty lists) |
+
+Status codes: `200` success; `401` no session; `403` origin not allowed; `404` chat of another user or
+unknown, and (for the item route) no item with that id; `409` the chat has no RAG ("Память задачи доступна
+только в чатах с включённым RAG"); `415` `PUT` or `POST` without `Content-Type: application/json`; `422` an
+empty or too long goal, or a malformed body. Each route runs under the per-chat lock, so it never interleaves
+with an answer being written.
+
+`POST /api/v1/chats/{chat_id}/branch` also restores the task memory from the new active path: the memory
+becomes the snapshot of the newest assistant message on that path (an empty memory when there is none). A
+manual edit made after the last answer is replaced by the snapshot.
+
+The WebSocket `done` frame carries the memory after the turn as `rag.task_memory` (the snapshot described in
+payload v4), so the client updates its sidebar without a reload.
+
+### Payload v4 (Day 25)
+
+Messages written by Day 25 carry `"v": 4`: everything of v3 plus the key `task_memory` and two trace fields.
+Payloads of versions 1 to 3 stay valid for old messages and the UI renders them as before.
+
+```json
+{
+  "v": 4, "mode": "rag", "kb_id": 3, "kb_name": "kb", "top_k": 5,
+  "verdict": "ok",
+  "search": {"query": "а за повторное?", "rewritten": "штраф за повторное превышение скорости",
+             "condensed": true, "history_pairs": 2, "stages": ["threshold", "history", "lexical"], "...": "as in v2"},
+  "task_memory": {
+    "goal": "Подготовить памятку о штрафах за превышение скорости",
+    "clarified": [{"id": 1, "text": "только физические лица"}],
+    "constraints": [{"id": 2, "text": "отвечать только по КоАП"}],
+    "new": {"goal": true, "ids": [1, 2]},
+    "failed": false
+  }
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `task_memory` | Snapshot of the memory after the turn; absent on messages of chats without RAG and on messages written before Day 25; a gated turn carries it too |
+| `task_memory.new` | What this turn added: `goal` (the goal was set or replaced) and the `ids` of new items |
+| `task_memory.failed` | The extraction failed; the memory is the previous state |
+| `search.condensed` | `true` when the accepted standalone query came from history condensing (it is then also `search.rewritten`) |
+| `search.history_pairs` | Number of question-answer pairs the condensing step saw |
+| `search.stages` | Gains the stage name `history` when condensing ran; a skipped condensing is listed in `search.skipped` as `{stage: "history", reason}` |
+
 ## Environment Settings
 
 | Variable | Default | Meaning |
@@ -676,6 +742,8 @@ turn still contains the «Цитаты:» tail; the stored `Message.content` and
 | LLM_PROVIDER_ENV_FILE | .env | File whose declared variable names provider `api_key_env` references may resolve |
 | KB_STORAGE_DIR | empty | Root for knowledge-base uploads and indexes; empty means `<DB_PATH stem>_kb` next to the database |
 | KB_EMBED_TIMEOUT | 120.0 | Seconds allowed for one embeddings request to LM Studio |
+| TASK_MEMORY_ENABLED | true | Eval-only switch: `false` turns off task memory and history-aware condensing (the «no memory» baseline of `rag_eval.py dialog`); no UI or API surface |
+| TASK_MEMORY_TIMEOUT | 30.0 | Seconds allowed for the task-memory extraction call after an answer |
 | MCP_AUTO_CONNECT | true | Connect the user's enabled, unconnected MCP servers at the start of a chat turn (failures not retried until manual reconnect/edit) |
 
 With `MCP_AUTO_CONNECT` on, the first chat turn may wait up to `MCP_CONNECT_TIMEOUT` for a server

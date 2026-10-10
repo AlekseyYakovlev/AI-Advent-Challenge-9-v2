@@ -561,3 +561,69 @@ metadata-only rule: `quotes[].text` holds the quote string, capped at 1000 chara
 **Threshold.** The gate uses the Day 23 threshold unchanged (calibrated 0.67 for bge-m3, 0 without a
 calibration, or the user's override). `Day24_report.md` measures the cost: at the calibrated threshold
 some answerable questions are refused.
+
+## Task memory and history-aware retrieval (Day 25)
+
+Day 25 gives a RAG chat a **task memory**: a small per-chat document with the goal of the dialog, the points
+the user clarified and the constraints and terms the user fixed. It is also the first time retrieval looks at
+the dialog, so an elliptic follow-up («а за повторное?») can still find its fragments.
+
+**Memory layers.** For a chat with RAG the context now holds four kinds of state, each with its own owner:
+short-term dialog (the messages, trimmed by the compression strategy), working memory (key-value rows the
+model saves with tools), **task memory** (this section, extracted by code from the dialog) and long-term
+memory (per user, all chats). Task memory exists only for chats whose RAG mode is on; a chat without RAG has
+no task state and no extraction call.
+
+**Storage.** Table `ChatTaskMemory` (`chat_id` primary key with `ON DELETE CASCADE`, `user_id`, `doc_json`,
+`updated_at`). It is a separate table rather than a working-memory row because working memory is a
+free-form key-value store written by the model, while task memory has a fixed shape, ids, caps and merge
+rules owned by code, is edited from its own UI, and has to follow the active branch. The document is
+`{goal, clarified[{id, text}], constraints[{id, text}], next_id}`; ids are never reused.
+
+**Module `agent/task_memory.py`.**
+- Document and caps: goal up to 300 characters, an item up to 200, each list up to 12 items.
+- Extraction: after the answer, one non-streaming call (`extract_delta`, `TASK_MEMORY_TIMEOUT`, 400 tokens)
+  gets the current document, the user message and the answer and returns a JSON delta (`goal`,
+  `goal_changed`, `clarified`, `constraints`). `parse_delta` strips code fences and rejects anything that is
+  not the expected object.
+- User-stated filter (`filter_user_stated`): an item or goal survives only when its word stems overlap the
+  user's message (at least half) and every number it contains also occurs in the user's message. Facts that
+  appear only in the model's answer never enter the memory.
+- Merge (`merge_delta`): the goal is sticky, a new goal is stored when the document has none or the delta
+  marks `goal_changed` (an explicit goal change replaces the old one); items are deduplicated by stem Jaccard
+  (0.8) across both lists and dropped when a list is full (`task_memory_cap_hit` is logged).
+- Snapshot (`build_snapshot`): the document after the turn plus `new` (`goal`, `ids` added by this turn) and
+  `failed`. It is stored in the message payload and sent to the client.
+- Edits by hand: `set_goal`, `remove_item` and a full reset, exposed by `agent/task_memory_api.py`.
+
+**Turn flow.**
+1. `prepare_rag_turn` loads the history context from the **active branch** (`load_history_pairs`: the last
+   `history_turns` question-answer pairs, default 3, 0..10) and the rendered task memory.
+2. When there is history or memory, the `history` stage runs `condense_query` (one model call) and returns a
+   standalone query. Both the raw question and the condensed query are searched and the candidates merged
+   (the `found_by` field tells which found them). The lexical and LLM rerank stages still score the **raw
+   question**; the threshold, the gate rules and quote verification are unchanged. The gate decision is
+   taken on the merged result.
+3. The system prompt gets the memory block from `build_system_prompt` as labelled lines: «Память задачи (этот
+   чат):», «Цель диалога: ...», «Уточнено пользователем: ...», «Ограничения и термины (соблюдай их): ...».
+4. The answer streams, then `finalize_rag_turn` verifies citations as before.
+5. `update_task_memory` runs synchronously after the answer, **stages** the row and does not commit; the
+   assistant message and the staged memory are committed together, so a stored answer and its memory never
+   disagree. `done.rag.task_memory` carries the snapshot and the sidebar updates without a reload.
+6. A **gated** turn (no model call for the answer) still updates the memory from the user's message alone.
+
+**Branches.** `branch_chat` calls `restore_from_path`: the memory becomes the snapshot stored in the newest
+assistant message of the new active path, or an empty document when the path has none. A manual edit made
+after the last answer is therefore lost on a branch switch (the snapshot is the source of truth for a path).
+
+**Fail-soft.** A failed or unparsable extraction keeps the previous document and sets `failed: true`
+(the UI shows «память не обновлена»); a failed condensing call is recorded as a skipped `history` stage and
+the search uses the raw question; a failed memory load or prompt render is logged and the turn goes on
+without it. No memory error fails a turn.
+
+**Eval-only switch.** `TASK_MEMORY_ENABLED` (default true) and `TASK_MEMORY_TIMEOUT` (seconds, default 30) are
+environment settings. Turning `TASK_MEMORY_ENABLED` off removes task memory and the `history` stage; it has
+no UI and no API surface and exists for the «no memory» baseline run of `scripts/rag_eval.py dialog`.
+
+**Measured behaviour** is in `Day25_report.md` (two dialog scenarios, memory against the baseline, goal
+adherence judged by DeepSeek).
