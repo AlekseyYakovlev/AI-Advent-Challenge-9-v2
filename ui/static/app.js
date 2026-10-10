@@ -29,6 +29,8 @@ const state = {
     statsAbortController: null,
     lastMemory: null,
     editingMemory: null,
+    editingTaskGoal: null,
+    taskMemoryBusy: false,
     savingMemory: false,
     deletingMemoryId: null,
     lastProfile: null,
@@ -207,6 +209,8 @@ function renderMessages() {
         }
         const detailsBlock = isUser ? null : buildRagDetailsBlock(rag);
         if (detailsBlock) container.appendChild(wrapToolCard(detailsBlock));
+        const taskMemoryBlock = isUser || !rag ? null : buildTaskMemoryBlock(rag.task_memory);
+        if (taskMemoryBlock) container.appendChild(wrapToolCard(taskMemoryBlock));
         state.lastConflicts
             .filter((conflict) => conflict.message_id === msg.id)
             .forEach((conflict) => {
@@ -307,6 +311,10 @@ async function loadChatMemory(chatId) {
         renderMemoryPanel();
     } catch (err) {
         console.error('Failed to load memory:', err);
+        const taskBlock = $('memory-task-state');
+        if (taskBlock && !taskBlock.classList.contains('hidden')) {
+            showToast('Не удалось загрузить память задачи. Обновите страницу или переключитесь на другой чат.', 'error');
+        }
     }
 }
 
@@ -559,6 +567,7 @@ function renderMemoryPanel() {
     if (longTermCountEl) longTermCountEl.textContent = String(data.long_term.length);
     if (workingEl) renderMemoryEntries(workingEl, data.working);
     if (longTermEl) renderMemoryEntries(longTermEl, data.long_term, { editable: true });
+    renderTaskMemoryBlock(data.task_state);
 }
 
 async function loadChatTasks(chatId) {
@@ -569,6 +578,234 @@ async function loadChatTasks(chatId) {
     } catch (err) {
         console.error('Failed to load tasks:', err);
         showToast('Не удалось загрузить задачи. Проверьте соединение и попробуйте снова.', 'error');
+    }
+}
+
+const TASK_MEMORY_ERROR_TEXT = 'Не удалось изменить память задачи. Проверьте соединение и попробуйте снова.';
+
+function applyTaskMemoryResult(chatId, taskState) {
+    if (taskState === undefined || state.currentChatId !== chatId || !state.lastMemory) return false;
+    state.lastMemory.task_state = taskState;
+    return true;
+}
+
+function failTaskMemoryMutation(err) {
+    showToast(memoryErrorText(err, TASK_MEMORY_ERROR_TEXT), 'error');
+}
+
+function startTaskGoalEdit() {
+    const goal = state.lastMemory && state.lastMemory.task_state ? state.lastMemory.task_state.goal : null;
+    state.editingTaskGoal = goal || '';
+    renderMemoryPanel();
+    const field = document.querySelector('#memory-task-body [data-memory-field="task-goal"]');
+    if (field) field.focus();
+}
+
+function cancelTaskGoalEdit() {
+    state.editingTaskGoal = null;
+    renderMemoryPanel();
+}
+
+async function saveTaskGoal(text) {
+    if (state.taskMemoryBusy || state.currentChatId === null) return;
+    const chatId = state.currentChatId;
+    state.taskMemoryBusy = true;
+    renderMemoryPanel();
+    try {
+        const updated = await apiFetch(`/api/v1/chats/${chatId}/task-memory/goal`, {
+            method: 'PUT',
+            body: JSON.stringify({ goal: text }),
+        });
+        if (applyTaskMemoryResult(chatId, updated)) state.editingTaskGoal = null;
+    } catch (err) {
+        failTaskMemoryMutation(err);
+    } finally {
+        state.taskMemoryBusy = false;
+    }
+    renderMemoryPanel();
+}
+
+async function deleteTaskMemoryItem(itemId) {
+    if (state.taskMemoryBusy || state.currentChatId === null) return;
+    const chatId = state.currentChatId;
+    state.taskMemoryBusy = true;
+    renderMemoryPanel();
+    try {
+        const updated = await apiFetch(`/api/v1/chats/${chatId}/task-memory/items/${itemId}`, { method: 'DELETE' });
+        applyTaskMemoryResult(chatId, updated);
+    } catch (err) {
+        failTaskMemoryMutation(err);
+    } finally {
+        state.taskMemoryBusy = false;
+    }
+    renderMemoryPanel();
+}
+
+async function resetTaskMemory() {
+    if (state.taskMemoryBusy || state.currentChatId === null) return;
+    if (!confirm('Сбросить память задачи этого чата? Цель, уточнения и ограничения будут удалены. Это действие нельзя отменить.')) return;
+    const chatId = state.currentChatId;
+    state.taskMemoryBusy = true;
+    renderMemoryPanel();
+    try {
+        const updated = await apiFetch(`/api/v1/chats/${chatId}/task-memory/reset`, {
+            method: 'POST',
+            body: '{}',
+        });
+        if (applyTaskMemoryResult(chatId, updated)) state.editingTaskGoal = null;
+    } catch (err) {
+        failTaskMemoryMutation(err);
+    } finally {
+        state.taskMemoryBusy = false;
+    }
+    renderMemoryPanel();
+}
+
+function buildTaskGoalEditForm() {
+    const fieldClass = 'w-full min-w-0 rounded bg-slate-900 border border-slate-700 px-2 py-1 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500';
+    const form = mcpEl('div', 'rounded-lg bg-slate-800 px-2 py-2 space-y-1');
+    const field = document.createElement('textarea');
+    field.rows = 2;
+    field.maxLength = 300;
+    field.placeholder = 'Опишите цель диалога';
+    field.value = state.editingTaskGoal || '';
+    field.dataset.memoryField = 'task-goal';
+    field.setAttribute('aria-label', 'Цель диалога');
+    field.className = `${fieldClass} resize-y`;
+    field.addEventListener('input', () => {
+        if (state.editingTaskGoal !== null) state.editingTaskGoal = field.value;
+    });
+    field.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') cancelTaskGoalEdit(); // textarea-scoped, not a modal closer
+    });
+
+    const actions = mcpEl('div', 'flex items-center gap-2');
+    const saveBtn = buildMemoryButton(
+        'Сохранить',
+        'text-indigo-400 hover:text-indigo-300 disabled:opacity-50',
+        'task-goal-save',
+        () => {
+            saveTaskGoal(field.value.trim()).catch((err) => showToast(err.message, 'error'));
+        },
+    );
+    saveBtn.disabled = state.taskMemoryBusy;
+    const cancelBtn = buildMemoryButton(
+        'Отмена',
+        'text-slate-400 hover:text-white disabled:opacity-50',
+        'task-goal-cancel',
+        cancelTaskGoalEdit,
+    );
+    cancelBtn.disabled = state.taskMemoryBusy;
+    actions.append(saveBtn, cancelBtn);
+    form.append(field, actions);
+    return form;
+}
+
+function buildTaskGoalRow(goal) {
+    const row = mcpEl('div', 'rounded-lg bg-slate-800 px-2 py-1');
+    row.appendChild(goal
+        ? mcpEl('div', 'text-slate-400 break-words', goal)
+        : mcpEl('div', 'text-slate-600', '—'));
+    const actions = mcpEl('div', 'flex items-center gap-2 mt-1');
+    const editBtn = buildMemoryButton(
+        'Редактировать',
+        'text-slate-400 hover:text-white disabled:opacity-50',
+        'task-goal-edit',
+        startTaskGoalEdit,
+    );
+    editBtn.disabled = state.taskMemoryBusy;
+    actions.appendChild(editBtn);
+    row.appendChild(actions);
+    return row;
+}
+
+function buildTaskItemList(items) {
+    const list = mcpEl('div', 'space-y-1');
+    list.setAttribute('role', 'list');
+    if (!items.length) {
+        list.appendChild(mcpEl('div', 'text-slate-600', '—'));
+        return list;
+    }
+    items.forEach((item) => {
+        const row = mcpEl('div', 'rounded-lg bg-slate-800 px-2 py-1 flex items-start justify-between gap-2');
+        row.setAttribute('role', 'listitem');
+        row.appendChild(mcpEl('span', 'text-slate-400 break-words min-w-0', item.text));
+        const removeBtn = buildMemoryButton(
+            '×',
+            'text-slate-500 hover:text-red-400 disabled:opacity-50 focus:outline-none focus:ring-1 focus:ring-indigo-500',
+            'task-item-delete',
+            () => {
+                deleteTaskMemoryItem(item.id).catch((err) => showToast(err.message, 'error'));
+            },
+        );
+        removeBtn.title = 'Удалить пункт';
+        removeBtn.setAttribute('aria-label', `Удалить пункт: ${item.text}`);
+        removeBtn.disabled = state.taskMemoryBusy;
+        row.appendChild(removeBtn);
+        list.appendChild(row);
+    });
+    return list;
+}
+
+function renderTaskMemoryBlock(taskState) {
+    const wrapper = $('memory-task-state');
+    const body = $('memory-task-body');
+    const actions = $('memory-task-actions');
+    if (!wrapper || !body || !actions) return;
+    if (!taskState) {
+        wrapper.classList.add('hidden');
+        body.replaceChildren();
+        actions.replaceChildren();
+        state.editingTaskGoal = null;
+        return;
+    }
+    wrapper.classList.remove('hidden');
+    const active = document.activeElement;
+    const focus = active && body.contains(active) && active.dataset.memoryField === 'task-goal'
+        ? { start: active.selectionStart, end: active.selectionEnd }
+        : null;
+    const clarified = Array.isArray(taskState.clarified) ? taskState.clarified : [];
+    const constraints = Array.isArray(taskState.constraints) ? taskState.constraints : [];
+    const isEmpty = !taskState.goal && clarified.length === 0 && constraints.length === 0;
+
+    body.replaceChildren();
+    const label = (text) => mcpEl('div', 'text-slate-300 font-semibold', text);
+    const goalPart = mcpEl('div', 'space-y-1');
+    goalPart.appendChild(label('Цель'));
+    goalPart.appendChild(state.editingTaskGoal !== null ? buildTaskGoalEditForm() : buildTaskGoalRow(taskState.goal));
+    const clarifiedPart = mcpEl('div', 'space-y-1');
+    clarifiedPart.append(label('Уточнено'), buildTaskItemList(clarified));
+    const constraintsPart = mcpEl('div', 'space-y-1');
+    constraintsPart.append(label('Ограничения и термины'), buildTaskItemList(constraints));
+    body.append(goalPart, clarifiedPart, constraintsPart);
+    if (isEmpty) {
+        const caption = mcpEl('div', 'text-slate-600');
+        caption.append(
+            mcpEl('div', '', 'Пока пусто'),
+            mcpEl('div', '', 'Цель и уточнения появятся после первого ответа в этом чате'),
+        );
+        body.appendChild(caption);
+    }
+
+    actions.replaceChildren();
+    if (!isEmpty) {
+        const resetBtn = buildMemoryButton(
+            'Сбросить',
+            'text-slate-400 hover:text-white disabled:opacity-50',
+            'task-reset',
+            () => {
+                resetTaskMemory().catch((err) => showToast(err.message, 'error'));
+            },
+        );
+        resetBtn.disabled = state.taskMemoryBusy;
+        actions.appendChild(resetBtn);
+    }
+    if (focus) {
+        const field = body.querySelector('[data-memory-field="task-goal"]');
+        if (field) {
+            field.focus();
+            if (focus.start !== null && focus.end !== null) field.setSelectionRange(focus.start, focus.end);
+        }
     }
 }
 
@@ -1273,6 +1510,7 @@ async function selectChat(chatId) {
     disconnectWs(false);
     closeRagSearchPopover(false);
     state.currentChatId = chatId;
+    state.editingTaskGoal = null;
     state.lastStats = null;
     state.lastStatsChatId = null;
     state.isStatsLocal = false;
@@ -1480,6 +1718,15 @@ function handleWsMessage(data) {
             unblockInput();
             state.lastFailedMessage = null;
             if (data.stats) updateStats(data.stats);
+            if (data.rag && data.rag.task_memory && typeof data.rag.task_memory === 'object' && state.lastMemory) {
+                const taskMemory = data.rag.task_memory;
+                state.lastMemory.task_state = {
+                    goal: taskMemory.goal || null,
+                    clarified: Array.isArray(taskMemory.clarified) ? taskMemory.clarified : [],
+                    constraints: Array.isArray(taskMemory.constraints) ? taskMemory.constraints : [],
+                };
+                renderMemoryPanel();
+            }
             if (state.currentChatId) {
                 loadChatTree(state.currentChatId);
                 loadChatMemory(state.currentChatId);
@@ -1579,6 +1826,8 @@ async function branchFromMessage(messageId) {
     });
     await loadChatTree(state.currentChatId);
     loadChatStats(state.currentChatId);
+    state.editingTaskGoal = null;
+    loadChatMemory(state.currentChatId);
     $('message-input').focus();
 }
 
@@ -1600,6 +1849,8 @@ async function switchBranch(parentRef, direction) {
     });
     await loadChatTree(state.currentChatId);
     loadChatStats(state.currentChatId);
+    state.editingTaskGoal = null;
+    loadChatMemory(state.currentChatId);
 }
 
 function encodeModelValue(providerId, modelId) {
@@ -3942,6 +4193,7 @@ function renderRagSearchPopover() {
     const candidate = $('rag-candidate-k');
     candidate.min = String(cfg.top_k || 1);
     candidate.value = String(cfg.candidate_k || 20);
+    $('rag-history-turns').value = String(Number.isInteger(cfg.history_turns) ? cfg.history_turns : 3);
 
     const threshold = $('rag-threshold');
     const note = $('rag-threshold-note');
@@ -4005,6 +4257,13 @@ function bindRagSearchUi() {
         e.target.value = String(clamped);
         saveRagSearchSetting({ candidate_k: clamped });
     });
+    $('rag-history-turns').addEventListener('change', (e) => {
+        if (!state.rag) return;
+        const parsed = parseInt(e.target.value, 10);
+        const clamped = Number.isNaN(parsed) ? 3 : Math.min(10, Math.max(0, parsed));
+        e.target.value = String(clamped);
+        saveRagSearchSetting({ history_turns: clamped });
+    });
     $('rag-threshold').addEventListener('change', (e) => {
         if (e.target.value.trim() === '') {
             saveRagSearchSetting({ threshold: null });
@@ -4035,7 +4294,8 @@ async function saveChatRag(patch, errorText) {
         kb_id: prev.kb_id,
         top_k: prev.top_k,
     };
-    ['mode', 'kb_id', 'top_k', 'candidate_k', 'threshold', 'lexical', 'llm_rerank', 'hybrid', 'rewrite', 'strict']
+    ['mode', 'kb_id', 'top_k', 'candidate_k', 'threshold', 'lexical', 'llm_rerank', 'hybrid', 'rewrite', 'strict',
+        'history_turns']
         .forEach((key) => {
             if (key in patch) body[key] = patch[key];
         });
@@ -4125,9 +4385,13 @@ const RAG_SKIP_STAGE_NAMES = {
     rewrite: 'Переписывание',
     hybrid: 'Гибрид (FTS5)',
     lexical: 'Лексич. реранк',
+    history: 'Уточнение запроса',
 };
 
 function ragSkipReasonText(stage, reason) {
+    if (stage === 'history' && reason === 'bad_output') {
+        return 'ответ модели не подошёл, искали по исходному вопросу';
+    }
     if (reason === 'timeout') return 'таймаут';
     if (reason === 'fts_error') return 'ошибка запроса FTS5';
     if (reason === 'bad_output') {
@@ -4259,7 +4523,8 @@ function buildRagDetailsBlock(rag) {
 
     body.appendChild(buildRagDetailRow('Запрос:', mcpEl('span', 'text-slate-300', search.query || '')));
     if (typeof search.rewritten === 'string' && search.rewritten) {
-        body.appendChild(buildRagDetailRow('Переписан:', mcpEl('span', 'text-slate-300', search.rewritten)));
+        const rewrittenLabel = search.condensed === true ? 'Уточнён:' : 'Переписан:';
+        body.appendChild(buildRagDetailRow(rewrittenLabel, mcpEl('span', 'text-slate-300', search.rewritten)));
     }
 
     const stageValue = mcpEl('span', 'text-slate-300');
@@ -4267,6 +4532,14 @@ function buildRagDetailsBlock(rag) {
     [['lexical', 'лексич.'], ['llm', 'LLM'], ['hybrid', 'FTS5'], ['rewrite', 'rewrite']].forEach(([key, text]) => {
         if (stages.includes(key)) parts.push(mcpEl('span', 'font-semibold text-slate-200', text));
     });
+    if (stages.includes('history')) {
+        const historyPart = mcpEl('span', '');
+        historyPart.append(
+            mcpEl('span', 'font-semibold text-slate-200', 'история'),
+            document.createTextNode(` ×${Number(search.history_pairs) || 0}`),
+        );
+        parts.push(historyPart);
+    }
     const finalCount = candidates.filter((c) => c.status === 'in_answer').length;
     parts.push(mcpEl('span', '', `${candidates.length}→${finalCount}`));
     parts.push(mcpEl('span', '', `${search.latency_ms} мс`));
@@ -4287,6 +4560,70 @@ function buildRagDetailsBlock(rag) {
         body.appendChild(mcpEl('div', 'text-slate-500', 'Кандидатов нет: в базе нечего сравнивать'));
     } else {
         body.appendChild(buildRagCandidatesTable({ ...search, candidates }));
+    }
+    details.appendChild(body);
+    return details;
+}
+
+function buildTaskMemoryItemList(items, newIds) {
+    const list = mcpEl('div', 'space-y-1');
+    if (!items.length) {
+        list.appendChild(mcpEl('span', 'text-slate-500', '—'));
+        return list;
+    }
+    items.forEach((item) => {
+        const line = mcpEl('span', 'block text-slate-300');
+        line.appendChild(document.createTextNode(item.text));
+        if (newIds.has(item.id)) {
+            line.appendChild(document.createTextNode(' '));
+            line.appendChild(mcpEl('span', 'text-indigo-400 font-semibold', 'новое'));
+        }
+        list.appendChild(line);
+    });
+    return list;
+}
+
+function buildTaskMemoryBlock(taskMemory) {
+    if (!taskMemory || typeof taskMemory !== 'object') return null;
+    const clarified = Array.isArray(taskMemory.clarified) ? taskMemory.clarified : [];
+    const constraints = Array.isArray(taskMemory.constraints) ? taskMemory.constraints : [];
+    const goal = typeof taskMemory.goal === 'string' && taskMemory.goal ? taskMemory.goal : null;
+    if (!goal && clarified.length === 0 && constraints.length === 0) return null;
+
+    const fresh = taskMemory.new && typeof taskMemory.new === 'object' ? taskMemory.new : {};
+    const newIds = new Set(Array.isArray(fresh.ids) ? fresh.ids : []);
+    const goalIsNew = fresh.goal === true && goal !== null;
+    const total = clarified.length + constraints.length + (goal ? 1 : 0);
+    const newCount = newIds.size + (goalIsNew ? 1 : 0);
+    const summaryText = `Память задачи (${total})${newCount > 0 ? ` · новое: ${newCount}` : ''}`;
+
+    const details = mcpEl(
+        'details',
+        'rag-task-memory rounded-lg border border-slate-700 bg-slate-900 text-xs text-slate-300 px-3 py-2 mt-2 max-w-[75%]',
+    );
+    details.appendChild(mcpEl(
+        'summary',
+        'cursor-pointer select-none font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500',
+        summaryText,
+    ));
+    const body = mcpEl('div', 'mt-2 space-y-2');
+
+    const goalValue = mcpEl('span', goal ? 'text-slate-300' : 'text-slate-500');
+    goalValue.appendChild(document.createTextNode(goal || '—'));
+    if (goalIsNew) {
+        goalValue.appendChild(document.createTextNode(' '));
+        goalValue.appendChild(mcpEl('span', 'text-indigo-400 font-semibold', 'новое'));
+    }
+    body.appendChild(buildRagDetailRow('Цель:', goalValue));
+    body.appendChild(buildRagDetailRow('Уточнено:', buildTaskMemoryItemList(clarified, newIds)));
+    body.appendChild(buildRagDetailRow('Ограничения и термины:', buildTaskMemoryItemList(constraints, newIds)));
+
+    if (taskMemory.failed === true) {
+        const chip = mcpEl('span', RAG_CHIP_NEUTRAL, 'память не обновлена');
+        chip.title = 'Не удалось обновить память задачи на этом ходу; сохранено прежнее состояние';
+        const chipRow = mcpEl('div', '');
+        chipRow.appendChild(chip);
+        body.appendChild(chipRow);
     }
     details.appendChild(body);
     return details;
