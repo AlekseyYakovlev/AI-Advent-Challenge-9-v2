@@ -1,0 +1,216 @@
+{
+  "version": 1,
+  "status": "draft",
+  "frozen_at": null,
+  "corpus": ["ФЗ-196", "КоАП РФ"],
+  "scenarios": [
+    {
+      "id": "A",
+      "title": "Водитель, снятый камерой: штраф по КоАП",
+      "goal": "Выяснить, какой штраф и по какой статье КоАП грозит водителю за превышение скорости на 35 км/ч, зафиксированное камерой, отвечая только по КоАП.",
+      "goal_keywords": ["штраф", "превыш"],
+      "turns": [
+        {
+          "id": "A01",
+          "text": "Меня сфотографировала камера: я ехал 95 км/ч там, где ограничение 60. Какой штраф мне грозит? Отвечай, пожалуйста, только по КоАП, закон о безопасности дорожного движения не нужен.",
+          "kind": "direct",
+          "expect_memory": {"goal": ["штраф"], "clarified": ["95", "60"], "constraints": ["коап"]},
+          "expect_article": "12.9",
+          "expect_keywords": ["750"]
+        },
+        {
+          "id": "A02",
+          "text": "а за повторное?",
+          "kind": "followup",
+          "expect_memory": {},
+          "expect_article": "12.9",
+          "expect_keywords": []
+        },
+        {
+          "id": "A03",
+          "text": "А если бы я ехал не 95, а 110?",
+          "kind": "followup",
+          "expect_memory": {},
+          "expect_article": "12.9",
+          "expect_keywords": []
+        },
+        {
+          "id": "A04",
+          "text": "Постановление пришло мне через Госуслуги три дня назад. Можно ли заплатить со скидкой?",
+          "kind": "direct",
+          "expect_memory": {"clarified": ["госуслуг"]},
+          "expect_article": "32.2",
+          "expect_keywords": ["половин"]
+        },
+        {
+          "id": "A05",
+          "text": "до какого срока это можно сделать?",
+          "kind": "followup",
+          "expect_memory": {},
+          "expect_article": "32.2",
+          "expect_keywords": ["20"]
+        },
+        {
+          "id": "A06",
+          "text": "а если я не заплачу вообще?",
+          "kind": "followup",
+          "expect_memory": {},
+          "expect_article": "20.25",
+          "expect_keywords": []
+        },
+        {
+          "id": "A07",
+          "text": "и что будет с правами?",
+          "kind": "followup",
+          "expect_memory": {},
+          "expect_article": "12.9",
+          "expect_keywords": ["лиш"]
+        },
+        {
+          "id": "A08",
+          "text": "Насколько вырастет моя страховка КАСКО после такого штрафа?",
+          "kind": "out_of_corpus",
+          "expect_memory": {},
+          "expect_article": null,
+          "expect_keywords": []
+        },
+        {
+          "id": "A09",
+          "text": "Раз уж заговорили: какой штраф за проезд на красный сигнал светофора?",
+          "kind": "direct",
+          "expect_memory": {},
+          "expect_article": "12.12",
+          "expect_keywords": []
+        },
+        {
+          "id": "A10",
+          "text": "а если я только пересёк стоп-линию?",
+          "kind": "followup",
+          "expect_memory": {},
+          "expect_article": "12.12",
+          "expect_keywords": []
+        },
+        {
+          "id": "A11",
+          "text": "Напомни, что мы выясняем и что уже выяснили.",
+          "kind": "goal_check",
+          "expect_memory": {"goal": ["штраф"]},
+          "expect_article": null,
+          "expect_keywords": ["штраф"]
+        },
+        {
+          "id": "A12",
+          "text": "Тогда итог: по какой статье и сколько мне платить? Только из того закона, который я просил.",
+          "kind": "followup",
+          "expect_memory": {},
+          "expect_article": "12.9",
+          "expect_keywords": ["12.9"]
+        }
+      ]
+    },
+    {
+      "id": "B",
+      "title": "Конспект по ФЗ-196 к экзамену",
+      "goal": "Составить конспект Федерального закона 196-ФЗ к экзамену по безопасности дорожного движения, держась зафиксированного значения термина «участник дорожного движения».",
+      "goal_keywords": ["конспект", "196"],
+      "turns": [
+        {
+          "id": "B01",
+          "text": "Готовлюсь к экзамену по безопасности дорожного движения и хочу составить конспект по Федеральному закону 196-ФЗ. С чего начать: какие там основные термины?",
+          "kind": "direct",
+          "expect_memory": {"goal": ["конспект"]},
+          "expect_article": "2",
+          "expect_keywords": ["термин"]
+        },
+        {
+          "id": "B02",
+          "text": "Давай договоримся: «участник дорожного движения» ниже всегда понимаем так, как в статье 2 закона, без бытовых значений. Кто это по закону?",
+          "kind": "direct",
+          "expect_memory": {"constraints": ["участник"]},
+          "expect_article": "2",
+          "expect_keywords": ["пешеход"]
+        },
+        {
+          "id": "B03",
+          "text": "а какие у них права?",
+          "kind": "followup",
+          "expect_memory": {},
+          "expect_article": "24",
+          "expect_keywords": []
+        },
+        {
+          "id": "B04",
+          "text": "а обязанности?",
+          "kind": "followup",
+          "expect_memory": {},
+          "expect_article": "24",
+          "expect_keywords": []
+        },
+        {
+          "id": "B05",
+          "text": "Теперь про допуск к управлению: какие категории транспортных средств выделяет закон?",
+          "kind": "direct",
+          "expect_memory": {},
+          "expect_article": "25",
+          "expect_keywords": ["категор"]
+        },
+        {
+          "id": "B06",
+          "text": "а с какого возраста на них можно сдавать?",
+          "kind": "followup",
+          "expect_memory": {},
+          "expect_article": "26",
+          "expect_keywords": []
+        },
+        {
+          "id": "B07",
+          "text": "а когда это право прекращается?",
+          "kind": "followup",
+          "expect_memory": {},
+          "expect_article": "28",
+          "expect_keywords": ["лишен"]
+        },
+        {
+          "id": "B08",
+          "text": "а приостанавливается — это то же самое?",
+          "kind": "followup",
+          "expect_memory": {},
+          "expect_article": "28",
+          "expect_keywords": ["приостанавл"]
+        },
+        {
+          "id": "B09",
+          "text": "Какой процент выпускников автошкол сдаёт экзамен в ГИБДД с первого раза?",
+          "kind": "out_of_corpus",
+          "expect_memory": {},
+          "expect_article": null,
+          "expect_keywords": []
+        },
+        {
+          "id": "B10",
+          "text": "Вернёмся к конспекту. Что закон говорит про медицинское обеспечение водителей?",
+          "kind": "direct",
+          "expect_memory": {},
+          "expect_article": "23",
+          "expect_keywords": ["медицин"]
+        },
+        {
+          "id": "B11",
+          "text": "а как часто их проходить?",
+          "kind": "followup",
+          "expect_memory": {},
+          "expect_article": "23",
+          "expect_keywords": []
+        },
+        {
+          "id": "B12",
+          "text": "Какие разделы мы уже разобрали для конспекта и как мы договорились понимать «участник дорожного движения»?",
+          "kind": "goal_check",
+          "expect_memory": {"goal": ["конспект"], "constraints": ["участник"]},
+          "expect_article": null,
+          "expect_keywords": ["участник", "конспект"]
+        }
+      ]
+    }
+  ]
+}
