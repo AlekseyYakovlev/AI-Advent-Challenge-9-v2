@@ -25,7 +25,9 @@ from agent.dependencies import get_current_user_ws
 from agent import invariants, tasks
 from agent.llm_client import LLMClient, count_tokens
 from agent.mcp_tools import McpToolset, build_mcp_toolset
+from agent.rag import MODE_RAG
 from agent.rag_turn import RagTurn, finalize_rag_turn, prepare_rag_turn
+from agent.task_memory import update_task_memory
 from agent.providers import ProviderUnavailableError, resolve_client
 from agent.state import (
     CORS_ORIGINS,
@@ -730,6 +732,7 @@ async def _complete_gated_turn(
     user_msg: Message,
     payload: MessagePayload,
     rag_turn: RagTurn,
+    client: Any,
 ) -> None:
     """Send and store the code-built reply of a gated strict turn without calling the LLM.
 
@@ -739,6 +742,12 @@ async def _complete_gated_turn(
     active_streams[chat_id] = asyncio.current_task()
     try:
         try:
+            # The templated reply carries no user information, so only the user's message
+            # feeds the memory update; the staged row is committed with the reply.
+            snapshot = await update_task_memory(
+                session, chat, payload.content, "", client, payload.model,
+            )
+            rag_turn = rag_turn.with_task_memory(snapshot)
             assistant_msg = await _persist_assistant_message(
                 session,
                 chat,
@@ -906,11 +915,12 @@ async def _handle_chat_message(
                 schema_tokens,
                 client=client,
                 model=payload.model,
+                parent_id=user_msg.parent_id,
             )
 
             if rag_turn.reply_text is not None:
                 await _complete_gated_turn(
-                    websocket, session, chat, chat_id, user_msg, payload, rag_turn,
+                    websocket, session, chat, chat_id, user_msg, payload, rag_turn, client,
                 )
                 return
 
@@ -1111,6 +1121,14 @@ async def _handle_chat_message(
             assistant_text, rag_turn = await asyncio.to_thread(
                 finalize_rag_turn, rag_turn, payload.content, assistant_text,
             )
+            if rag_turn.mode == MODE_RAG:
+                # D-02: synchronous on purpose, so the next question and the UI never see
+                # stale task memory. It only stages the row; the persist below commits it with
+                # the message. extract_and_update_facts is a different, legacy layer.
+                snapshot = await update_task_memory(
+                    session, chat, payload.content, assistant_text, client, payload.model,
+                )
+                rag_turn = rag_turn.with_task_memory(snapshot)
             assistant_msg = await _persist_assistant_message(
                 session,
                 chat,
