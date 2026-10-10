@@ -29,6 +29,8 @@ const state = {
     statsAbortController: null,
     lastMemory: null,
     editingMemory: null,
+    editingTaskGoal: null,
+    taskMemoryBusy: false,
     savingMemory: false,
     deletingMemoryId: null,
     lastProfile: null,
@@ -307,6 +309,10 @@ async function loadChatMemory(chatId) {
         renderMemoryPanel();
     } catch (err) {
         console.error('Failed to load memory:', err);
+        const taskBlock = $('memory-task-state');
+        if (taskBlock && !taskBlock.classList.contains('hidden')) {
+            showToast('Не удалось загрузить память задачи. Обновите страницу или переключитесь на другой чат.', 'error');
+        }
     }
 }
 
@@ -559,6 +565,7 @@ function renderMemoryPanel() {
     if (longTermCountEl) longTermCountEl.textContent = String(data.long_term.length);
     if (workingEl) renderMemoryEntries(workingEl, data.working);
     if (longTermEl) renderMemoryEntries(longTermEl, data.long_term, { editable: true });
+    renderTaskMemoryBlock(data.task_state);
 }
 
 async function loadChatTasks(chatId) {
@@ -569,6 +576,234 @@ async function loadChatTasks(chatId) {
     } catch (err) {
         console.error('Failed to load tasks:', err);
         showToast('Не удалось загрузить задачи. Проверьте соединение и попробуйте снова.', 'error');
+    }
+}
+
+const TASK_MEMORY_ERROR_TEXT = 'Не удалось изменить память задачи. Проверьте соединение и попробуйте снова.';
+
+function applyTaskMemoryResult(chatId, taskState) {
+    if (taskState === undefined || state.currentChatId !== chatId || !state.lastMemory) return false;
+    state.lastMemory.task_state = taskState;
+    return true;
+}
+
+function failTaskMemoryMutation(err) {
+    showToast(memoryErrorText(err, TASK_MEMORY_ERROR_TEXT), 'error');
+}
+
+function startTaskGoalEdit() {
+    const goal = state.lastMemory && state.lastMemory.task_state ? state.lastMemory.task_state.goal : null;
+    state.editingTaskGoal = goal || '';
+    renderMemoryPanel();
+    const field = document.querySelector('#memory-task-body [data-memory-field="task-goal"]');
+    if (field) field.focus();
+}
+
+function cancelTaskGoalEdit() {
+    state.editingTaskGoal = null;
+    renderMemoryPanel();
+}
+
+async function saveTaskGoal(text) {
+    if (state.taskMemoryBusy || state.currentChatId === null) return;
+    const chatId = state.currentChatId;
+    state.taskMemoryBusy = true;
+    renderMemoryPanel();
+    try {
+        const updated = await apiFetch(`/api/v1/chats/${chatId}/task-memory/goal`, {
+            method: 'PUT',
+            body: JSON.stringify({ goal: text }),
+        });
+        if (applyTaskMemoryResult(chatId, updated)) state.editingTaskGoal = null;
+    } catch (err) {
+        failTaskMemoryMutation(err);
+    } finally {
+        state.taskMemoryBusy = false;
+    }
+    renderMemoryPanel();
+}
+
+async function deleteTaskMemoryItem(itemId) {
+    if (state.taskMemoryBusy || state.currentChatId === null) return;
+    const chatId = state.currentChatId;
+    state.taskMemoryBusy = true;
+    renderMemoryPanel();
+    try {
+        const updated = await apiFetch(`/api/v1/chats/${chatId}/task-memory/items/${itemId}`, { method: 'DELETE' });
+        applyTaskMemoryResult(chatId, updated);
+    } catch (err) {
+        failTaskMemoryMutation(err);
+    } finally {
+        state.taskMemoryBusy = false;
+    }
+    renderMemoryPanel();
+}
+
+async function resetTaskMemory() {
+    if (state.taskMemoryBusy || state.currentChatId === null) return;
+    if (!confirm('Сбросить память задачи этого чата? Цель, уточнения и ограничения будут удалены. Это действие нельзя отменить.')) return;
+    const chatId = state.currentChatId;
+    state.taskMemoryBusy = true;
+    renderMemoryPanel();
+    try {
+        const updated = await apiFetch(`/api/v1/chats/${chatId}/task-memory/reset`, {
+            method: 'POST',
+            body: '{}',
+        });
+        if (applyTaskMemoryResult(chatId, updated)) state.editingTaskGoal = null;
+    } catch (err) {
+        failTaskMemoryMutation(err);
+    } finally {
+        state.taskMemoryBusy = false;
+    }
+    renderMemoryPanel();
+}
+
+function buildTaskGoalEditForm() {
+    const fieldClass = 'w-full min-w-0 rounded bg-slate-900 border border-slate-700 px-2 py-1 text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500';
+    const form = mcpEl('div', 'rounded-lg bg-slate-800 px-2 py-2 space-y-1');
+    const field = document.createElement('textarea');
+    field.rows = 2;
+    field.maxLength = 300;
+    field.placeholder = 'Опишите цель диалога';
+    field.value = state.editingTaskGoal || '';
+    field.dataset.memoryField = 'task-goal';
+    field.setAttribute('aria-label', 'Цель диалога');
+    field.className = `${fieldClass} resize-y`;
+    field.addEventListener('input', () => {
+        if (state.editingTaskGoal !== null) state.editingTaskGoal = field.value;
+    });
+    field.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') cancelTaskGoalEdit(); // textarea-scoped, not a modal closer
+    });
+
+    const actions = mcpEl('div', 'flex items-center gap-2');
+    const saveBtn = buildMemoryButton(
+        'Сохранить',
+        'text-indigo-400 hover:text-indigo-300 disabled:opacity-50',
+        'task-goal-save',
+        () => {
+            saveTaskGoal(field.value.trim()).catch((err) => showToast(err.message, 'error'));
+        },
+    );
+    saveBtn.disabled = state.taskMemoryBusy;
+    const cancelBtn = buildMemoryButton(
+        'Отмена',
+        'text-slate-400 hover:text-white disabled:opacity-50',
+        'task-goal-cancel',
+        cancelTaskGoalEdit,
+    );
+    cancelBtn.disabled = state.taskMemoryBusy;
+    actions.append(saveBtn, cancelBtn);
+    form.append(field, actions);
+    return form;
+}
+
+function buildTaskGoalRow(goal) {
+    const row = mcpEl('div', 'rounded-lg bg-slate-800 px-2 py-1');
+    row.appendChild(goal
+        ? mcpEl('div', 'text-slate-400 break-words', goal)
+        : mcpEl('div', 'text-slate-600', '—'));
+    const actions = mcpEl('div', 'flex items-center gap-2 mt-1');
+    const editBtn = buildMemoryButton(
+        'Редактировать',
+        'text-slate-400 hover:text-white disabled:opacity-50',
+        'task-goal-edit',
+        startTaskGoalEdit,
+    );
+    editBtn.disabled = state.taskMemoryBusy;
+    actions.appendChild(editBtn);
+    row.appendChild(actions);
+    return row;
+}
+
+function buildTaskItemList(items) {
+    const list = mcpEl('div', 'space-y-1');
+    list.setAttribute('role', 'list');
+    if (!items.length) {
+        list.appendChild(mcpEl('div', 'text-slate-600', '—'));
+        return list;
+    }
+    items.forEach((item) => {
+        const row = mcpEl('div', 'rounded-lg bg-slate-800 px-2 py-1 flex items-start justify-between gap-2');
+        row.setAttribute('role', 'listitem');
+        row.appendChild(mcpEl('span', 'text-slate-400 break-words min-w-0', item.text));
+        const removeBtn = buildMemoryButton(
+            '×',
+            'text-slate-500 hover:text-red-400 disabled:opacity-50 focus:outline-none focus:ring-1 focus:ring-indigo-500',
+            'task-item-delete',
+            () => {
+                deleteTaskMemoryItem(item.id).catch((err) => showToast(err.message, 'error'));
+            },
+        );
+        removeBtn.title = 'Удалить пункт';
+        removeBtn.setAttribute('aria-label', `Удалить пункт: ${item.text}`);
+        removeBtn.disabled = state.taskMemoryBusy;
+        row.appendChild(removeBtn);
+        list.appendChild(row);
+    });
+    return list;
+}
+
+function renderTaskMemoryBlock(taskState) {
+    const wrapper = $('memory-task-state');
+    const body = $('memory-task-body');
+    const actions = $('memory-task-actions');
+    if (!wrapper || !body || !actions) return;
+    if (!taskState) {
+        wrapper.classList.add('hidden');
+        body.replaceChildren();
+        actions.replaceChildren();
+        state.editingTaskGoal = null;
+        return;
+    }
+    wrapper.classList.remove('hidden');
+    const active = document.activeElement;
+    const focus = active && body.contains(active) && active.dataset.memoryField === 'task-goal'
+        ? { start: active.selectionStart, end: active.selectionEnd }
+        : null;
+    const clarified = Array.isArray(taskState.clarified) ? taskState.clarified : [];
+    const constraints = Array.isArray(taskState.constraints) ? taskState.constraints : [];
+    const isEmpty = !taskState.goal && clarified.length === 0 && constraints.length === 0;
+
+    body.replaceChildren();
+    const label = (text) => mcpEl('div', 'text-slate-300 font-semibold', text);
+    const goalPart = mcpEl('div', 'space-y-1');
+    goalPart.appendChild(label('Цель'));
+    goalPart.appendChild(state.editingTaskGoal !== null ? buildTaskGoalEditForm() : buildTaskGoalRow(taskState.goal));
+    const clarifiedPart = mcpEl('div', 'space-y-1');
+    clarifiedPart.append(label('Уточнено'), buildTaskItemList(clarified));
+    const constraintsPart = mcpEl('div', 'space-y-1');
+    constraintsPart.append(label('Ограничения и термины'), buildTaskItemList(constraints));
+    body.append(goalPart, clarifiedPart, constraintsPart);
+    if (isEmpty) {
+        const caption = mcpEl('div', 'text-slate-600');
+        caption.append(
+            mcpEl('div', '', 'Пока пусто'),
+            mcpEl('div', '', 'Цель и уточнения появятся после первого ответа в этом чате'),
+        );
+        body.appendChild(caption);
+    }
+
+    actions.replaceChildren();
+    if (!isEmpty) {
+        const resetBtn = buildMemoryButton(
+            'Сбросить',
+            'text-slate-400 hover:text-white disabled:opacity-50',
+            'task-reset',
+            () => {
+                resetTaskMemory().catch((err) => showToast(err.message, 'error'));
+            },
+        );
+        resetBtn.disabled = state.taskMemoryBusy;
+        actions.appendChild(resetBtn);
+    }
+    if (focus) {
+        const field = body.querySelector('[data-memory-field="task-goal"]');
+        if (field) {
+            field.focus();
+            if (focus.start !== null && focus.end !== null) field.setSelectionRange(focus.start, focus.end);
+        }
     }
 }
 
@@ -1273,6 +1508,7 @@ async function selectChat(chatId) {
     disconnectWs(false);
     closeRagSearchPopover(false);
     state.currentChatId = chatId;
+    state.editingTaskGoal = null;
     state.lastStats = null;
     state.lastStatsChatId = null;
     state.isStatsLocal = false;
@@ -1480,6 +1716,15 @@ function handleWsMessage(data) {
             unblockInput();
             state.lastFailedMessage = null;
             if (data.stats) updateStats(data.stats);
+            if (data.rag && data.rag.task_memory && typeof data.rag.task_memory === 'object' && state.lastMemory) {
+                const taskMemory = data.rag.task_memory;
+                state.lastMemory.task_state = {
+                    goal: taskMemory.goal || null,
+                    clarified: Array.isArray(taskMemory.clarified) ? taskMemory.clarified : [],
+                    constraints: Array.isArray(taskMemory.constraints) ? taskMemory.constraints : [],
+                };
+                renderMemoryPanel();
+            }
             if (state.currentChatId) {
                 loadChatTree(state.currentChatId);
                 loadChatMemory(state.currentChatId);
@@ -1579,6 +1824,8 @@ async function branchFromMessage(messageId) {
     });
     await loadChatTree(state.currentChatId);
     loadChatStats(state.currentChatId);
+    state.editingTaskGoal = null;
+    loadChatMemory(state.currentChatId);
     $('message-input').focus();
 }
 
@@ -1600,6 +1847,8 @@ async function switchBranch(parentRef, direction) {
     });
     await loadChatTree(state.currentChatId);
     loadChatStats(state.currentChatId);
+    state.editingTaskGoal = null;
+    loadChatMemory(state.currentChatId);
 }
 
 function encodeModelValue(providerId, modelId) {
