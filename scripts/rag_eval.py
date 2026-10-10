@@ -9,6 +9,7 @@ Usage:
                                     [--max-tokens 4096] [--provider lmstudio|deepseek]
   python scripts/rag_eval.py cite [--runs strict,strict_off,strict_baseline] [--max-tokens 8192]
                                   [--render-only]
+  python scripts/rag_eval.py dialog [--runs main,baseline] [--scenarios A,B] [--check] [--force]
 
 build-kbs indexes the corpus PDFs once per embedder with identical strategy, chunk size and
 overlap into a scratch database (never app.db). run answers every control-set question without
@@ -1861,6 +1862,38 @@ def _add_cite_parser(sub: Any) -> None:
     )
 
 
+def _add_dialog_parser(sub: Any) -> None:
+    """Register the dialog subcommand."""
+    dialog = sub.add_parser(
+        "dialog", help="drive the frozen multi-turn scenarios through the real chat on an isolated copy"
+    )
+    dialog.add_argument("--runs", default="main,baseline", help="comma list: main, baseline")
+    dialog.add_argument("--scenarios", default=None, help="comma list of scenario ids; default all")
+    dialog.add_argument(
+        "--fixture", type=Path, default=REPO_ROOT / "tests" / "fixtures" / "rag" / "dialog_scenarios.json"
+    )
+    dialog.add_argument("--out", type=Path, default=REPO_ROOT / "eval_out" / "day25")
+    dialog.add_argument("--source-db", type=Path, default=DAY23_DB)
+    dialog.add_argument("--source-kb", type=Path, default=DAY23_DB.parent / "eval_kb")
+    dialog.add_argument("--kb-id", type=int, default=2)
+    dialog.add_argument("--model", default=DEFAULT_MODEL)
+    dialog.add_argument("--history-turns", type=int, default=3)
+    dialog.add_argument("--max-tokens", type=int, default=DEFAULT_CITE_MAX_TOKENS)
+    dialog.add_argument("--context-length", type=int, default=16384)
+    dialog.add_argument("--turn-timeout", type=float, default=240.0)
+    dialog.add_argument(
+        "--check", action="store_true", help="start the isolated app, log in, verify the KB; no chat"
+    )
+    dialog.add_argument("--force", action="store_true", help="re-run scenarios whose raw file exists")
+
+
+async def dialog_command(args: argparse.Namespace) -> int:
+    """Run the dialog sub-command (implemented in the sibling module rag_dialog)."""
+    import rag_dialog
+
+    return await rag_dialog.dialog_command(args)
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Command-line interface."""
     parser = argparse.ArgumentParser(description="Offline RAG evaluation runner.")
@@ -1889,6 +1922,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_calibrate_parser(sub)
     _add_ablate_parser(sub)
     _add_cite_parser(sub)
+    _add_dialog_parser(sub)
     return parser
 
 
@@ -1901,6 +1935,7 @@ def main() -> int:
         "calibrate": calibrate_command,
         "ablate": ablate_command,
         "cite": cite_command,
+        "dialog": dialog_command,
     }
     return asyncio.run(handlers[args.command](args))
 

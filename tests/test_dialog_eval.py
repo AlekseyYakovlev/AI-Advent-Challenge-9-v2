@@ -1,5 +1,7 @@
 """Tests for the dialog scenario driver: pure checks and isolation guards, no app and no network."""
 
+import argparse
+import asyncio
 import importlib.util
 import json
 from pathlib import Path
@@ -197,3 +199,169 @@ def test_load_scenarios_refuses_draft(tmp_path: Path) -> None:
 def test_load_scenarios_reads_frozen_fixture() -> None:
     scenarios = rag_dialog.load_scenarios(FIXTURE, require_frozen=True)
     assert [s["id"] for s in scenarios] == ["A", "B"]
+
+
+class FakeSocket:
+    """Yields scripted frames from recv(); a None entry blocks forever (a hung model)."""
+
+    def __init__(self, frames: list[dict[str, Any] | None]) -> None:
+        self.frames = list(frames)
+
+    async def recv(self) -> str:
+        frame = self.frames.pop(0)
+        if frame is None:
+            await asyncio.sleep(30)
+        return json.dumps(frame)
+
+
+def make_args(**over: Any) -> argparse.Namespace:
+    """Dialog arguments as the parser would build them."""
+    values: dict[str, Any] = {
+        "kb_id": 2,
+        "history_turns": 3,
+        "runs": "main,baseline",
+        "scenarios": None,
+        "fixture": FIXTURE,
+        "out": Path("unused"),
+        "source_db": Path("unused.db"),
+        "source_kb": Path("unused_kb"),
+        "check": False,
+        "force": False,
+    }
+    values.update(over)
+    return argparse.Namespace(**values)
+
+
+async def test_drain_turn_collects_tokens_until_done() -> None:
+    done = {"type": "done", "message_id": 1, "rag": {"verdict": "ok"}}
+    ws = FakeSocket(
+        [
+            {"type": "token", "content": "Штраф "},
+            {"type": "tool_call", "name": "x"},
+            {"type": "token", "content": "750"},
+            {"type": "token", "content": " руб."},
+            done,
+        ]
+    )
+    frame_type, answer, frame, error = await rag_dialog.drain_turn(ws, 5.0)
+    assert frame_type == "done"
+    assert answer == "Штраф 750 руб."
+    assert frame == done
+    assert error is None
+
+
+async def test_drain_turn_error_frame() -> None:
+    ws = FakeSocket([{"type": "error", "detail": "boom", "code": "CONTEXT_OVERFLOW"}])
+    frame_type, answer, _frame, error = await rag_dialog.drain_turn(ws, 5.0)
+    assert frame_type == "error"
+    assert answer == ""
+    assert error == "CONTEXT_OVERFLOW: boom"
+
+
+async def test_read_timeout_becomes_error_record() -> None:
+    ws = FakeSocket([{"type": "token", "content": "часть"}, None])
+    outcome = await rag_dialog.drain_turn(ws, 0.05)
+    assert outcome[0] == "error"
+    assert outcome[1] == "часть"
+    assert outcome[3].startswith("timeout")
+    record = rag_dialog.turn_record(
+        {"id": "A01", "kind": "direct", "text": "q", "expect_article": "12.9"}, outcome, 0.1, None
+    )
+    assert record["frame_type"] == "error"
+    assert record["checks"]["verdict"] == "error"
+    assert record["rag"] is None and record["task_memory"] is None
+
+
+def test_turn_record_keeps_whole_rag_and_snapshot() -> None:
+    rag = make_rag(task_memory=snapshot())
+    outcome = ("done", "ответ", {"type": "done", "rag": rag}, None)
+    record = rag_dialog.turn_record(
+        {"id": "A01", "kind": "direct", "text": "вопрос"}, outcome, 1.234, None
+    )
+    assert record["rag"] == rag
+    assert record["task_memory"] == rag["task_memory"]
+    assert record["question"] == "вопрос" and record["elapsed_s"] == 1.23
+    assert set(record) == {
+        "id", "kind", "question", "answer", "frame_type", "error", "elapsed_s", "rag",
+        "task_memory", "checks",
+    }
+
+
+def test_baseline_run_disables_task_memory(tmp_path: Path) -> None:
+    main_env = rag_dialog.run_config("main", make_args(), tmp_path)
+    base_env = rag_dialog.run_config("baseline", make_args(), tmp_path)
+    assert main_env["TASK_MEMORY_ENABLED"] == "true"
+    assert base_env["TASK_MEMORY_ENABLED"] == "false"
+    for env in (main_env, base_env):
+        assert env["UI_PORT"] == "18000" and env["AGENT_PORT"] == "18001"
+        assert Path(env["DB_PATH"]).parent == tmp_path
+        assert Path(env["KB_STORAGE_DIR"]).parent == tmp_path
+    with pytest.raises(ValueError):
+        rag_dialog.run_config("other", make_args(), tmp_path)
+
+
+def test_rag_settings_match_day24_configuration() -> None:
+    settings = rag_dialog.rag_settings(make_args(kb_id=7, history_turns=2))
+    assert settings["mode"] == "rag" and settings["kb_id"] == 7
+    assert settings["top_k"] == 5 and settings["candidate_k"] == 20
+    assert settings["threshold"] is None and settings["strict"] is True
+    for flag in ("lexical", "llm_rerank", "hybrid", "rewrite"):
+        assert settings[flag] is False
+    assert settings["history_turns"] == 2
+
+
+def test_parse_runs_and_scenarios() -> None:
+    assert rag_dialog.parse_runs("main,baseline") == ["main", "baseline"]
+    assert rag_dialog.parse_scenarios("A", ["A", "B"]) == ["A"]
+    assert rag_dialog.parse_scenarios(None, ["A", "B"]) == ["A", "B"]
+    with pytest.raises(ValueError):
+        rag_dialog.parse_runs("other")
+    with pytest.raises(ValueError):
+        rag_dialog.parse_scenarios("C", ["A", "B"])
+
+
+async def test_unknown_run_exits_with_code_2() -> None:
+    assert await rag_dialog.dialog_command(make_args(runs="other")) == 2
+
+
+async def test_unknown_scenario_exits_with_code_2() -> None:
+    assert await rag_dialog.dialog_command(make_args(scenarios="Z")) == 2
+
+
+async def test_draft_fixture_exits_with_code_2(tmp_path: Path) -> None:
+    draft = tmp_path / "draft.json"
+    draft.write_text(json.dumps({"status": "draft", "scenarios": []}), encoding="utf-8")
+    assert await rag_dialog.dialog_command(make_args(fixture=draft)) == 2
+
+
+def test_missing_source_database_is_refused(tmp_path: Path) -> None:
+    args = make_args(source_db=tmp_path / "missing.db", source_kb=tmp_path)
+    assert rag_dialog.preflight_dialog(args) == 2
+
+
+def test_existing_raw_file_is_detected_for_resume(tmp_path: Path) -> None:
+    path = rag_dialog.raw_path(tmp_path, "main", "A")
+    assert path == tmp_path / "raw" / "main_A.json"
+    assert not path.exists()
+    rag_dialog.write_json(path, {"run": "main"})
+    assert path.exists()
+
+
+def test_scenario_counts() -> None:
+    turns = [
+        {"frame_type": "done", "checks": {"verdict": "ok"}},
+        {"frame_type": "done", "checks": {"verdict": "gated"}},
+        {"frame_type": "error", "checks": {"verdict": "error"}},
+    ]
+    assert rag_dialog.scenario_counts(turns) == {"turns": 3, "done": 2, "errors": 1, "gated": 1}
+
+
+def test_dialog_subcommand_is_registered() -> None:
+    spec = importlib.util.spec_from_file_location(
+        "rag_eval_dialog", REPO_ROOT / "scripts" / "rag_eval.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    args = module.build_parser().parse_args(["dialog", "--check"])
+    assert args.command == "dialog" and args.check is True
+    assert args.runs == "main,baseline" and args.kb_id == 2 and args.turn_timeout == 240.0
