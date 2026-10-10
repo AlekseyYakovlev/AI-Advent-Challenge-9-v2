@@ -215,7 +215,7 @@ _REWRITE_LABEL_RE: re.Pattern[str] = re.compile(
 _QUOTE_CHARS: str = "\"'«»“”„"
 _DIGIT_TOKEN_RE: re.Pattern[str] = re.compile(r"\d+(?:\.\d+)*")
 _WHITESPACE_RE: re.Pattern[str] = re.compile(r"\s+")
-_DATA_TAG_RE: re.Pattern[str] = re.compile(r"<(?=\s*/?\s*(?:question|fragment)\s*>)", re.IGNORECASE)
+_DATA_TAG_RE: re.Pattern[str] = re.compile(r"<(?=\s*/?\s*(?:question|fragment|history|memory|user_message|assistant_answer)\s*>)", re.IGNORECASE)
 _RERANK_LINE_RE: re.Pattern[str] = re.compile(
     r"^[ \t]*\[?(\d+)\]?[ \t]*[:=\-–—][ \t]*(\d+(?:[.,]\d+)?)", re.MULTILINE
 )
@@ -259,8 +259,8 @@ def validate_rewrite(original: str, raw: str | None) -> tuple[str | None, str | 
     return text, None
 
 
-def _neutralize_data_tags(text: str) -> str:
-    """Break question/fragment tags in untrusted text so it cannot close a wrapper."""
+def neutralize_data_tags(text: str) -> str:
+    """Break the data-wrapper tags (rewrite, rerank, condense, extraction prompts) in untrusted text."""
     return _DATA_TAG_RE.sub("< ", text or "")
 
 
@@ -268,7 +268,7 @@ def build_rewrite_messages(question: str) -> list[dict[str, str]]:
     """System and user messages asking the model to rewrite a question as a search query."""
     return [
         {"role": "system", "content": REWRITE_SYSTEM_PROMPT},
-        {"role": "user", "content": f"<question>{_neutralize_data_tags(question)}</question>"},
+        {"role": "user", "content": f"<question>{neutralize_data_tags(question)}</question>"},
     ]
 
 
@@ -276,11 +276,11 @@ def build_rerank_messages(
     question: str, chunks: list[dict[str, Any]]
 ) -> list[dict[str, str]]:
     """System and user messages asking the model to score each candidate fragment 0..10."""
-    blocks: list[str] = [f"<question>{_neutralize_data_tags(question)}</question>"]
+    blocks: list[str] = [f"<question>{neutralize_data_tags(question)}</question>"]
     for number, chunk in enumerate(chunks[:RERANK_TOP_N], start=1):
         label = chunk.get("section") or chunk.get("title") or ""
-        text = _neutralize_data_tags((chunk.get("text") or "")[:RERANK_CHUNK_CHARS])
-        blocks.append(f"[{number}] {_neutralize_data_tags(label)} — <fragment>{text}</fragment>")
+        text = neutralize_data_tags((chunk.get("text") or "")[:RERANK_CHUNK_CHARS])
+        blocks.append(f"[{number}] {neutralize_data_tags(label)} — <fragment>{text}</fragment>")
     return [
         {"role": "system", "content": RERANK_SYSTEM_PROMPT},
         {"role": "user", "content": "\n\n".join(blocks)},
