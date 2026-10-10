@@ -205,6 +205,16 @@ def test_parse_delta_plain_json() -> None:
     assert delta.goal == "цель" and delta.goal_changed is True and delta.clarified == ["а"]
 
 
+def test_parse_delta_accepts_echoed_memory_objects() -> None:
+    delta = parse_delta(
+        '{"goal": "цель", "goal_changed": false, "clarified": [{"id": 2, "text": "а"}, "б"], '
+        '"constraints": [{"id": 1, "text": "только КоАП"}]}'
+    )
+    assert delta is not None
+    assert delta.clarified == ["а", "б"]
+    assert delta.constraints == ["только КоАП"]
+
+
 def test_parse_delta_think_block_fence_and_prose() -> None:
     raw = '<think>рассуждение { }</think>\n```json\n{"goal": null, "clarified": ["б"]}\n```'
     delta = parse_delta(raw)

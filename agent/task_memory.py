@@ -195,6 +195,18 @@ def filter_user_stated(delta: TaskMemoryDelta, user_text: str) -> tuple[TaskMemo
     return filtered, dropped
 
 
+def _flatten_items(data: dict[str, Any]) -> None:
+    """Turn echoed memory objects ({"id", "text"}) in the item lists into plain strings."""
+    for key in ("clarified", "constraints"):
+        items = data.get(key)
+        if not isinstance(items, list):
+            continue
+        data[key] = [
+            item["text"] if isinstance(item, dict) and isinstance(item.get("text"), str) else item
+            for item in items
+        ]
+
+
 def parse_delta(raw: str | None) -> TaskMemoryDelta | None:
     """Parse the extraction reply into a delta; None when it is not a valid JSON object."""
     text = _FENCE_RE.sub("", clean_llm_text(raw).strip()).strip()
@@ -205,6 +217,7 @@ def parse_delta(raw: str | None) -> TaskMemoryDelta | None:
         data = json.loads(text[start : end + 1])
         if not isinstance(data, dict):
             return None
+        _flatten_items(data)
         return TaskMemoryDelta.model_validate(data)
     except (json.JSONDecodeError, ValidationError):
         return None
