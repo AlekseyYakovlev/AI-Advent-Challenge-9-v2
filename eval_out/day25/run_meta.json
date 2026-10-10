@@ -1,0 +1,67 @@
+{
+  "fixture": "C:\\Projects\\AiAdventAgentV2\\tests\\fixtures\\rag\\dialog_scenarios.json",
+  "sha256": "8899136082d22a92014fb43168ab7f9bb4a7e674f94a07d6f5826874e3ed0260",
+  "sha256_lf": "ebb156e270eaec50baa18fac2dcb5519d112fdee92a49c81998195651eb3dcc7",
+  "rag": {
+    "mode": "rag",
+    "kb_id": 2,
+    "top_k": 5,
+    "candidate_k": 20,
+    "threshold": null,
+    "strict": true,
+    "lexical": false,
+    "llm_rerank": false,
+    "hybrid": false,
+    "rewrite": false,
+    "history_turns": 3
+  },
+  "model": "qwen/qwen3.5-9b",
+  "runs": {
+    "main": {
+      "TASK_MEMORY_ENABLED": true
+    },
+    "baseline": {
+      "TASK_MEMORY_ENABLED": false
+    }
+  },
+  "started_at": "2026-10-10T18:02:31.099802+00:00",
+  "finished_at": "2026-10-10T18:08:28.446779+00:00",
+  "scenario_counts": {
+    "main_A": {
+      "turns": 12,
+      "done": 12,
+      "errors": 0,
+      "gated": 4
+    },
+    "main_B": {
+      "turns": 12,
+      "done": 12,
+      "errors": 0,
+      "gated": 4
+    },
+    "baseline_A": {
+      "turns": 12,
+      "done": 12,
+      "errors": 0,
+      "gated": 12
+    },
+    "baseline_B": {
+      "turns": 12,
+      "done": 12,
+      "errors": 0,
+      "gated": 10
+    }
+  },
+  "git_commit": "6a69ff5dcbd6087ce9574ee8db22de6804442971",
+  "effective_config": {
+    "threshold_source": "calibrated",
+    "effective_threshold": 0.67,
+    "strict": true,
+    "top_k": 5,
+    "candidate_k": 20,
+    "history_turns": 3,
+    "temperature": 0.0,
+    "max_tokens": 8192,
+    "context_length": 16384
+  }
+}
