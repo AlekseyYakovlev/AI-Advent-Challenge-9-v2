@@ -133,6 +133,12 @@ def test_constraint_fixed_early() -> None:
     assert any(t["expect_memory"].get("constraints") for t in b_early)
 
 
+def test_fixture_is_frozen() -> None:
+    data: dict[str, Any] = _load()
+    assert data["status"] == "frozen"
+    assert data["frozen_at"]
+
+
 def test_frozen_requires_date() -> None:
     data: dict[str, Any] = _load()
     if data["status"] == "frozen":
