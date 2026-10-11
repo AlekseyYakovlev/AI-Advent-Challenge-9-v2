@@ -63,6 +63,7 @@ from agent.kb_api import router as kb_router
 from agent.rag import parse_rag_payload
 from agent.rag_api import router as rag_router
 from agent.task_memory_api import router as task_memory_router
+from agent.network_api import router as network_router
 from agent import task_memory
 from agent.providers_api import router as providers_router
 from agent.scheduler_api import router as scheduler_router
@@ -449,6 +450,7 @@ app.include_router(providers_router)
 app.include_router(kb_router)
 app.include_router(rag_router)
 app.include_router(task_memory_router)
+app.include_router(network_router)
 
 
 @app.get("/debug/routes")
