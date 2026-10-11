@@ -1,12 +1,20 @@
-# AiAdventAgentV2 — Week 5: RAG
+# AiAdventAgentV2 — Week 6: Local LLM as a Private Service
 
 ## What This Is
 
 A local-first, two-process AI chat application (FastAPI UI + Agent servers, vanilla JS frontend) that is being extended with an explicit agent memory model, personalization, and a formal task state machine with invariant enforcement. This is coursework for the "AI Advent Challenge" (9th cohort) — Week 3, Days 11-15 — where each day is a self-contained assignment building on the previous one's output, implemented in its own git branch and merged to `main` once its acceptance criteria pass.
 
-## Current Milestone
+## Current Milestone: v4.0 Week 6: Local LLM as a Private Service (Day 30)
 
-None active. Last shipped: **v3.0 Week 5: RAG** (2026-10-10). Test corpus for RAG: `C:\Projects\RAG` — ФЗ №196 «О безопасности дорожного движения» (file `ПДД.pdf`) and КоАП РФ (№195-ФЗ), both PDF. Start the next one with `/bm:new-milestone`.
+**Goal:** The app runs as a private AI service on the home network: the local model is reachable from any LAN machine, both through the browser UI and through a plain HTTP chat endpoint.
+
+**Target features:**
+- Network access: UI and Agent listen on all interfaces when enabled in `.env` (default stays loopback only); the Origin check accepts whatever host the UI itself was opened from — no IP allowlists or IP filters.
+- Browserless HTTP chat endpoint: authenticated by an API key in the `Authorization` header, writes into an existing chat (same message tree, memory, RAG, compression), returns the whole reply as one JSON body.
+- Basic limits: configurable per-chat rate limit shared by WebSocket and HTTP chat, a login attempt limit, `/debug/routes` behind auth; max context already exists and is only verified.
+- Verification and report: a script run from another LAN machine — reachability, several parallel requests against a real model, rate-limit and context-overflow behaviour — with results in `Day30_report.md`.
+
+**Key context:** branch `Day30`; no new dependencies, no Docker, no HTTPS (home LAN). Previous milestone: **v3.0 Week 5: RAG** (shipped 2026-10-10). Test corpus for RAG: `C:\Projects\RAG` — ФЗ №196 «О безопасности дорожного движения» (file `ПДД.pdf`) and КоАП РФ (№195-ФЗ), both PDF.
 
 ## Core Value
 
@@ -68,7 +76,10 @@ The agent must demonstrably separate and manage distinct kinds of state — shor
 
 ### Active
 
-(None — define with `/bm:new-milestone`.)
+- [ ] UI and Agent reachable from any machine on the local network (opt-in via `.env`, no IP filtering)
+- [ ] HTTP chat endpoint usable without a browser, authenticated by a per-user API key
+- [ ] Rate limits on chat (WebSocket + HTTP) and on login; `/debug/routes` requires auth
+- [ ] Verified from a second LAN machine: access, parallel requests on a real model, rate limit, max context — `Day30_report.md`
 
 ### Out of Scope
 
@@ -140,4 +151,4 @@ This document evolves at phase transitions and milestone boundaries.
 Phase 16 (Citations and Anti-Hallucination, Day 24) complete (2026-10-04): per-chat strict mode (on by default, existing RAG chats migrate to on); answers carry quotes verified on the server (exact, fuzzy, unverified, auto) with source rows built from chunk metadata only; when no fragment passes the threshold the code answers «Не знаю» with a clarifying question and makes no model call; quotes block and strict switch in the chat UI; `Day24_report.md` with a live run on the 10 control questions. Honest result: the unchanged 0.67 threshold falsely refused 3 of 8 answerable questions (Q01, Q07, Q08); out-of-corpus 2/2 refused. Review findings WR-01..04 and IN-01..03 parked as backlog 999.13-999.17 (see .planning/phases/16-citations-and-anti-hallucination-day-24/16-REVIEW.md). Open: 16-HUMAN-UAT.md (supervisor restart test never run).
 
 ---
-*Last updated: 2026-10-10 after v3.0 milestone*
+*Last updated: 2026-10-12 after v4.0 milestone start*
