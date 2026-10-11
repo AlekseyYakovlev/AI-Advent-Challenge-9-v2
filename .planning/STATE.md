@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v4.0
 milestone_name: "Week 6: Local LLM as a Private Service"
 status: executing
-last_updated: "2026-10-11T23:06:01.683Z"
+last_updated: "2026-10-11T23:11:46.193Z"
 last_activity: 2026-10-11 -- Phase 18 execution started
 progress:
   total_phases: 6
   completed_phases: 0
   total_plans: 7
-  completed_plans: 3
+  completed_plans: 4
   percent: 0
 ---
 
@@ -24,7 +24,7 @@ progress:
 ## Current Position
 
 Phase: 18 (lan-exposure-day-30) — EXECUTING
-Plan: 4 of 7
+Plan: 5 of 7
 Status: Executing Phase 18
 Last activity: 2026-10-11 -- Phase 18 execution started
 
@@ -50,6 +50,7 @@ No phases executed yet — metrics will populate after Phase 1 completes.
 - [Phase ?]: [Phase 12-03]: _ToolTurn.client falls back to keyless LM Studio until headless passes client (12-04); title/facts jobs resolve provider_id inside the background task
 - [Phase ?]: Phase 12-04: disabled provider accepted at job creation, run fails later with UI-SPEC message (no fallback)
 - [Phase 12-06]: Live DeepSeek check recorded as blocked (placeholder key), not passed; browser UAT S1-S10 passed on isolated copy
+- [Phase 18]: agent.state.CORS_ORIGINS removed; shared.origins.LOOPBACK_ORIGINS is the only loopback list
 
 ### Roadmap Evolution
 
@@ -123,7 +124,7 @@ Items acknowledged and deferred at milestone close on 2026-10-10:
 
 ## Session Continuity
 
-**Last session:** 2026-10-11T23:06:01.675Z
+**Last session:** 2026-10-11T23:11:43.254Z
 **Next action:** Run `/bm:discuss-phase 18` (or `/bm:plan-phase 18`) for v4.0 on branch Day30.
 
 ---
