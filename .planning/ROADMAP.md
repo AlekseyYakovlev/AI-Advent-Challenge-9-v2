@@ -32,7 +32,7 @@ Plans:
 **Wave 1**
 
 - [x] 18-01-PLAN.md — BIND_HOST setting, validation with exit code 2, supervisor host parameter (wave 1)
-- [ ] 18-02-PLAN.md — shared host-match Origin rule wired into REST CORS, mutation guard and WebSocket check (wave 1)
+- [x] 18-02-PLAN.md — shared host-match Origin rule wired into REST CORS, mutation guard and WebSocket check (wave 1)
 - [ ] 18-03-PLAN.md — Settings "Сеть" section and HTTP-safe clipboard copy (wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
@@ -143,7 +143,7 @@ Full details: [milestones/v3.0-ROADMAP.md](milestones/v3.0-ROADMAP.md)
 | 15. Reranking and filtering (Day 23) | v3.0 | 13/13 | Complete    | 2026-10-03 |
 | 16. Citations and anti-hallucination (Day 24) | v3.0 | 8/8 | Complete    | 2026-10-04 |
 | 17. Mini-chat with RAG and task memory (Day 25) | v3.0 | 11/11 | Complete    | 2026-10-10 |
-| 18. LAN exposure (Day 30) | v4.0 | 1/7 | In Progress|  |
+| 18. LAN exposure (Day 30) | v4.0 | 2/7 | In Progress|  |
 | 19. API keys and HTTP chat (Day 30) | v4.0 | 0/0 | Not started | - |
 | 20. Limits, verification script and report (Day 30) | v4.0 | 0/0 | Not started | - |
 

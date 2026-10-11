@@ -13,8 +13,8 @@ Requirements for milestone v4.0. Each maps to exactly one roadmap phase.
 
 - [x] **NET-01**: Operator can set `BIND_HOST` in `.env` to `127.0.0.1` (default; `localhost` is an accepted synonym and an unset or empty value means the same) or `0.0.0.0`; surrounding whitespace is ignored and the single value applies to both the UI and the Agent process.
 - [x] **NET-02**: With any other `BIND_HOST` value (for example `::`, a specific LAN IP such as `192.168.1.5`, or `*`) the app refuses to start, prints a clear explanation and exits with code 2.
-- [ ] **NET-03**: With `BIND_HOST=0.0.0.0`, user can open the UI, log in and chat with the model from a browser on another LAN machine; REST (CORS) and WebSocket accept the Origin of the host the UI was opened from, with no IP lists.
-- [ ] **NET-04**: Requests from a foreign Origin (another site) are still rejected by REST CORS and by the WebSocket Origin check.
+- [x] **NET-03**: With `BIND_HOST=0.0.0.0`, user can open the UI, log in and chat with the model from a browser on another LAN machine; REST (CORS) and WebSocket accept the Origin of the host the UI was opened from, with no IP lists.
+- [x] **NET-04**: Requests from a foreign Origin (another site) are still rejected by REST CORS and by the WebSocket Origin check.
 - [ ] **NET-05**: In LAN mode `run.py` prints the addresses the service is reachable at on the network and a warning that it is exposed; in loopback mode the startup output is unchanged.
 - [ ] **NET-06**: Documentation describes how to enable LAN mode and how to open ports 8000/8001 in Windows Firewall.
 
@@ -83,8 +83,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 |-------------|-------|--------|
 | NET-01 | Phase 18 | Complete |
 | NET-02 | Phase 18 | Complete |
-| NET-03 | Phase 18 | Pending |
-| NET-04 | Phase 18 | Pending |
+| NET-03 | Phase 18 | Complete |
+| NET-04 | Phase 18 | Complete |
 | NET-05 | Phase 18 | Pending |
 | NET-06 | Phase 18 | Pending |
 | KEY-01 | Phase 19 | Pending |
