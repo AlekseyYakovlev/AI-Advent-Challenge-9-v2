@@ -30,7 +30,6 @@ from agent.rag_turn import RagTurn, finalize_rag_turn, prepare_rag_turn
 from agent.task_memory import update_task_memory
 from agent.providers import ProviderUnavailableError, resolve_client
 from agent.state import (
-    CORS_ORIGINS,
     active_streams,
     chat_locks,
     current_chat_model,
@@ -67,6 +66,7 @@ from shared.config import settings
 from shared.database import async_session_factory
 from shared.logger import get_logger
 from shared.models import Chat, Message
+from shared.origins import is_allowed_origin
 
 logger = get_logger(__name__)
 
@@ -135,7 +135,7 @@ async def _load_mcp_toolset(session: AsyncSession, user_id: int, chat_id: int) -
 
 
 def _validate_origin(websocket: WebSocket) -> bool:
-    """Return True when the request Origin header is allowed or missing (single-user mode)."""
+    """Return True when the Origin header is missing or matches the request Host on the UI port."""
     origin = websocket.headers.get("origin")
     logger.info("ws_origin_check", origin=origin or "None")
 
@@ -143,22 +143,8 @@ def _validate_origin(websocket: WebSocket) -> bool:
         logger.info("ws_origin_allowed", reason="no_origin")
         return True
 
-    if origin in CORS_ORIGINS:
-        logger.info("ws_origin_allowed", reason="cors_origins", origin=origin)
-        return True
-
-    if origin == "null":
-        logger.info("ws_origin_allowed", reason="null_origin")
-        return True
-
-    allowed_patterns = [
-        "http://localhost:8000",
-        "http://127.0.0.1:8000",
-        "http://localhost:8001",
-        "http://127.0.0.1:8001",
-    ]
-    if origin in allowed_patterns:
-        logger.info("ws_origin_allowed", reason="allowed_pattern", origin=origin)
+    if is_allowed_origin(origin, websocket.headers.get("host")):
+        logger.info("ws_origin_allowed", reason="host_match", origin=origin)
         return True
 
     logger.warning("ws_origin_rejected", origin=origin)

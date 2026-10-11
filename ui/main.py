@@ -4,22 +4,17 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from shared.config import settings
 from shared.logger import get_logger
+from shared.origins import HostMatchCORSMiddleware
 from ui.supervisor import AgentSupervisor
 
 logger = get_logger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
-
-CORS_ORIGINS = [
-    f"http://localhost:{settings.UI_PORT}",
-    f"http://127.0.0.1:{settings.UI_PORT}",
-]
 
 
 @asynccontextmanager
@@ -36,13 +31,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="AI Agent UI", lifespan=lifespan)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=CORS_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(HostMatchCORSMiddleware)
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 

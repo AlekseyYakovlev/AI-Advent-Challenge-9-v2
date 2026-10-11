@@ -6,12 +6,12 @@ from fastapi import Cookie, Depends, HTTPException, Request, status
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from agent.state import CORS_ORIGINS
 from shared.auth import SESSION_COOKIE_NAME, SESSION_TTL_DAYS, hash_session_token
 from shared.database import get_session
 from shared.logger import get_logger
 from shared.models import Session as SessionRow
 from shared.models import User
+from shared.origins import is_allowed_origin
 
 logger = get_logger(__name__)
 
@@ -23,7 +23,7 @@ async def require_allowed_origin(request: Request) -> None:
     while non-browser clients (curl, tests) do not send it.
     """
     origin = request.headers.get("origin")
-    if origin is None or origin in CORS_ORIGINS:
+    if origin is None or is_allowed_origin(origin, request.headers.get("host")):
         return
     logger.warning("origin_rejected", origin=origin, path=request.url.path)
     raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Cross-origin request rejected")

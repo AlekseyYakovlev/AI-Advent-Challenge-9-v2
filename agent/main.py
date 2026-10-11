@@ -7,7 +7,6 @@ from typing import Any
 
 import httpx
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Response, WebSocket, status
-from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -53,7 +52,8 @@ from agent.schemas import (
     UserResponse,
 )
 from agent.llm_client import LMStudioClient, get_lm_studio_client
-from agent.state import CORS_ORIGINS, chat_locks, cleanup_chat_caches
+from agent.state import chat_locks, cleanup_chat_caches
+from shared.origins import HostMatchCORSMiddleware
 from agent.context_engine import compute_chat_stats
 from agent import invariants, kb_indexer, mcp_client, mcp_config, memory, profile, providers, tasks
 from agent import scheduler_tools  # noqa: F401  (registers the scheduler LLM tools)
@@ -442,13 +442,7 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="AI Agent", lifespan=lifespan)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=CORS_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(HostMatchCORSMiddleware)
 
 app.include_router(scheduler_router)
 app.include_router(providers_router)
