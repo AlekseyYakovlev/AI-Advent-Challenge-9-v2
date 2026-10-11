@@ -5,6 +5,7 @@ from httpx import AsyncClient
 
 from agent import memory
 from shared.database import async_session_factory
+from shared.origins import LOOPBACK_ORIGINS
 
 
 @pytest.mark.asyncio
@@ -101,7 +102,6 @@ async def test_short_term_message_count_matches_active_branch(
 
     from shared.database import async_session_factory as _factory
     from shared.models import Chat, Message
-from shared.origins import LOOPBACK_ORIGINS
 
     async with _factory() as session:
         chat = await session.get(Chat, chat_id)
