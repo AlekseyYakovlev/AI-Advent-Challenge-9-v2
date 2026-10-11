@@ -7,10 +7,10 @@ from httpx import AsyncClient
 
 from agent import memory, task_memory
 from agent.rag import serialize_rag_payload
-from agent.state import CORS_ORIGINS
 from shared.config import settings
 from shared.database import async_session_factory
 from shared.models import Chat, ChatRagConfig, ChatTaskMemory, Message
+from shared.origins import LOOPBACK_ORIGINS
 
 EMPTY: dict[str, Any] = {"goal": None, "clarified": [], "constraints": []}
 RAG_REQUIRED = "Память задачи доступна только в чатах с включённым RAG"
@@ -206,7 +206,7 @@ async def test_mutations_reject_foreign_origin(authenticated_client: AsyncClient
     stored = await _stored(chat_id)
     assert stored is not None and stored.goal == "g" and len(stored.clarified) == 1
     ok = await authenticated_client.put(
-        _url(chat_id, "goal"), json={"goal": "y"}, headers={"Origin": CORS_ORIGINS[0]}
+        _url(chat_id, "goal"), json={"goal": "y"}, headers={"Origin": LOOPBACK_ORIGINS[0]}
     )
     assert ok.status_code == 200
 

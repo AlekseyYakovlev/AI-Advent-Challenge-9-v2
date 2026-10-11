@@ -4,11 +4,6 @@ import asyncio
 from contextvars import ContextVar
 from typing import Any
 
-CORS_ORIGINS = [
-    "http://localhost:8000",
-    "http://127.0.0.1:8000",
-]
-
 active_streams: dict[int, Any] = {}
 ws_rate_limiter: dict[int, list[float]] = {}
 chat_locks: dict[int, asyncio.Lock] = {}

@@ -9,7 +9,7 @@ import pytest
 from httpx import AsyncClient, Response
 
 from agent import mcp_client
-from agent.state import CORS_ORIGINS
+from shared.origins import LOOPBACK_ORIGINS
 
 FIXTURE: str = str(Path(__file__).parent / "fixtures" / "mcp_stdio_server.py")
 BASE: str = "/api/v1/mcp/servers"
@@ -88,7 +88,7 @@ async def test_null_origin_is_rejected(authenticated_client: AsyncClient) -> Non
     assert await _names(authenticated_client) == []
 
 
-@pytest.mark.parametrize("origin", CORS_ORIGINS)
+@pytest.mark.parametrize("origin", LOOPBACK_ORIGINS)
 @pytest.mark.parametrize("route", ROUTES)
 async def test_allowed_origin_passes(
     authenticated_client: AsyncClient, route: str, origin: str

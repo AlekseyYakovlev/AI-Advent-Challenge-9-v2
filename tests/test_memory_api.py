@@ -4,7 +4,6 @@ import pytest
 from httpx import AsyncClient
 
 from agent import memory
-from agent.state import CORS_ORIGINS
 from shared.database import async_session_factory
 
 
@@ -102,6 +101,7 @@ async def test_short_term_message_count_matches_active_branch(
 
     from shared.database import async_session_factory as _factory
     from shared.models import Chat, Message
+from shared.origins import LOOPBACK_ORIGINS
 
     async with _factory() as session:
         chat = await session.get(Chat, chat_id)
@@ -361,7 +361,7 @@ async def test_long_term_mutations_reject_foreign_origin(
     assert await _snapshot(user_id) == {"city": "Berlin"}
 
     ok = await authenticated_client.put(
-        f"{URL}/{entry_id}", json={"value": "y"}, headers={"Origin": CORS_ORIGINS[0]},
+        f"{URL}/{entry_id}", json={"value": "y"}, headers={"Origin": LOOPBACK_ORIGINS[0]},
     )
     assert ok.status_code == 200
 

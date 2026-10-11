@@ -3,11 +3,11 @@
 import pytest
 from httpx import AsyncClient
 
-from agent.state import CORS_ORIGINS
+from shared.origins import LOOPBACK_ORIGINS
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("origin", CORS_ORIGINS)
+@pytest.mark.parametrize("origin", LOOPBACK_ORIGINS)
 async def test_cors_allows_ui_origins(client: AsyncClient, origin: str) -> None:
     """Preflight requests from UI origins should receive CORS headers."""
     resp = await client.options(
