@@ -225,6 +225,70 @@ When using "No Compression" and context exceeds window:
 
 Измеренное поведение описано в [Day25_report.md](../Day25_report.md).
 
+## LAN mode
+
+### What it does
+One setting, `BIND_HOST`, opens both the UI (port 8000) and the Agent (port 8001) to every machine on the local network. The default is this computer only. There are no IP lists, no HTTPS and no binding to a single LAN address.
+
+### Enable
+1. Set `BIND_HOST=0.0.0.0` in `.env`.
+2. Restart with `python run.py`.
+3. Read the warning block and the address list printed at startup: a framed block starting with `WARNING: LAN mode is ON (BIND_HOST=0.0.0.0)`, followed by `Starting UI on:` and one URL per reachable address.
+4. Open one of the printed addresses in a browser on another machine and log in with a normal account.
+
+The same list is shown in Settings -> «Сеть»; a click copies the link. Both ports must be reachable, because the page served on 8000 talks to the Agent on 8001.
+
+### Accepted values
+
+| `BIND_HOST` | Meaning |
+|-------------|---------|
+| `127.0.0.1` | This computer only (default) |
+| `localhost` | Synonym of `127.0.0.1` |
+| empty or unset | Same as `127.0.0.1` |
+| `0.0.0.0` | Every machine on the local network |
+
+Any other value, including a specific LAN IP or `::`, stops the app at startup with exit code 2 and an explanation. The value is shared by both processes; health checks always use `127.0.0.1`.
+
+### Windows Firewall
+The app never changes the firewall. Create the rule yourself, in PowerShell started as administrator (TCP 8000 and 8001, Private networks only):
+
+```powershell
+New-NetFirewallRule -DisplayName "AiAdventAgentV2 LAN" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 8000,8001 -Profile Private
+```
+
+Or in the GUI:
+1. Open Windows Defender Firewall with Advanced Security -> Inbound Rules -> New Rule.
+2. Choose Port -> TCP -> Specific local ports: `8000,8001`.
+3. Choose "Allow the connection".
+4. Tick only Private.
+5. Name it `AiAdventAgentV2 LAN`.
+
+To remove the rule:
+
+```powershell
+Remove-NetFirewallRule -DisplayName "AiAdventAgentV2 LAN"
+```
+
+The rule applies only while the network is Private. Check the category with `Get-NetConnectionProfile` (field `NetworkCategory`). If the home Wi-Fi shows Public, change it:
+
+```powershell
+Set-NetConnectionProfile -InterfaceAlias "Wi-Fi" -NetworkCategory Private
+```
+
+or use Settings -> Network & Internet -> the connection's properties -> Private network.
+
+The first time Python listens on the network, Windows may show a "Windows Security Alert" prompt. Tick only the Private box there.
+
+### Security notes
+- Everyone on the network can reach the login page.
+- Traffic is plain HTTP and can be read by others on the same network.
+- Do not enable LAN mode on public or shared networks (cafe, hotel, office guest Wi-Fi).
+- Requests from other web sites are still rejected by the Origin check.
+- `/health` and `/debug/routes` are reachable without login in this version.
+
+### Disable
+Remove `BIND_HOST` from `.env` or set `BIND_HOST=127.0.0.1`, restart, and remove the firewall rule.
+
 ## Tips
 
 1. **Start with Sliding Window** for most conversations
@@ -265,3 +329,10 @@ When using "No Compression" and context exceeds window:
 - Refresh page
 - Check WebSocket connection
 - Restart application
+
+**Cannot open the app from another computer**
+- `BIND_HOST=0.0.0.0` is set in `.env` and the app was restarted
+- The address used is one of those printed at startup
+- The firewall rule exists and the network is Private
+- Both ports 8000 and 8001 are allowed
+- A VPN or guest-Wi-Fi client isolation can block LAN traffic
