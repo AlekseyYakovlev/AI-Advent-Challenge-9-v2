@@ -15,6 +15,7 @@
 - WS   /ws/chat/{chat_id}
 - WS   /ws/events (see "Scheduler" and "Chat titles")
 - GET/POST/DELETE /api/v1/scheduler/... (see "Scheduler")
+- GET  /api/v1/network (see "Network")
 
 ## LM Studio
 Each route accepts an optional `provider_id` (query for models and unload-model, body for load-model)
@@ -725,10 +726,31 @@ Payloads of versions 1 to 3 stay valid for old messages and the UI renders them 
 | `search.history_pairs` | Number of question-answer pairs the condensing step saw |
 | `search.stages` | Gains the stage name `history` when condensing ran; a skipped condensing is listed in `search.skipped` as `{stage: "history", reason}` |
 
+## Network (Day 30)
+
+### GET /api/v1/network
+Authentication: session cookie; `401 Not authenticated` otherwise. No request parameters.
+
+Response:
+- `mode`: `"loopback"` or `"lan"`, reflecting the `BIND_HOST` setting (a standalone `uvicorn agent.main:app --host ...` is not reflected)
+- `addresses`: list of reachable UI URLs; empty in loopback mode, equal to the list printed by `run.py` in LAN mode
+
+```json
+{"mode": "loopback", "addresses": []}
+```
+
+```json
+{"mode": "lan", "addresses": ["http://192.168.1.20:8000"]}
+```
+
+### Origin and CORS
+Cross-origin checks use the host-match rule described in `docs/ARCHITECTURE.md`, section "Network exposure and the Origin rule".
+
 ## Environment Settings
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
+| BIND_HOST | 127.0.0.1 | Address both servers bind to: `127.0.0.1` (this computer only, also `localhost` or empty) or `0.0.0.0` (whole local network); any other value exits with code 2 |
 | SCHEDULER_ENABLED | true | Start the background poll loop in the Agent lifespan (orphan recovery runs regardless) |
 | SCHEDULER_POLL_INTERVAL | 1.0 | Seconds between ticks that look for due jobs |
 | SCHEDULER_RUN_TIMEOUT | 120.0 | Overall wall-clock limit of one run; exceeding it fails the run |

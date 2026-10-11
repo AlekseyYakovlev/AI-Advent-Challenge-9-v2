@@ -13,6 +13,7 @@
 - test_llm_complete_chat.py: see "Chat auto-titling (Day 21)" below
 - test_modal_close_policy.py: modals have no backdrop-click or Escape closer; every "*-modal" overlay has a bound "btn-close-*" button
 - test_memory.py / test_memory_api.py / test_context_engine_memory.py / test_memory_panel_ui.py: see "Long-term memory editing (Day 21)" below
+- test_bind_host.py / test_supervisor_host.py / test_origins.py / test_network*.py / test_run_banner.py / test_port_literals.py: see "LAN exposure (Day 30)" below
 
 ## Fixtures
 - Use conftest.py for shared fixtures
@@ -409,3 +410,48 @@ Title tests must create chats titled `New Chat` and classify mocked LLM requests
 - the form is seeded from the full value; no modal and no key handler
 
 Rows are seeded with `memory.save_long_term_memory`; cross-user cases use `second_authenticated_client`.
+
+## LAN exposure (Day 30)
+
+Tests never bind real LAN sockets. LAN requests are simulated with `Host` and `Origin` header overrides. `tests/conftest.py` pins `BIND_HOST=127.0.0.1` so a developer `.env` with LAN mode does not change results; mode-dependent tests set `settings.BIND_HOST` with `monkeypatch`.
+
+The scenarios of `tests/test_ws_origin_validation.py` and `tests/test_websocket_cors.py` changed: `null` and Agent-port origins are now rejections.
+
+### test_bind_host.py
+- loopback values (`127.0.0.1`, `localhost`, empty) normalise; `0.0.0.0` enables LAN mode
+- any other value is refused; the message is ASCII and explains the options
+- importing `shared.config` or `run` with an invalid host exits with code 2 (subprocess checks) before startup work
+- the `settings` singleton reflects the environment
+
+### test_supervisor_host.py
+- the `--host` argument: default is loopback, a given host is passed to the Agent launch
+- health probes stay on `127.0.0.1`
+
+### test_origins.py
+- the Origin rule table: host match on the UI port, loopback origins always accepted, no mode branch
+- REST CORS: LAN origin reflected on preflight and GET (also with a case-different machine name); foreign origin, missing Origin and `null` get no CORS header
+- REST mutations: host-matched Origin accepted, missing Origin allowed, non-matching rejected
+- `/ws/events`: LAN pair accepted; `null` and foreign origins rejected
+
+### test_network.py
+- address filtering: interfaces that are down, loopback, non-IPv4 and those without stats are excluded; VPN and link-local are included
+- duplicates listed once; discovery failure returns an empty list; hostname errors omit the name; URL order
+
+### test_run_banner.py
+- golden loopback output equality
+- LAN banner layout and bootstrap block ordering
+- the UI supervisor uses `BIND_HOST`
+
+### test_network_info.py
+- `GET /api/v1/network` returns 401 without a session
+- loopback mode returns empty `addresses`; LAN mode matches `shared.network.reachable_urls`
+- foreign origin gets no CORS header; the route is registered
+
+### test_network_ui.py (frontend source guard)
+- the «Сеть» section is read-only and placed last; no HTML insertion in its region
+- the loader uses the endpoint and handles errors; both modes are rendered
+- the clipboard helper has an HTTP fallback and all copy callers use it
+- Russian copy is present; host derivation is unchanged
+
+### test_port_literals.py
+- no default-port literals in application code; e2e scripts do not patch agent state

@@ -4,6 +4,27 @@
 - UI launches Agent via asyncio.create_subprocess_exec
 - Healthcheck: GET /health every 3 seconds
 - Orphan cleanup: psutil to find/kill processes on port 8001
+- Both processes bind to the single `BIND_HOST` setting (`127.0.0.1` default, `0.0.0.0` for LAN mode); the supervisor passes it as `--host` and keeps probing `/health` on `127.0.0.1`
+
+## Network exposure and the Origin rule
+
+`BIND_HOST` is validated in `shared/config.py` at import time; an unsupported value exits with code 2.
+
+**Origin rule.** An Origin is accepted when it is `http`, its host equals the host of the request `Host` header and its port equals `UI_PORT`. `http://localhost:{UI_PORT}` and `http://127.0.0.1:{UI_PORT}` are always accepted. A missing Origin is allowed (non-browser clients, still gated by the session cookie). `Origin: null` and Agent-port origins are rejected. The rule has no mode branch and no IP or name lists.
+
+| Enforcement point | Where |
+|-------------------|-------|
+| REST CORS | `HostMatchCORSMiddleware` on both apps |
+| REST mutations | `require_allowed_origin` |
+| WebSockets | `_validate_origin` on `/ws/chat` and `/ws/events` |
+
+All three call `shared.origins.is_allowed_origin`. The address list for the console banner and `GET /api/v1/network` comes from `shared.network.reachable_urls`.
+
+**Known limits**
+1. DNS rebinding: a hostile domain that resolves to this machine's LAN address passes the host-match rule, but the session cookie is host-only and is not sent to that name, so only unauthenticated endpoints are reachable. No Host allowlist is implemented, by decision.
+2. `/health` and `/debug/routes` are unauthenticated, and login attempts are unlimited until the limits phase.
+3. Traffic is plain HTTP, by decision.
+4. The app never touches the firewall.
 
 ## Context Compression Strategies
 
