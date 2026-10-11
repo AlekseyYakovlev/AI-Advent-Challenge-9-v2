@@ -20,7 +20,7 @@ STATIC_DIR = Path(__file__).parent / "static"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Start supervisor on boot; stop agent on shutdown."""
-    supervisor = AgentSupervisor(settings.AGENT_PORT, settings.DB_PATH)
+    supervisor = AgentSupervisor(settings.AGENT_PORT, settings.DB_PATH, host=settings.BIND_HOST)
     app.state.supervisor = supervisor
     logger.info("ui_starting", port=settings.UI_PORT)
     await supervisor.start()

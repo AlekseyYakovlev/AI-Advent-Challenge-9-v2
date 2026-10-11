@@ -9,6 +9,7 @@ import uvicorn
 from shared.config import settings
 from shared.database import bootstrap_admin_if_needed
 from shared.logger import get_logger
+from shared.network import reachable_urls
 from shared.runtime import check_python_version
 
 logger = get_logger(__name__)
@@ -36,6 +37,20 @@ def cleanup_port(port: int) -> None:
                 pass
 
 
+def _print_lan_banner(urls: list[str]) -> None:
+    """Print the LAN exposure warning and one URL per reachable address."""
+    print("=" * 60)
+    print(f"WARNING: LAN mode is ON (BIND_HOST={settings.BIND_HOST})")
+    print("The app is reachable by everyone on your network.")
+    print("Traffic is plain HTTP (no HTTPS): do not use on public networks.")
+    print("To go back to local-only access, remove BIND_HOST from .env")
+    print("or set BIND_HOST=127.0.0.1, then restart.")
+    print("=" * 60)
+    print("Starting UI on:")
+    for url in urls:
+        print(f"    {url}")
+
+
 def main() -> None:
     """Clean orphan ports and start the UI server."""
     check_python_version()
@@ -54,7 +69,10 @@ def main() -> None:
         print("Save this now — it will not be shown again.")
         print("=" * 60)
 
-    print(f"Starting UI on http://127.0.0.1:{settings.UI_PORT}")
+    if settings.is_lan_mode:
+        _print_lan_banner(reachable_urls(settings.UI_PORT))
+    else:
+        print(f"Starting UI on http://127.0.0.1:{settings.UI_PORT}")
     print(f"Agent will be auto-started on port {settings.AGENT_PORT}")
     print("Press Ctrl+C to stop.")
 
@@ -62,7 +80,7 @@ def main() -> None:
     logging.getLogger("httpcore").setLevel(logging.WARNING)
 
     try:
-        uvicorn.run(app, host="127.0.0.1", port=settings.UI_PORT, reload=False)
+        uvicorn.run(app, host=settings.BIND_HOST, port=settings.UI_PORT, reload=False)
     except KeyboardInterrupt:
         logger.info("ui_shutdown")
 
