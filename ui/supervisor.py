@@ -10,6 +10,7 @@ from typing import Any
 import httpx
 import psutil
 
+from shared.config import BIND_LOOPBACK
 from shared.logger import get_logger
 
 logger = get_logger(__name__)
@@ -50,9 +51,10 @@ def kill_processes_on_port(port: int) -> None:
 class AgentSupervisor:
     """Manage the agent subprocess lifecycle and health monitoring."""
 
-    def __init__(self, agent_port: int, db_path: str) -> None:
+    def __init__(self, agent_port: int, db_path: str, host: str = BIND_LOOPBACK) -> None:
         self.agent_port = agent_port
         self.db_path = db_path
+        self.host = host
         self.process: asyncio.subprocess.Process | None = None
         self._healthcheck_task: asyncio.Task[None] | None = None
         self._last_launch_time: float = 0.0
@@ -100,7 +102,7 @@ class AgentSupervisor:
             "uvicorn",
             "agent.main:app",
             "--host",
-            "127.0.0.1",
+            self.host,
             "--port",
             str(self.agent_port),
             env=env,
@@ -109,7 +111,9 @@ class AgentSupervisor:
         )
         self._log_fd = log_fd
         self._last_launch_time = time.monotonic()
-        logger.info("agent_started", pid=self.process.pid, port=self.agent_port)
+        logger.info(
+            "agent_started", pid=self.process.pid, port=self.agent_port, host=self.host
+        )
 
     async def _shutdown_agent(self) -> None:
         """Gracefully stop the agent: terminate, wait, then kill."""
