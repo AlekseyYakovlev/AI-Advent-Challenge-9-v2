@@ -11,8 +11,8 @@ Requirements for milestone v4.0. Each maps to exactly one roadmap phase.
 
 ### Network Access
 
-- [ ] **NET-01**: Operator can set `BIND_HOST` in `.env` to `127.0.0.1` (default) or `0.0.0.0`; the single value applies to both the UI and the Agent process.
-- [ ] **NET-02**: With any other `BIND_HOST` value the app refuses to start and prints a clear explanation.
+- [ ] **NET-01**: Operator can set `BIND_HOST` in `.env` to `127.0.0.1` (default; `localhost` is an accepted synonym and an unset or empty value means the same) or `0.0.0.0`; surrounding whitespace is ignored and the single value applies to both the UI and the Agent process.
+- [ ] **NET-02**: With any other `BIND_HOST` value (for example `::`, a specific LAN IP such as `192.168.1.5`, or `*`) the app refuses to start, prints a clear explanation and exits with code 2.
 - [ ] **NET-03**: With `BIND_HOST=0.0.0.0`, user can open the UI, log in and chat with the model from a browser on another LAN machine; REST (CORS) and WebSocket accept the Origin of the host the UI was opened from, with no IP lists.
 - [ ] **NET-04**: Requests from a foreign Origin (another site) are still rejected by REST CORS and by the WebSocket Origin check.
 - [ ] **NET-05**: In LAN mode `run.py` prints the addresses the service is reachable at on the network and a warning that it is exposed; in loopback mode the startup output is unchanged.
@@ -115,4 +115,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-10-12*
-*Last updated: 2026-10-12 after roadmap creation*
+*Last updated: 2026-10-12 after Phase 18 planning (NET-01/NET-02 amended by decision D-13)*
