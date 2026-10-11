@@ -180,8 +180,6 @@ def prepare_copy(scratch: Path) -> Path:
 
     patch("ui/static/app.js", "const AGENT_PORT = 8001;", f"const AGENT_PORT = {AGENT_PORT};")
     patch("ui/static/login.html", "const AGENT_PORT = 8001;", f"const AGENT_PORT = {AGENT_PORT};")
-    patch("agent/state.py", '"http://localhost:8000"', f'"http://localhost:{UI_PORT}"')
-    patch("agent/state.py", '"http://127.0.0.1:8000"', f'"http://127.0.0.1:{UI_PORT}"')
 
     leftovers: list[str] = []
     for path in target.rglob("*"):
