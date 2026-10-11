@@ -2132,23 +2132,38 @@ function renderMcpParamLine(param) {
     return line;
 }
 
-async function copyMcpToolName(name) {
-    try {
-        await navigator.clipboard.writeText(name);
-    } catch (err) {
-        // navigator.clipboard is unavailable outside secure contexts (e.g. opened via a LAN IP).
-        const area = document.createElement('textarea');
-        area.value = name;
-        area.style.position = 'fixed';
-        area.style.opacity = '0';
-        document.body.appendChild(area);
-        area.select();
-        const copied = document.execCommand('copy');
-        area.remove();
-        if (!copied) {
-            showToast('Не удалось скопировать в буфер обмена', 'error');
-            return;
+async function copyTextToClipboard(text) {
+    // navigator.clipboard is unavailable outside secure contexts (e.g. opened via a LAN IP over HTTP).
+    if (navigator.clipboard && window.isSecureContext) {
+        try {
+            await navigator.clipboard.writeText(text);
+            return true;
+        } catch (err) {
+            // fall through to the textarea fallback
         }
+    }
+    const area = document.createElement('textarea');
+    area.value = text;
+    area.readOnly = true;
+    area.style.position = 'fixed';
+    area.style.opacity = '0';
+    try {
+        document.body.appendChild(area);
+        area.focus();
+        area.select();
+        return Boolean(document.execCommand('copy'));
+    } catch (err) {
+        return false;
+    } finally {
+        area.remove();
+    }
+}
+
+async function copyMcpToolName(name) {
+    const copied = await copyTextToClipboard(name);
+    if (!copied) {
+        showToast('Не удалось скопировать в буфер обмена', 'error');
+        return;
     }
     showToast(`Скопировано: ${name}`, 'success');
 }
@@ -3471,6 +3486,85 @@ function connectEventsWs() {
 
 // ---- end Scheduler ----
 
+// ---- Network ----
+
+async function copyNetworkAddress(url) {
+    const copied = await copyTextToClipboard(url);
+    if (!copied) {
+        showToast('Не удалось скопировать в буфер обмена', 'error');
+        return;
+    }
+    showToast(`Скопировано: ${url}`, 'success');
+}
+
+function setNetworkStatus(text, className) {
+    const status = $('network-status');
+    status.textContent = text;
+    status.className = className;
+}
+
+function renderNetworkError() {
+    setNetworkStatus(
+        'Не удалось получить сведения о сети. Попробуйте открыть настройки ещё раз.',
+        'text-sm text-red-400',
+    );
+    $('network-hint').replaceChildren();
+    $('network-address-list').replaceChildren();
+}
+
+function renderNetworkInfo(info) {
+    const hint = $('network-hint');
+    const list = $('network-address-list');
+    hint.replaceChildren();
+    list.replaceChildren();
+
+    if (info.mode === 'lan') {
+        setNetworkStatus('Открыт в локальной сети', 'text-sm text-yellow-500');
+        const addresses = Array.isArray(info.addresses) ? info.addresses : [];
+        if (addresses.length === 0) {
+            hint.textContent = 'Сетевые адреса не найдены. Проверьте подключение к сети и откройте настройки ещё раз.';
+            return;
+        }
+        hint.textContent = 'Нажмите на адрес, чтобы скопировать ссылку. Соединение не защищено HTTPS — не используйте в общедоступных сетях.';
+        for (const url of addresses) {
+            const item = document.createElement('li');
+            const button = mcpEl(
+                'button',
+                'w-full text-left rounded-lg bg-slate-800 border border-slate-700 hover:border-indigo-500 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500 transition',
+                url,
+            );
+            button.type = 'button';
+            button.setAttribute('aria-label', `Скопировать ссылку ${url}`);
+            button.addEventListener('click', () => copyNetworkAddress(url));
+            item.appendChild(button);
+            list.appendChild(item);
+        }
+        return;
+    }
+
+    setNetworkStatus('Доступен только на этом компьютере', 'text-sm text-slate-300');
+    hint.append(
+        document.createTextNode('Чтобы открыть доступ из локальной сети, укажите '),
+        mcpEl('code', 'font-mono text-slate-300', 'BIND_HOST=0.0.0.0'),
+        document.createTextNode(' в файле .env и перезапустите приложение.'),
+    );
+}
+
+async function loadNetworkInfo() {
+    setNetworkStatus('Загрузка…', 'text-sm text-slate-400');
+    $('network-hint').replaceChildren();
+    $('network-address-list').replaceChildren();
+    try {
+        const info = await apiFetch('/api/v1/network');
+        if (info === undefined) return;
+        renderNetworkInfo(info);
+    } catch (err) {
+        renderNetworkError();
+    }
+}
+
+// ---- end Network ----
+
 async function openSettingsModal() {
     const perChat = $('settings-per-chat').checked;
     const chatId = perChat && state.currentChatId ? state.currentChatId : null;
@@ -3495,6 +3589,7 @@ async function openSettingsModal() {
     $('settings-modal').classList.remove('hidden');
     loadMcpServers().catch((err) => showToast(err.message, 'error'));
     loadLlmProviders().catch((err) => showToast(err.message, 'error'));
+    loadNetworkInfo();
 }
 
 function closeSettingsModal() {
