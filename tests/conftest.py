@@ -15,6 +15,9 @@ os.environ.setdefault("DB_PATH", "test_app.db")
 os.environ.setdefault("SCHEDULER_ENABLED", "false")
 # Never let a developer's real DeepSeek key (from .env) seed a provider or leave the machine.
 os.environ["DEEPSEEK_API_KEY"] = ""
+# The suite must behave the same when the developer's .env enables LAN mode;
+# mode-dependent tests set settings.BIND_HOST with monkeypatch.setattr.
+os.environ["BIND_HOST"] = "127.0.0.1"
 os.environ["LLM_PROVIDER_ENV_FILE"] = str(Path(__file__).parent / "no-such-provider.env")
 
 from agent import kb_indexer, mcp_client, providers

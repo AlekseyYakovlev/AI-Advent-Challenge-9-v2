@@ -2,9 +2,26 @@
 
 import os
 import re
+import sys
 
 from dotenv import dotenv_values
+from pydantic import ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+BIND_LOOPBACK: str = "127.0.0.1"
+BIND_ALL: str = "0.0.0.0"
+
+
+def bind_host_error_message(value: str) -> str:
+    """Return the explanation printed when BIND_HOST holds an unsupported value."""
+    return (
+        f"ERROR: invalid BIND_HOST value {value!r}.\n"
+        "Accepted values:\n"
+        "  127.0.0.1  (or localhost, or unset/empty)  - local access only (default)\n"
+        "  0.0.0.0                                    - reachable from the whole local network\n"
+        "Binding to a specific LAN IP or '::' is not supported: use 0.0.0.0.\n"
+        "Fix BIND_HOST in .env and start again."
+    )
 
 
 class Settings(BaseSettings):
@@ -18,6 +35,8 @@ class Settings(BaseSettings):
 
     UI_PORT: int = 8000
     AGENT_PORT: int = 8001
+    # Single bind address for UI and Agent: 127.0.0.1 (default) or 0.0.0.0 (whole LAN).
+    BIND_HOST: str = BIND_LOOPBACK
     DB_PATH: str = "app.db"
     DEEPSEEK_API_KEY: str = ""
     LM_STUDIO_BASE_URL: str = "http://localhost:1234"
@@ -58,8 +77,38 @@ class Settings(BaseSettings):
     # for the "no memory" baseline run; it has no UI and no API surface.
     TASK_MEMORY_ENABLED: bool = True
 
+    @field_validator("BIND_HOST", mode="before")
+    @classmethod
+    def _check_bind_host(cls, value: object) -> str:
+        """Accept only loopback (and its synonyms) or 0.0.0.0; normalise the result."""
+        stripped = "" if value is None else str(value).strip()
+        lowered = stripped.lower()
+        if lowered in ("", "localhost", BIND_LOOPBACK):
+            return BIND_LOOPBACK
+        if lowered == BIND_ALL:
+            return BIND_ALL
+        raise ValueError(bind_host_error_message(stripped))
 
-settings = Settings()
+    @property
+    def is_lan_mode(self) -> bool:
+        """True when the servers listen on all interfaces."""
+        return self.BIND_HOST == BIND_ALL
+
+
+def _load_settings() -> Settings:
+    """Build settings; an invalid BIND_HOST prints a short message and exits with code 2."""
+    try:
+        return Settings()
+    except ValidationError as exc:
+        for error in exc.errors():
+            if error["loc"] == ("BIND_HOST",):
+                # Logging is not configured at import time, so stderr is used directly.
+                print(str(error["ctx"]["error"]), file=sys.stderr)
+                raise SystemExit(2) from None
+        raise
+
+
+settings = _load_settings()
 
 _ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,99}$")
 BUILTIN_SECRET_ENV_NAMES: frozenset[str] = frozenset({"DEEPSEEK_API_KEY"})
