@@ -34,16 +34,18 @@ def test_websocket_connect_without_origin() -> None:
             assert ws is not None
 
 
-def test_websocket_connect_with_null_origin() -> None:
-    """WebSocket with Origin: null should connect successfully."""
+def test_websocket_rejects_null_origin() -> None:
+    """WebSocket with Origin: null should be rejected with code 1008."""
     with TestClient(app) as client:
         login_test_client(client)
         chat_id = _create_chat(client)
-        with client.websocket_connect(
-            f"/ws/chat/{chat_id}",
-            headers={"Origin": "null"},
-        ) as ws:
-            assert ws is not None
+        with pytest.raises(Exception) as exc_info:
+            with client.websocket_connect(
+                f"/ws/chat/{chat_id}",
+                headers={"Origin": "null"},
+            ) as ws:
+                ws.receive_json()
+        assert getattr(exc_info.value, "code", None) == 1008
 
 
 @pytest.mark.asyncio
