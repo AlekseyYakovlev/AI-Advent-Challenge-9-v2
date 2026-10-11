@@ -81,12 +81,38 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
+| NET-01 | Phase 18 | Pending |
+| NET-02 | Phase 18 | Pending |
+| NET-03 | Phase 18 | Pending |
+| NET-04 | Phase 18 | Pending |
+| NET-05 | Phase 18 | Pending |
+| NET-06 | Phase 18 | Pending |
+| KEY-01 | Phase 19 | Pending |
+| KEY-02 | Phase 19 | Pending |
+| KEY-03 | Phase 19 | Pending |
+| KEY-04 | Phase 19 | Pending |
+| KEY-05 | Phase 19 | Pending |
+| HCHAT-01 | Phase 19 | Pending |
+| HCHAT-02 | Phase 19 | Pending |
+| HCHAT-03 | Phase 19 | Pending |
+| HCHAT-04 | Phase 19 | Pending |
+| LIM-01 | Phase 20 | Pending |
+| LIM-02 | Phase 20 | Pending |
+| LIM-03 | Phase 20 | Pending |
+| LIM-04 | Phase 20 | Pending |
+| LIM-05 | Phase 20 | Pending |
+| VER-01 | Phase 20 | Pending |
+| VER-02 | Phase 20 | Pending |
+| VER-03 | Phase 20 | Pending |
+| VER-04 | Phase 20 | Pending |
+| VER-05 | Phase 20 | Pending |
+| VER-06 | Phase 20 | Pending |
 
 **Coverage:**
 - v4.0 requirements: 26 total
-- Mapped to phases: 0
-- Unmapped: 26 ⚠️
+- Mapped to phases: 26
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-10-12*
-*Last updated: 2026-10-12 after initial definition*
+*Last updated: 2026-10-12 after roadmap creation*

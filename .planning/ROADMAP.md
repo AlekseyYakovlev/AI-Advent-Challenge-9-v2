@@ -5,8 +5,51 @@
 - ✅ **v1.0 Week 3: Agent Memory & Task State** — Phases 1-6 (shipped 2026-09-23)
 - ✅ **v2.0 Week 4: MCP Integration** — Phases 7-9, 12 (shipped 2026-10-02)
 - ✅ **v3.0 Week 5: RAG** — Phases 10-11, 13-17 (shipped 2026-10-10)
+- 🚧 **v4.0 Week 6: Local LLM as a Private Service** — Phases 18-20 (in progress)
 
 ## Phases
+
+- [ ] **Phase 18: LAN exposure (Day 30)** - App can be bound to the home network and used from another machine's browser
+- [ ] **Phase 19: API keys and HTTP chat (Day 30)** - Per-user API keys and a plain HTTP chat endpoint
+- [ ] **Phase 20: Limits, verification script and report (Day 30)** - Rate/login/concurrency limits, network check script, live LAN report
+
+### Phase 18: LAN exposure (Day 30)
+**Goal**: Operator can expose the whole app on the home network with one setting, and users on other LAN machines can log in and chat in the browser, while foreign sites remain blocked
+**Depends on**: Nothing (first phase of v4.0; builds on shipped v1.0-v3.0 code)
+**Requirements**: NET-01, NET-02, NET-03, NET-04, NET-05, NET-06
+**Success Criteria** (what must be TRUE):
+  1. With `BIND_HOST=0.0.0.0` in `.env`, both UI (8000) and Agent (8001) listen on all interfaces; with `127.0.0.1` or unset they stay loopback-only
+  2. Starting with any other `BIND_HOST` value exits immediately with a clear explanation
+  3. From a browser on another LAN machine the user opens the UI, logs in and gets a streamed model reply over WebSocket, with no IP lists configured
+  4. A request or WebSocket connection carrying a foreign site's Origin is still rejected
+  5. In LAN mode `run.py` prints the reachable network addresses and an exposure warning (loopback output unchanged), and the docs explain LAN mode and opening ports 8000/8001 in Windows Firewall
+**Plans**: TBD
+**UI hint**: yes
+
+### Phase 19: API keys and HTTP chat (Day 30)
+**Goal**: A user can create API keys and use them to chat with the model over plain HTTP from any client, with the conversation stored in the normal chat tree
+**Depends on**: Phase 18
+**Requirements**: KEY-01, KEY-02, KEY-03, KEY-04, KEY-05, HCHAT-01, HCHAT-02, HCHAT-03, HCHAT-04
+**Success Criteria** (what must be TRUE):
+  1. In Settings the user creates a named API key, sees the full key exactly once, and the list afterwards shows only name, prefix, creation date and last-used date
+  2. The user revokes a key and the next request with it gets HTTP 401 immediately; an invalid key also gets 401
+  3. `curl` with `Authorization: Bearer <key>` calls REST routes as the key owner (same ownership checks as the cookie), while WebSocket stays cookie-only
+  4. `POST` of text and model to an existing chat returns the whole reply as one JSON body with token statistics, and the exchange appears in the UI with the same settings, memory, compression and RAG as a WebSocket turn
+  5. Context overflow (`CONTEXT_OVERFLOW`), LM Studio not running and chat busy each return a clear HTTP status, and `docs/API_SPEC.md` documents the endpoint with a full curl scenario (create key, create chat, send message)
+**Plans**: TBD
+**UI hint**: yes
+
+### Phase 20: Limits, verification script and report (Day 30)
+**Goal**: The service is protected against abuse and overload, and a live run from a second LAN machine proves it works as a private service
+**Depends on**: Phase 19
+**Requirements**: LIM-01, LIM-02, LIM-03, LIM-04, LIM-05, VER-01, VER-02, VER-03, VER-04, VER-05, VER-06
+**Success Criteria** (what must be TRUE):
+  1. The per-chat messages-per-minute limit is set in `.env` and applies to both WebSocket and HTTP chat; exceeding it over HTTP returns 429 with `Retry-After`
+  2. After several consecutive wrong passwords login is temporarily blocked (threshold and duration configurable); `/debug/routes` requires an authenticated user while `/health` stays open
+  3. With the concurrency cap set, excess parallel generations wait in a queue and all complete successfully
+  4. Running the verification script with a server address and API key reports reachability/auth, results of N parallel real-model requests (successes, errors, timings), and demonstrates the rate limit and context overflow
+  5. `Day30_report.md` records a live run from a second LAN machine plus a manual UI chat from another device; pytest covers bind host, Origin, API keys, HTTP chat and limits with matching `docs/TESTING_GUIDE.md` sections
+**Plans**: TBD
 
 <details>
 <summary>✅ v1.0 Week 3: Agent Memory & Task State (Phases 1-6) — SHIPPED 2026-09-23</summary>
@@ -70,6 +113,9 @@ Full details: [milestones/v3.0-ROADMAP.md](milestones/v3.0-ROADMAP.md)
 | 15. Reranking and filtering (Day 23) | v3.0 | 13/13 | Complete    | 2026-10-03 |
 | 16. Citations and anti-hallucination (Day 24) | v3.0 | 8/8 | Complete    | 2026-10-04 |
 | 17. Mini-chat with RAG and task memory (Day 25) | v3.0 | 11/11 | Complete    | 2026-10-10 |
+| 18. LAN exposure (Day 30) | v4.0 | 0/0 | Not started | - |
+| 19. API keys and HTTP chat (Day 30) | v4.0 | 0/0 | Not started | - |
+| 20. Limits, verification script and report (Day 30) | v4.0 | 0/0 | Not started | - |
 
 ## Backlog
 
@@ -109,4 +155,4 @@ Plans:
 
 ---
 *Roadmap created: 2026-09-19*
-*Last updated: 2026-10-03 — v3.0 roadmap: Phases 13-17 (RAG, Days 21-25) added; earlier: 2026-10-02 — Phase 9 planned (4 plans, TITLE-01..06); backlog 999.4/999.5/999.6/999.11 promoted to Phases 9-12 (Day 21)*
+*Last updated: 2026-10-12 — v4.0 roadmap: Phases 18-20 (Day 30); earlier: 2026-10-03 — v3.0 roadmap: Phases 13-17 (RAG, Days 21-25) added; earlier: 2026-10-02 — Phase 9 planned (4 plans, TITLE-01..06); backlog 999.4/999.5/999.6/999.11 promoted to Phases 9-12 (Day 21)*

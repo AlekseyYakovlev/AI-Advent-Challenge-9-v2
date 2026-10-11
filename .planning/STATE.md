@@ -6,7 +6,7 @@ status: planning
 last_updated: "2026-10-11T21:29:09.166Z"
 last_activity: 2026-10-11
 progress:
-  total_phases: 0
+  total_phases: 3
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -17,16 +17,16 @@ progress:
 
 ## Project Reference
 
-**Project:** AiAdventAgentV2 — Week 5: RAG
+**Project:** AiAdventAgentV2 — Week 6: Local LLM as a Private Service
 **Core value:** The agent must demonstrably separate and manage distinct kinds of state — short-term dialog, working task data, long-term profile/knowledge, and task lifecycle — making explicit, inspectable decisions about what goes where.
-**Current focus:** Milestone complete
+**Current focus:** Phase 18 — LAN exposure (Day 30)
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: 18 of 20 (LAN exposure) — not started
 Plan: —
-Status: Defining requirements
-Last activity: 2026-10-11 — Milestone v4.0 started
+Status: Roadmap created, ready to plan Phase 18
+Last activity: 2026-10-12 — v4.0 roadmap created (Phases 18-20)
 
 ## Performance Metrics
 
@@ -56,6 +56,8 @@ No phases executed yet — metrics will populate after Phase 1 completes.
 - Phase 8 added: Scheduler (Day 18) — delayed/periodic jobs, written from scratch in Python (not a fork of mcp-cron), branch `Day18`
 - Phases 9-12 added (2026-10-02): backlog 999.4 / 999.5 / 999.6 / 999.11 promoted as Day 21 work, all on branch `Day21` (auto-rename chats, modals close only via x, edit/delete long-term memory in UI, LLM providers section in Settings)
 - v3.0 roadmap created 2026-10-03: carried-over 10-11 + RAG phases 13-17 (Days 21-25)
+
+- v4.0 roadmap created 2026-10-12: Phases 18-20 (Day 30, single branch Day30); no research, 26/26 requirements mapped; VER-06 pytest coverage is written alongside each phase but tracked in Phase 20
 
 ### Open Questions (flagged by research, need resolution during phase planning)
 
@@ -122,11 +124,11 @@ Items acknowledged and deferred at milestone close on 2026-10-10:
 ## Session Continuity
 
 **Last session:** 2026-10-10T18:15:46.522Z
-**Next action:** Run `/bm:execute-phase 10` (carried over, plans exist), then 11, then `/bm:discuss-phase 13` (Day 21 RAG).
+**Next action:** Run `/bm:discuss-phase 18` (or `/bm:plan-phase 18`) for v4.0 on branch Day30.
 
 ---
 *State initialized: 2026-09-19*
 
 ## Operator Next Steps
 
-- Start the next milestone with /gsd-new-milestone
+- Plan Phase 18: /bm:plan-phase 18
