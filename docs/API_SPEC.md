@@ -16,6 +16,8 @@
 - WS   /ws/events (see "Scheduler" and "Chat titles")
 - GET/POST/DELETE /api/v1/scheduler/... (see "Scheduler")
 - GET  /api/v1/network (see "Network")
+- POST/GET /api/v1/api-keys, DELETE /api/v1/api-keys/{key_id} (see "API keys (Day 30)")
+- POST /api/v1/chats/{chat_id}/messages (see "HTTP chat (Day 30)")
 
 ## LM Studio
 Each route accepts an optional `provider_id` (query for models and unload-model, body for load-model)
@@ -124,6 +126,20 @@ fact extraction of that turn.
 Sent when the provider is deleted, disabled or belongs to another user (a foreign provider's name is
 never disclosed) and also when the provider answers HTTP 401/403 during the turn (the detail names
 the provider, never the key). No user message is stored for such a turn.
+
+**error (LLM_ERROR, Day 30):**
+```json
+{
+  "type": "error",
+  "code": "LLM_ERROR",
+  "detail": "...",
+  "cause": "unreachable",
+  "provider_kind": "lm_studio"
+}
+```
+`LLM_ERROR` carries the optional keys `cause` (`unreachable` for a connection error, `timeout`, or `upstream` for any other failure) and `provider_kind` (the kind of the provider that served the turn). `code` and `detail` are unchanged.
+
+**Failed turns (Day 30):** after a failed turn (context overflow, LLM error, gated-reply failure) the user message is removed and the chat's `current_leaf_message_id` returns to the message that was the leaf before the turn, so the next message continues the same branch. A failed first turn leaves an empty chat. Earlier, the leaf became `null` and the conversation vanished from the tree. The same rule applies to the HTTP chat endpoint.
 
 **error (context overflow):**
 ```json
@@ -277,6 +293,7 @@ snapshot so the UI can update the card without a refetch):
 { "type": "task_updated", "task": { "...": "ScheduledTaskOut" } }
 { "type": "task_deleted", "task_id": 7 }
 { "type": "chat_title_updated", "chat_id": 12, "title": "Настройка WebSocket в FastAPI" }
+{ "type": "chat_updated", "chat_id": 12 }
 ```
 
 - `run_started`: a run was claimed (schedule) or started manually.
@@ -284,6 +301,7 @@ snapshot so the UI can update the card without a refetch):
 - `task_updated`: the job was created, paused, resumed, cancelled, completed, or a manual run was
   started.
 - `task_deleted`: the job and its runs were removed.
+- `chat_updated`: sent to the owner's sockets after a successful turn over `POST /api/v1/chats/{chat_id}/messages` (see "HTTP chat (Day 30)"); the UI reloads the chat list and the open chat.
 - `chat_title_updated`: sent once per chat after its first successful question/answer turn when the
   title was still `New Chat`; `title` is plain text, one line, at most 50 characters; delivered only
   to the chat owner's sockets; not replayed after a reconnect (the UI reloads the chat list on
@@ -745,6 +763,246 @@ Response:
 
 ### Origin and CORS
 Cross-origin checks use the host-match rule described in `docs/ARCHITECTURE.md`, section "Network exposure and the Origin rule".
+
+## API keys (Day 30)
+
+### Authentication with a key
+
+Every REST route of the Agent accepts `Authorization: Bearer <key>` as an alternative to the session cookie. A key looks like `aia_` followed by 43 URL-safe characters (47 characters in total) and belongs to one user.
+
+- The header decides alone. When an `Authorization: Bearer` header is present, only the key is checked; there is no fallback to the cookie. An invalid, empty or revoked key gives `401` with the body `{"detail": "Invalid or revoked API key"}` and the response header `WWW-Authenticate: Bearer`.
+- Other schemes (`Basic ...`) are ignored and the request is authenticated by the cookie as before.
+- A key acts as its owner with the same ownership checks as the cookie: a chat, knowledge base, MCP server or task of another user is answered with `404` exactly as for a cookie session.
+- Cookie-only routes. A valid key gets `403` with `{"detail": "Эта операция доступна только из веб-интерфейса (по сессии), а не по API-ключу"}` on exactly these five routes:
+  - `POST /api/v1/api-keys`
+  - `GET /api/v1/api-keys`
+  - `DELETE /api/v1/api-keys/{key_id}`
+  - `POST /api/v1/auth/users`
+  - `POST /api/v1/auth/logout`
+- The WebSocket endpoints `/ws/chat/{chat_id}` and `/ws/events` are cookie-only; a key does not open them.
+- A request without an `Origin` header passes the Origin check, which is why `curl` works. A request that carries a foreign `Origin` is still rejected with `403 Cross-origin request rejected`.
+- External clients call the Agent directly at `http://<host>:<AGENT_PORT>` (default 8001), not the UI port. From another machine the app must run in LAN mode (`BIND_HOST=0.0.0.0`, see "Network (Day 30)"). The connection is plain HTTP.
+
+### Routes
+
+| Route | Body | Success | Errors |
+|-------|------|---------|--------|
+| `POST /api/v1/api-keys` | `{"name": "laptop"}` (1-100 characters after trimming) | `201` key object with the one-time `key` | `401`, `403` (key used), `409` (20 keys already exist), `415` (no JSON content type), `422` (blank or too long name) |
+| `GET /api/v1/api-keys` | none | `200` list of key objects without `key`, newest first | `401`, `403` |
+| `DELETE /api/v1/api-keys/{key_id}` | none (no `Content-Type` needed) | `204` | `401`, `403`, `404` (missing or foreign key) |
+
+`POST` response (the `key` value is shown once and cannot be read again):
+
+```json
+{
+  "id": 4,
+  "name": "laptop",
+  "key": "aia_...",
+  "key_prefix": "aia_AbCd",
+  "created_at": "2026-10-12T10:00:00Z",
+  "last_used_at": null
+}
+```
+
+List item (no `key`):
+
+```json
+{"id": 4, "name": "laptop", "key_prefix": "aia_AbCd", "created_at": "2026-10-12T10:00:00Z", "last_used_at": "2026-10-12T10:05:00Z"}
+```
+
+Storage and lifecycle:
+
+- Only the sha256 hash of the key and the 8-character prefix are stored; the full key is returned once, in the `POST` response (`Cache-Control: no-store`).
+- `last_used_at` is refreshed on use at most once per 60 seconds.
+- Keys do not expire. At most 20 keys per user.
+- Revoking deletes the row; the key stops working on the next request.
+
+## HTTP chat (Day 30)
+
+### POST /api/v1/chats/{chat_id}/messages
+
+Runs the same turn as the WebSocket (`/ws/chat/{chat_id}`): the chat settings, memory, context compression, RAG, built-in and MCP tools, auto-title and fact extraction. The whole reply comes back as one JSON body. Authentication: key or cookie. The `Content-Type` must be `application/json` (otherwise `415`).
+
+Request body:
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `content` | string, 1+ characters | The user message |
+| `model` | string, required | Model id; the chat does not store a model, so every request names one |
+| `provider_id` | integer or omitted | Id from `GET /api/v1/llm-providers`; omitted means the user's LM Studio provider |
+| `kb_id` | integer, `null` or omitted | An id selects that knowledge base and saves it for the chat with mode `rag`, leaving the other saved search settings unchanged. `null` turns RAG off and saves that. Omitted keeps the chat's saved RAG configuration, so the first turn of a new chat has no RAG. A newly created config row has `strict` on, as in the UI |
+
+```json
+{"content": "Что такое сжатие контекста?", "model": "qwen2.5-7b-instruct", "kb_id": 3}
+```
+
+`200` response:
+
+```json
+{
+  "chat_id": 12,
+  "user_message_id": 101,
+  "assistant_message_id": 102,
+  "content": "Сжатие контекста уменьшает ...",
+  "model": "qwen2.5-7b-instruct",
+  "provider_id": null,
+  "stats": {
+    "total_request_tokens": 820,
+    "total_response_tokens": 140,
+    "current_context_size": 960,
+    "context_window_size": 16384,
+    "context_usage_percent": 5.9
+  },
+  "tool_calls": [],
+  "memory_writes": [],
+  "task_writes": [],
+  "invariant_conflict": null,
+  "rag": null
+}
+```
+
+- `content` is read from the stored assistant message; `user_message_id` is its parent.
+- `stats`, `memory_writes`, `task_writes`, `invariant_conflict` and `rag` carry the same data as the same keys of the WebSocket `done` frame (see "WebSocket Messages" and "done.rag").
+- `tool_calls` is the list of `tool_call` frames of the turn (see "WebSocket Messages"), empty when no tool ran.
+
+### Behaviour
+
+- The message is attached to the chat's current leaf. To continue another branch, call `POST /api/v1/chats/{chat_id}/branch` first.
+- The endpoint never loads or switches a model. Use `GET /api/v1/lm-studio/models` and `POST /api/v1/lm-studio/load-model` before the call.
+- A chat that is already processing a turn is answered at once with `409 CHAT_BUSY` and nothing is stored (a WebSocket turn on the same chat waits for the lock instead).
+- A client that disconnects does not stop the turn: it completes, the reply is stored and the lock is released. Read the result from `GET /api/v1/chats/{chat_id}/tree`.
+- There is no streaming, no stateless mode and no per-request MCP switch (use `PUT /api/v1/mcp/servers/{server_id}` with `{"enabled": ...}`). There is no rate limit in this version.
+
+### Statuses
+
+Errors marked "uniform" use the body `{"detail", "code", "user_message_kept"}` (plus `suggested_strategy` for 413); the others use the default FastAPI shape `{"detail": "..."}`. `user_message_kept` is `false` when the turn failed and the user message was removed (the chat leaf returns to the previous message) and `null` for an internal error.
+
+| Status | `code` | When | User message kept |
+|--------|--------|------|-------------------|
+| 200 | - | The turn finished; body above | yes |
+| 401 | - | No credentials, or an invalid or revoked key (default shape, with `WWW-Authenticate: Bearer` for a key) | no turn |
+| 403 | - | Foreign `Origin` header (default shape) | no turn |
+| 404 | - | Chat or knowledge base not found or not yours (default shape) | no turn |
+| 409 | `CHAT_BUSY` | Another turn runs in this chat (uniform) | no |
+| 413 | `CONTEXT_OVERFLOW` | The context exceeds the window with strategy `no_compression` (uniform, `suggested_strategy: "sliding"`) | no |
+| 415 | - | `Content-Type` is not `application/json` (default shape) | no turn |
+| 422 | - | Body validation failed, or the chosen knowledge base is not ready (default shape) | no turn |
+| 500 | `RAG_GATED_FAILED` / `INTERNAL_ERROR` | The strict RAG reply could not be stored / unexpected failure (uniform; the detail never contains exception text) | no / unknown (`null`) |
+| 502 | `LLM_ERROR` | The provider answered with an error (uniform) | no |
+| 503 | `LM_STUDIO_UNAVAILABLE` | LM Studio is not running (`LM Studio is not running`, uniform) | no |
+| 503 | `LLM_UNREACHABLE` | A cloud or custom provider cannot be reached (uniform) | no |
+| 503 | `PROVIDER_UNAVAILABLE` | The provider is deleted, disabled, foreign, or rejected the key (uniform) | no |
+
+409 example:
+
+```json
+{"detail": "Chat is busy with another request; retry when the current turn has finished", "code": "CHAT_BUSY", "user_message_kept": false}
+```
+
+413 example:
+
+```json
+{
+  "detail": "Context size (5200 tokens) exceeds context window (4096 tokens). Please change compression strategy or reduce conversation length.",
+  "code": "CONTEXT_OVERFLOW",
+  "user_message_kept": false,
+  "suggested_strategy": "sliding"
+}
+```
+
+### Event
+
+After a successful HTTP turn the Agent sends `{"type": "chat_updated", "chat_id": 12}` on `/ws/events` to the owner's sockets (once per turn, never for a failed one). The web UI reloads the chat list and, when that chat is open and idle, its tree, so an exchange made over HTTP appears in the open browser tab without a reload.
+
+### curl scenario
+
+`BASE` is the Agent address (`AGENT_PORT`, default 8001), not the UI address. From another machine use `http://<LAN address>:8001` with `BIND_HOST=0.0.0.0` on the host. Windows `cmd` quotes JSON differently (use `\"` inside double quotes or run the block in Git Bash). Replace `<password>` and the ids read from earlier responses.
+
+```bash
+BASE=http://127.0.0.1:8001
+
+# 1. Log in with the browser account and keep the session cookie
+curl -s -c cookies.txt -X POST $BASE/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "<username>", "password": "<password>"}'
+
+# 2. Create a key (cookie only); the "key" value of the response goes into KEY, "id" is needed to revoke
+curl -s -b cookies.txt -X POST $BASE/api/v1/api-keys \
+  -H "Content-Type: application/json" \
+  -d '{"name": "laptop"}'
+KEY=aia_...
+
+# 3. Check who the key belongs to
+curl -s $BASE/api/v1/auth/me -H "Authorization: Bearer $KEY"
+
+# 4. Create a chat and note its "id"
+curl -s -X POST $BASE/api/v1/chats \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"title": "HTTP test"}'
+CHAT_ID=1
+
+# 5. List the LM Studio models and load one (the message endpoint never loads a model)
+curl -s $BASE/api/v1/lm-studio/models -H "Authorization: Bearer $KEY"
+curl -s -X POST $BASE/api/v1/lm-studio/load-model \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"model_id": "qwen2.5-7b-instruct", "gpu_offload": 0}'
+
+# 6. List knowledge bases and pick a ready one
+curl -s $BASE/api/v1/kb -H "Authorization: Bearer $KEY"
+KB_ID=3
+
+# 7. List MCP servers and switch one on
+curl -s $BASE/api/v1/mcp/servers -H "Authorization: Bearer $KEY"
+MCP_ID=1
+curl -s -X PUT $BASE/api/v1/mcp/servers/$MCP_ID \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"enabled": true}'
+
+# 8. Send a message with a chosen knowledge base (saved for the chat)
+curl -s -X POST $BASE/api/v1/chats/$CHAT_ID/messages \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d "{\"content\": \"Что такое сжатие контекста?\", \"model\": \"qwen2.5-7b-instruct\", \"kb_id\": $KB_ID}"
+
+# 9. Send without kb_id (the saved knowledge base still applies), then with RAG switched off
+curl -s -X POST $BASE/api/v1/chats/$CHAT_ID/messages \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"content": "Расскажи подробнее", "model": "qwen2.5-7b-instruct"}'
+curl -s -X POST $BASE/api/v1/chats/$CHAT_ID/messages \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"content": "А теперь без базы знаний", "model": "qwen2.5-7b-instruct", "kb_id": null}'
+
+# 10. Read the conversation tree (leaf first)
+curl -s $BASE/api/v1/chats/$CHAT_ID/tree -H "Authorization: Bearer $KEY"
+
+# 11. Revoke the key with the cookie session, then repeat step 3 to see the 401
+curl -s -b cookies.txt -X DELETE $BASE/api/v1/api-keys/<id>
+curl -s -i $BASE/api/v1/auth/me -H "Authorization: Bearer $KEY"
+```
+
+Expected `200` body of step 8 (shortened):
+
+```json
+{
+  "chat_id": 1,
+  "user_message_id": 1,
+  "assistant_message_id": 2,
+  "content": "Сжатие контекста ...",
+  "model": "qwen2.5-7b-instruct",
+  "provider_id": null,
+  "stats": {"total_request_tokens": 820, "total_response_tokens": 140, "...": "..."},
+  "tool_calls": [],
+  "memory_writes": [],
+  "task_writes": [],
+  "invariant_conflict": null,
+  "rag": {"...": "..."}
+}
+```
+
+Expected response of step 11 after the revoke (`401`, header `WWW-Authenticate: Bearer`):
+
+```json
+{"detail": "Invalid or revoked API key"}
+```
 
 ## Environment Settings
 
