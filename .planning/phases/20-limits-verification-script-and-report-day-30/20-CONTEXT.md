@@ -48,6 +48,8 @@ Locked by REQUIREMENTS.md / PROJECT.md / Phases 18-19 (not re-discussed): no IP 
 - **D-20:** `Day30_report.md` is written in Russian in the style of `Day22_report.md`..`Day25_report.md`: setup, configuration, commands, result tables copied from the script's files, honest conclusions and limitations. It is assembled from the files in `eval_out/day30/` after the user's live run; the script does not write the report itself.
 - **D-21:** The live run from the Mac and the manual UI chat from another device are done by the user. Planning must include a human checkpoint for them; results that were not actually obtained are recorded as not run, never as passed.
 
+- **D-22:** VER-05 status as of 2026-10-12: the user reported the manual UI chat from another device as approved (before Phase 20 planning, on the Phase 18-19 build). The report records it as confirmed by the user on that date; no device details or screenshots were supplied, so none are to be invented. The live script run from the Mac (VER-04) is still pending and keeps its human checkpoint.
+
 ### Claude's Discretion
 - Names of the new `.env` settings, their validation (negative or non-numeric values), and the wording of all messages and UI strings.
 - The limiter algorithm (the existing sliding window of timestamps is the baseline) and where the shared check lives so both channels call it; the order of the rate check relative to the chat-busy check, as long as D-03 holds.

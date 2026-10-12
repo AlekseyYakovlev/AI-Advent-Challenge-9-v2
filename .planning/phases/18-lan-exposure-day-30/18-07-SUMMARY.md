@@ -43,3 +43,5 @@ None.
 ## Manual UAT (second device)
 
 Pending: the user must confirm login and a streamed reply from a second device on the home network (NET-03). Until then cross-machine reachability and the Windows Firewall rule are not confirmed by a human. Steps are in the plan's Task 3 and in `docs/TESTING_GUIDE.md`. Outcome to be recorded on resume.
+
+Update 2026-10-12: the user reported the manual UI chat from another device on the network as approved (given as the Phase 20 / VER-05 approval). This confirms cross-machine reachability of the UI by a human; the user gave no per-step details (firewall rule, streaming), so those are not recorded separately.
