@@ -1357,6 +1357,7 @@ function appendUserBubble(content) {
     const container = $('messages');
     const wrapper = document.createElement('div');
     wrapper.className = 'flex justify-end';
+    wrapper.dataset.optimistic = 'true';
     const bubble = document.createElement('div');
     bubble.className = 'max-w-[75%] rounded-xl px-4 py-2 text-sm bg-indigo-600 text-white';
     const contentEl = document.createElement('div');
@@ -1388,7 +1389,43 @@ function appendLoadingBubble() {
     container.scrollTop = container.scrollHeight;
 }
 
+function rateLimitMessage(retryAfter) {
+    const value = Number(retryAfter);
+    if (Number.isFinite(value) && value > 0) {
+        const seconds = Math.ceil(value);
+        return 'Слишком много сообщений. Повторите через ' + seconds + ' с';
+    }
+    return 'Слишком много сообщений. Повторите чуть позже';
+}
+
+function handleRateLimited(data) {
+    const optimistic = document.querySelectorAll('#messages [data-optimistic="true"]');
+    if (optimistic.length) optimistic[optimistic.length - 1].remove();
+    const input = $('message-input');
+    if (input && !input.value && state.lastFailedMessage) {
+        input.value = state.lastFailedMessage;
+    }
+    showToast(rateLimitMessage(data.retry_after), 'warning');
+}
+
+function showQueueNote() {
+    appendLoadingBubble();
+    const bubble = document.querySelector('[data-streaming="true"] .bg-slate-800');
+    if (!bubble || bubble.querySelector('.queue-note')) return;
+    const note = document.createElement('div');
+    note.className = 'queue-note mt-1 text-sm text-slate-400';
+    note.textContent = 'В очереди, ожидание свободного места…';
+    const streamEl = bubble.querySelector('[data-stream-content]');
+    bubble.insertBefore(note, streamEl);
+}
+
+function removeQueueNote() {
+    const note = document.querySelector('.queue-note');
+    if (note) note.remove();
+}
+
 function appendTokenToStream(token) {
+    removeQueueNote();
     const bubble = document.querySelector('[data-streaming="true"]');
     if (!bubble) appendLoadingBubble();
     const contentEl = document.querySelector('[data-stream-content]');
@@ -1771,9 +1808,14 @@ function handleWsMessage(data) {
                 }
                 showToast(data.detail || 'Провайдер недоступен', 'error');
                 refreshModelSelector();
+            } else if (data.code === 'RATE_LIMITED') {
+                handleRateLimited(data);
             } else {
                 showToast(data.detail || 'Ошибка', 'error');
             }
+            break;
+        case 'queued':
+            showQueueNote();
             break;
         case 'model_loaded':
         case 'model_event':

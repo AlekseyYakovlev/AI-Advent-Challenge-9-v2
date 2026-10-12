@@ -32,7 +32,7 @@
                     class="w-full rounded-lg bg-indigo-600 hover:bg-indigo-500 px-4 py-2 text-sm font-medium transition">
                     Войти
                 </button>
-                <div id="login-error" class="text-sm text-red-400"></div>
+                <div id="login-error" role="alert" class="text-sm text-red-400"></div>
             </form>
         </div>
     </div>
@@ -40,6 +40,15 @@
     <script>
         const AGENT_PORT = 8001;
         const AGENT_BASE = `http://${window.location.hostname}:${AGENT_PORT}`;
+
+        function lockoutMessage(seconds) {
+            const value = Number(seconds);
+            if (Number.isFinite(value) && value > 0) {
+                const minutes = Math.max(1, Math.ceil(value / 60));
+                return 'Слишком много неудачных попыток. Повторите через ' + minutes + ' мин';
+            }
+            return 'Слишком много неудачных попыток. Повторите позже';
+        }
 
         if (new URLSearchParams(location.search).get('expired')) {
             document.getElementById('expired-banner').classList.remove('hidden');
@@ -72,6 +81,14 @@
             }
 
             const body = await resp.json().catch(() => ({}));
+            if (resp.status === 429) {
+                const header = resp.headers.get('Retry-After');
+                const seconds = header !== null && Number.isFinite(Number(header))
+                    ? Number(header)
+                    : body.retry_after;
+                errorEl.textContent = lockoutMessage(seconds);
+                return;
+            }
             errorEl.textContent = body.detail || 'Ошибка входа';
         });
     </script>
