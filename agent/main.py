@@ -521,7 +521,8 @@ async def login(
 ) -> UserResponse | JSONResponse:
     """Verify credentials and issue a DB-backed HTTP-only session cookie."""
     key = _login_throttle_key(body.username, request)
-    blocked = limits.login_throttle.blocked_seconds(key)
+    # No await between the block check and the count (see LoginThrottle.register_attempt).
+    blocked, started = limits.login_throttle.register_attempt(key)
     if blocked is not None:
         logger.warning("login_blocked", username=body.username, ip=key[1], retry_after=blocked)
         # JSONResponse, not HTTPException: the body must carry code and retry_after.
@@ -537,7 +538,6 @@ async def login(
     result = await session.exec(select(User).where(User.username == body.username))
     user = result.first()
     if user is None or not verify_password(body.password, user.password_hash):
-        started = limits.login_throttle.record_failure(key)
         logger.info("login_failed", username=body.username, ip=key[1])
         if started:
             logger.warning(

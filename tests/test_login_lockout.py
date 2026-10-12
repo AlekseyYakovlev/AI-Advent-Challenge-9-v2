@@ -307,3 +307,16 @@ async def test_slow_guessing_still_blocked(seed_user, threshold3, clock) -> None
         clock[0] += 301
         assert (await _login(c, "alice", "bad")).status_code == 401
         assert (await _login(c, "alice", "wonderland")).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_parallel_guesses_do_not_bypass_lockout(seed_user, threshold3) -> None:
+    """A concurrent burst gets at most the threshold of 401 answers; the rest get 429."""
+    import asyncio
+
+    await seed_user("alice", "wonderland")
+    async with _client() as c:
+        resps = await asyncio.gather(*[_login(c, "alice", "bad") for _ in range(20)])
+    codes = [r.status_code for r in resps]
+    assert codes.count(401) <= 3
+    assert codes.count(429) == 17

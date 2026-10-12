@@ -96,6 +96,17 @@ class LoginThrottle:
         self._evict(key, now)
         return started
 
+    def register_attempt(self, key: tuple[str, str]) -> tuple[int | None, bool]:
+        """Return (seconds blocked, block started); count the attempt when it may proceed.
+
+        Check and count happen in one synchronous step so concurrent requests cannot
+        all pass the block check before the first failure is recorded.
+        """
+        blocked = self.blocked_seconds(key)
+        if blocked is not None:
+            return blocked, False
+        return None, self.record_failure(key)
+
     # Memory bound. Step 1 drops entries whose block has expired (no information lost).
     # Step 2 drops the unblocked entry with the oldest failure while the table is over
     # MAX_ENTRIES (never the key just recorded); only if all others are blocked, the
