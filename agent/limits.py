@@ -28,8 +28,7 @@ def _now() -> float:
 def check_message_rate(chat_id: int) -> int | None:
     """Record a message for the chat, or return whole seconds until a slot frees.
 
-    Synchronous on purpose: with no await inside, the check and the append cannot
-    interleave with another task.
+    Synchronous on purpose: the check and the append cannot interleave with another task.
     """
     limit = settings.RATE_LIMIT_MESSAGES_PER_MINUTE
     if limit <= 0:
