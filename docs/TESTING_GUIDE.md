@@ -6,19 +6,22 @@
 - test_cascade_delete.py: delete chat → cleanup in-memory caches (including the pending title job)
 - test_lm_studio_client.py: load/unload/timeout scenarios
 - test_concurrent_ws.py: 5 parallel WS messages, no IntegrityError
-- test_ws_security.py: origin validation, rate limiting, idle timeout
-- test_supervisor.py: agent crash → restart within 5 seconds
+- test_ws_security.py: origin validation, the configurable shared rate limit (see "Limits (Day 30)"), idle timeout
+- test_supervisor.py: agent crash → restart within 5 seconds; start reaches ready without a forced restart
 - test_scheduler_*.py: see "Scheduler (Day 18)" below
 - test_titles.py / test_titles_ws.py: see "Chat auto-titling (Day 21)" below
 - test_llm_complete_chat.py: see "Chat auto-titling (Day 21)" below
 - test_modal_close_policy.py: modals have no backdrop-click or Escape closer; every "*-modal" overlay has a bound "btn-close-*" button
 - test_memory.py / test_memory_api.py / test_context_engine_memory.py / test_memory_panel_ui.py: see "Long-term memory editing (Day 21)" below
 - test_bind_host.py / test_supervisor_host.py / test_origins.py / test_network*.py / test_run_banner.py / test_port_literals.py: see "LAN exposure (Day 30)" below
+- test_limits_config.py / test_limits_core.py / test_rate_limit.py / test_generation_queue.py / test_login_lockout.py / test_limits_ui.py / test_verify_service.py: see "Limits (Day 30)" below
 
 ## Fixtures
 - Use conftest.py for shared fixtures
 - Separate test_app.db for each test session
 - respx for HTTP mocking
+- conftest pins the four limit variables (`RATE_LIMIT_MESSAGES_PER_MINUTE`, `LOGIN_MAX_FAILED_ATTEMPTS`, `LOGIN_LOCKOUT_SECONDS`, `MAX_CONCURRENT_GENERATIONS`) and resets the login throttle and the generation gate before every test
+- a test changes a limit with `monkeypatch.setattr(settings, NAME, value)` and moves time with `monkeypatch.setattr(limits, "_now", ...)` instead of sleeping
 
 ## Strategy Tests
 
@@ -66,7 +69,7 @@
 - Call GET /api/v1/chats/{chat_id}/stats
 - Verify all fields present
 - Verify current_context_size reflects strategy
-- Verify context_usage_percent calculated correctly
+- Verify usage_percent calculated correctly
 
 ## Scheduler (Day 18)
 
@@ -518,3 +521,75 @@ Quick command: `pytest tests/test_api_keys.py tests/test_bearer_auth.py tests/te
 - Starts an isolated copy of the app at UI :18000 / Agent :18001 with a scratch database, a stub OpenAI-compatible provider and a closed LM Studio port. Command: `python scripts/e2e_api_keys_playwright.py`. It never touches :8000/:8001, the repository `.env` or `app.db`.
 - Exit 0 all checks passed, 1 a check failed, 2 blocked (a port is busy), 4 Playwright missing. A run that ends with exit 2 or 4 is BLOCKED: it is not recorded as passed and the live browser refresh check stays an open manual UAT item.
 - Checks: K1-K7 (the Settings section, name validation, the one-time key modal and copy, closing rules, the key row, the last-used date), H1-H5 (a key alone authenticates REST routes, key creation with a key is 403, a chat turn over HTTP, the tree, a wrong key is 401), L1-L3 (an HTTP exchange appears in the open browser without a reload and leaves the input enabled), R1-R2 (revoke with confirm; a revoked key gets 401), Z (no uncaught page errors).
+
+## Limits (Day 30)
+
+Quick command: `pytest tests/test_limits_config.py tests/test_limits_core.py tests/test_rate_limit.py tests/test_generation_queue.py tests/test_login_lockout.py tests/test_limits_ui.py tests/test_verify_service.py -q`. No test uses a real network: `verify_service.py` is tested against a local stub server on loopback, and the limits are tested with an in-process client and a replaceable clock.
+
+### Coverage map for Day 30
+
+| Area | Test files | Documented in |
+|------|-----------|---------------|
+| Bind host | `test_bind_host.py`, `test_supervisor_host.py`, `test_run_banner.py` | "LAN exposure (Day 30)" |
+| Origin | `test_origins.py`, `test_ws_origin_validation.py`, `test_network_info.py` | "LAN exposure (Day 30)" |
+| API keys | `test_api_keys.py`, `test_bearer_auth.py`, `test_api_keys_ui.py` | "API keys and HTTP chat (Day 30)" |
+| HTTP chat | `test_http_chat.py`, `test_http_chat_rag.py`, `test_ws_turn_failures.py` | "API keys and HTTP chat (Day 30)" |
+| Limits | `test_limits_config.py`, `test_limits_core.py`, `test_rate_limit.py`, `test_generation_queue.py`, `test_login_lockout.py`, `test_limits_ui.py`, `test_verify_service.py` | this section |
+
+Every file in the table exists in `tests/`; `test_docs_day30.py` fails when a file named in the three Day 30 sections is missing.
+
+### test_limits_config.py
+- defaults of the four settings (30, 5, 300, 2); `0` switches a limit off
+- negative and non-numeric values are refused with an ASCII message that names the setting; `LOGIN_LOCKOUT_SECONDS=0` is refused
+- importing `shared.config` with a bad value exits with code 2 (subprocess); valid values are read from the environment; the bind-host failure still exits 2
+
+### test_limits_core.py
+- message window: blocks after the limit, reports the exact wait in whole seconds, frees after a minute, a refused call records nothing, chats are independent, limit `0` is off, deleting a chat empties its window
+- login throttle: the third failure blocks, the block time shrinks and expires, a success resets the count, pairs are independent, threshold `0` never blocks, slow guessing still reaches the block, the count restarts after an expired block, eviction keeps the table within `MAX_ENTRIES` and spares blocked keys
+- generation gate: cap 1 serialises in order, cap 0 is uncapped, a cancelled waiter leaves the gate usable, a failing body frees its slot, a changed cap takes effect, new event loops get a fresh semaphore; `limits_in_force` reports the settings
+
+### test_rate_limit.py
+- the HTTP 429 contract: body, `Retry-After`, nothing stored, no model called
+- what takes a slot (an accepted attempt, a context overflow, a model error) and what does not (404, 409, 429); 409 is answered before 429
+- the window is shared between WebSocket and HTTP in both directions and both report the same seconds
+- the window expires, the limit `0` switches it off, the default is 30, the limit is per chat
+
+### test_generation_queue.py
+- excess turns wait and all complete; the `queued` frame goes only to waiters; `queue_wait_seconds` is reported in the `done` frame and in the HTTP body
+- cap 0 means no cap; cap 2 runs two and queues two; a turn waiting for the chat lock holds no slot
+- a failing turn frees its slot; a cancelled waiter does not block the queue; the wrapper has no queue timeout; `LLM_TIMEOUT` counts only after the queue
+- `_QueueStatsSink` passes frames through without mutating them; background work (titles, facts, scheduler) is outside the cap
+
+### test_login_lockout.py
+- threshold and block, the 429 contract (`LOGIN_BLOCKED`, `Retry-After`, `retry_after`), a correct password refused during the block, no username enumeration
+- counted per username and per client address; a forwarded header is ignored; success resets; the block expires and its remaining time shrinks; threshold `0` disables
+- nothing is persisted; CORS exposes `Retry-After`; `limits_in_force` is logged at start; no route returns the limits; slow guessing is still blocked
+
+### test_limits_ui.py (frontend source guard)
+- the rate-limit copy «Слишком много сообщений. Повторите через N с», the handling restores the typed text without locking the input, and the branch is wired before the generic fallback
+- the queue caption «В очереди, ожидание свободного места…» and its wiring; no limit values on screen; no stop control
+- the login lockout copy and wiring; the error is an alert; the inline script is balanced and the port constant is untouched
+
+### test_verify_service.py
+- the script runs against a local stub server: both output files are written; reachability and authentication; an unreachable server, a refused key and no usable model exit 2
+- model choice, parallel run, overflow demonstration, rate-limit modes `chat` and `fast`, the expected-limit note; a missed expectation exits 1
+- cleanup deletes only the script's own chats (also after a failed run), `--keep` leaves them
+- key hygiene (the key is absent from output and files), no proxy use, standard library only, Python 3.11 floor
+
+### Changed tests
+- `test_ws_security.py`: the rate-limit test uses the configurable shared limit and expects a `RATE_LIMITED` frame with `retry_after` instead of the old fixed 10 messages per minute
+- `test_http_chat.py`: the HTTP stats carry `queue_wait_seconds` (0.0) while `GET /api/v1/chats/{id}/stats` does not
+- `test_scoping.py`: `/health` stays open and `/debug/routes` needs a session cookie or an API key (401 without credentials); it used to assert the route was open
+- `test_network_info.py`: the route check reads `/debug/routes` with an authenticated client because the route is now guarded
+- `test_supervisor_host.py`: the readiness probe accepts only the 401 of the guarded route and start waits for it
+- `test_supervisor.py`: a real-process test that start reaches ready without a forced restart
+
+### scripts/e2e_limits_playwright.py (isolated copy, not part of pytest)
+- Starts a temporary copy of the app at UI :18000 / Agent :18001 with a scratch database, low demo limits and a deliberately slow stub model. Command: `python scripts/e2e_limits_playwright.py`. It never touches :8000/:8001, the repository `.env` or the firewall, stops only the processes it started, and never writes into `eval_out/day30/`.
+- Exit 0 all passed, 1 a check failed, 2 blocked (a needed port busy), 4 Playwright missing.
+- Group S (network): supervisor readiness without a forced restart, the `limits_in_force` log line, `/health` open and `/debug/routes` guarded, a key that opens `/debug/routes`.
+- Group V: the real `verify_service.py` run as a separate process against the copy.
+- Group B (browser): login lockout message, the rate-limit toast with the text kept in the input, the queue caption, no limit values on screen.
+
+### Live run from a second machine (manual)
+Automation cannot prove reachability from another machine, so the live run is manual. Follow "Checking the service from another machine" in `docs/USER_GUIDE.md`: LAN mode on, a low demo limit, an API key, then `python3 verify_service.py --url http://<lan-ip>:8001 --n 6` on the other machine. The result files go to `eval_out/day30/` and are summarised in `Day30_report.md`.

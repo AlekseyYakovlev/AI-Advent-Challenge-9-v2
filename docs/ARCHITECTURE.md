@@ -22,7 +22,7 @@ All three call `shared.origins.is_allowed_origin`. The address list for the cons
 
 **Known limits**
 1. DNS rebinding: a hostile domain that resolves to this machine's LAN address passes the host-match rule, but the session cookie is host-only and is not sent to that name, so only unauthenticated endpoints are reachable. No Host allowlist is implemented, by decision.
-2. `/health` and `/debug/routes` are unauthenticated, and login attempts are unlimited until the limits phase.
+2. `/health` is open by design (the supervisor and the verification script probe it). `/debug/routes` needs authentication (session cookie or API key). Login has a lockout, see "Limits and the generation queue (Day 30)".
 3. Traffic is plain HTTP, by decision.
 4. The app never touches the firewall.
 
@@ -48,7 +48,30 @@ The turn body (`_run_chat_turn`, the caller holds the lock) is shared by the Web
 
 **Failed turns.** On both transports `ws._discard_user_message` points `Chat.current_leaf_message_id` back at the previous leaf before deleting the user message, instead of letting `ON DELETE SET NULL` clear the leaf. `LLM_ERROR` frames carry `cause` and `provider_kind`, which the HTTP status mapping uses.
 
-**Deliberately absent:** streaming over HTTP, a stateless chat mode, a per-request MCP switch (use the MCP routes) and rate limits (Phase 20).
+**Deliberately absent:** streaming over HTTP, a stateless chat mode, a per-request MCP switch (use the MCP routes). Rate limits and the generation queue apply to this endpoint, see the next section.
+
+## Limits and the generation queue (Day 30)
+
+**Where it lives.** One module, `agent/limits.py`, holds the three primitives: `check_message_rate`, `LoginThrottle` (the instance `login_throttle`) and `GenerationGate` (the instance `generation_gate`). They read the four settings (`RATE_LIMIT_MESSAGES_PER_MINUTE`, `LOGIN_MAX_FAILED_ATTEMPTS`, `LOGIN_LOCKOUT_SECONDS`, `MAX_CONCURRENT_GENERATIONS`) from `shared.config.settings` at call time. State is per process and in memory, cleared by a restart, with no table. `limits_in_force` is logged once at Agent start.
+
+**Message window.** The per-chat timestamps are the dict `agent.state.ws_rate_limiter`. `check_message_rate` runs synchronously (no `await` between the check and the append) in the WebSocket receive loop, before payload validation, and in `post_chat_message` after the busy check (order 404, 409, 429). A refused attempt takes no slot; an accepted one does, even when the turn then fails.
+
+**Generation gate.** `ws.run_limited_turn` wraps `_run_chat_turn` on both channels (the WebSocket handler and `http_chat`). It takes the generation slot after the per-chat lock: lock first, then slot. A turn that waits for its own chat's lock must not hold a slot meanwhile, and one global acquisition order (lock, then slot) cannot deadlock. When the semaphore is full the turn sends a `queued` frame and waits; the wait has no timeout and the queue no bound. `_QueueStatsSink` passes frames through and adds `queue_wait_seconds` to the stats of the `done` frame (the HTTP endpoint reads that frame through its `RecordingSink`). The semaphore is created lazily for the current cap and event loop, so a changed setting or a new loop gets a fresh one.
+
+**Login throttle.** The key is `(username, request.client.host)`. The browser talks to the Agent directly and no proxy sits in front of it, so the peer address is the real client; no forwarded header is read. A wrong password for an unknown username is counted like any other, and the answer is the same.
+
+**Supervisor readiness.** The supervisor treats the Agent as started when `/health` answers 200 and an unauthenticated `GET /debug/routes` answers 401 (`ui/supervisor.py::_agent_routes_ready`). The 401 comes from the auth dependency of the guarded route, so it proves the app, its route table and its auth layer are mounted, not only that the port is open.
+
+**Known limits**
+1. The message limit is per chat, so many chats multiply the message budget; the generation cap bounds the real concurrency.
+2. The queue is unbounded, by decision.
+3. A WebSocket client that disconnects while its turn is queued still gets its turn run.
+4. The lockout is per username and client address, so guesses spread over many addresses are not stopped.
+5. Failed logins are remembered until a successful login or a block; `LoginThrottle.record_failure` never expires a count by age. A person who mistypes on separate occasions without logging in successfully in between is blocked for the lockout time once the threshold is reached.
+6. The throttle keeps at most `LoginThrottle.MAX_ENTRIES` (10,000) username+address pairs. Beyond that the unblocked pair with the oldest failure is dropped and starts again from zero.
+7. Failed logins under unknown usernames are fast because they skip password hashing, so a client already on the LAN can flood them and push its own counter out of the table. The lockout slows casual guessing but does not stop a determined attacker on the LAN; this is accepted for a private home-network service without IP filtering. The flood shows as `login_failed` log lines, and the password hash cost still bounds the guess rate for real usernames.
+8. A restart clears every block and counter.
+9. Traffic stays plain HTTP.
 
 ## Context Compression Strategies
 
@@ -124,7 +147,8 @@ Each message stores token_count in database. Real-time statistics include:
 - total_response_tokens: Sum of all assistant message tokens
 - current_context_size: Tokens that will be sent to LLM (strategy-dependent)
 - context_window_size: From settings.context_length
-- context_usage_percent: Percentage of context window used
+- usage_percent: Percentage of context window used
+- queue_wait_seconds: seconds the turn waited for a generation slot, only in the `done` frame and the HTTP `200` body, not in `GET /api/v1/chats/{chat_id}/stats`
 
 Statistics update after each message and are sent with WebSocket "done" message.
 
