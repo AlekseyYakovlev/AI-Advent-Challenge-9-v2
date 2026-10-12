@@ -1222,6 +1222,8 @@ async def run_limited_turn(
     async with limits.generation_gate.slot(on_wait=announce_queue) as waited:
         if waited > 0:
             logger.info("turn_dequeued", chat_id=chat_id, queue_wait_seconds=waited)
+            # A failing send means the client is gone: abort before anything is persisted.
+            await websocket.send_json({"type": "dequeued", "chat_id": chat_id})
         await _run_chat_turn(_QueueStatsSink(websocket, waited), chat_id, payload)
 
 

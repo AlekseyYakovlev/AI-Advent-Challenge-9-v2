@@ -1817,6 +1817,9 @@ function handleWsMessage(data) {
         case 'queued':
             showQueueNote();
             break;
+        case 'dequeued':
+            removeQueueNote();
+            break;
         case 'model_loaded':
         case 'model_event':
             refreshModelSelector();
