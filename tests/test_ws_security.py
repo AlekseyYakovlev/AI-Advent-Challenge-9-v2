@@ -45,8 +45,9 @@ def test_ws_rejects_invalid_origin() -> None:
 
 
 @respx.mock
-def test_ws_rate_limiting() -> None:
-    """More than 10 messages per minute should return a rate-limit error."""
+def test_ws_rate_limiting(monkeypatch: pytest.MonkeyPatch) -> None:
+    """More messages per minute than RATE_LIMIT_MESSAGES_PER_MINUTE get a RATE_LIMITED frame."""
+    monkeypatch.setattr(settings, "RATE_LIMIT_MESSAGES_PER_MINUTE", 3)
     respx.post(f"{BASE_URL}/v1/chat/completions").mock(
         side_effect=lambda _request: _stream_response("ok"),
     )
@@ -61,7 +62,7 @@ def test_ws_rate_limiting() -> None:
             f"/ws/chat/{chat_id}",
             headers={"Origin": WS_ORIGIN},
         ) as ws:
-            for i in range(10):
+            for i in range(3):
                 ws.send_json({"content": f"msg {i}", "model": MODEL})
                 while True:
                     payload = ws.receive_json()
@@ -71,7 +72,10 @@ def test_ws_rate_limiting() -> None:
             ws.send_json({"content": "one too many", "model": MODEL})
             payload = ws.receive_json()
             assert payload["type"] == "error"
+            assert payload["code"] == "RATE_LIMITED"
             assert "Rate limit" in payload["detail"]
+            assert isinstance(payload["retry_after"], int)
+            assert 1 <= payload["retry_after"] <= 60
 
 
 @respx.mock
