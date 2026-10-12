@@ -99,7 +99,30 @@ Plans:
   4. Running the verification script with a server address and API key reports reachability/auth, results of N parallel real-model requests (successes, errors, timings), and demonstrates the rate limit and context overflow
   5. `Day30_report.md` records a live run from a second LAN machine plus a manual UI chat from another device; pytest covers bind host, Origin, API keys, HTTP chat and limits with matching `docs/TESTING_GUIDE.md` sections
 
-**Plans**: TBD
+**Plans:** 8 plans
+
+Plans:
+**Wave 1**
+
+- [ ] 20-01-PLAN.md — four limit settings with fail-fast validation, agent/limits.py primitives, test isolation (wave 1)
+- [ ] 20-04-PLAN.md — frontend: rate-limit toast, queue caption, login lockout message (wave 1)
+- [ ] 20-05-PLAN.md — scripts/verify_service.py (standard library only) and its stub-server tests (wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 20-02-PLAN.md — shared message limit and generation queue in WebSocket and HTTP chat, 429 with Retry-After (wave 2)
+- [ ] 20-03-PLAN.md — login lockout, authenticated /debug/routes with the supervisor readiness probe, Retry-After CORS exposure (wave 2)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 20-06-PLAN.md — isolated-copy end-to-end check of the limits, the script and the three UI states (wave 3)
+- [ ] 20-07-PLAN.md — docs: API_SPEC, ARCHITECTURE, USER_GUIDE, TESTING_GUIDE "Limits (Day 30)", documentation guard (wave 3)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 20-08-PLAN.md — run sheet, live run from the Mac by the user, Day30_report.md (wave 4, has checkpoint)
+
+**UI hint**: yes
 
 <details>
 <summary>✅ v1.0 Week 3: Agent Memory & Task State (Phases 1-6) — SHIPPED 2026-09-23</summary>
