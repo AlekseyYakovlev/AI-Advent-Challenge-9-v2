@@ -43,7 +43,8 @@ Returns real-time statistics for a chat.
   "current_context_size": 3500,
   "context_window_size": 16384,
   "usage_percent": 85.4,
-  "message_count": 20
+  "message_count": 20,
+  "chat_id": 12
 }
 ```
 
