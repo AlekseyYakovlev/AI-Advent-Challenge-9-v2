@@ -351,6 +351,47 @@ def _llm_error_detail(exc: BaseException, provider_row: Any | None) -> str:
     return f"LLM error: {message}"
 
 
+def _llm_error_frame(exc: BaseException, provider_row: Any | None) -> dict[str, Any]:
+    """Build the LLM_ERROR frame with a machine-readable cause."""
+    cause: str
+    if isinstance(exc, httpx.ConnectError):
+        cause = "unreachable"
+    elif isinstance(exc, httpx.TimeoutException):
+        cause = "timeout"
+    else:
+        cause = "upstream"
+    provider_kind: str = provider_row.kind if provider_row is not None else "lm_studio"
+    return {
+        "type": "error",
+        "detail": _llm_error_detail(exc, provider_row),
+        "code": "LLM_ERROR",
+        "cause": cause,
+        "provider_kind": provider_kind,
+    }
+
+
+async def _discard_user_message(
+    session: AsyncSession,
+    chat_id: int,
+    user_msg_id: int,
+    parent_id: int | None,
+) -> None:
+    """Remove the user message of a failed turn and point the chat leaf back at its parent."""
+    try:
+        chat = await session.get(Chat, chat_id)
+        message = await session.get(Message, user_msg_id)
+        if chat is not None and chat.current_leaf_message_id == user_msg_id:
+            chat.current_leaf_message_id = parent_id
+            session.add(chat)
+            await session.flush()
+        if message is not None:
+            await session.delete(message)
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+
+
 @dataclass
 class _ToolTurn:
     """Per-turn context shared by the tool-round helpers."""
@@ -725,6 +766,8 @@ async def _complete_gated_turn(
     A storage failure rolls the session back, removes the user message and sends an error frame.
     """
     reply_text: str = rag_turn.reply_text or ""
+    user_msg_id: int = user_msg.id
+    user_parent_id: int | None = user_msg.parent_id
     active_streams[chat_id] = asyncio.current_task()
     try:
         try:
@@ -746,8 +789,9 @@ async def _complete_gated_turn(
             logger.error("rag_gated_reply_failed", chat_id=chat_id, error=str(exc))
             await session.rollback()
             try:
-                await session.delete(user_msg)
-                await session.commit()
+                await _discard_user_message(
+                    session, chat_id, user_msg_id, user_parent_id,
+                )
             except Exception as cleanup_exc:
                 await session.rollback()
                 logger.error(
@@ -795,388 +839,384 @@ async def _complete_gated_turn(
         active_streams.pop(chat_id, None)
 
 
+async def _run_chat_turn(
+    websocket: WebSocket,
+    chat_id: int,
+    payload: MessagePayload,
+) -> None:
+    """Run one chat turn; the caller must hold the per-chat lock."""
+    current_chat_model.set(payload.model)
+    current_chat_provider_id.set(payload.provider_id)
+    async with async_session_factory() as session:
+        chat = await session.get(Chat, chat_id)
+        if chat is None:
+            await websocket.send_json(
+                {"type": "error", "detail": f"Chat {chat_id} not found"},
+            )
+            return
+
+        try:
+            client, provider_row = await resolve_client(chat.user_id, payload.provider_id)
+        except ProviderUnavailableError as exc:
+            logger.info(
+                "chat_provider_unavailable",
+                chat_id=chat_id,
+                provider_id=payload.provider_id,
+            )
+            await websocket.send_json(
+                {"type": "error", "code": "PROVIDER_UNAVAILABLE", "detail": exc.message},
+            )
+            return
+
+        user_msg = await _persist_user_message(
+            session,
+            chat,
+            payload.content,
+        )
+        user_msg_id: int = user_msg.id
+        user_parent_id: int | None = user_msg.parent_id
+
+        effective = await get_effective_settings(session, chat_id)
+        logger.info(
+            "strategy_selected",
+            chat_id=chat_id,
+            strategy=effective.strategy,
+        )
+
+        try:
+            llm_messages = await build_llm_context(
+                session,
+                chat_id,
+                payload.model,
+            )
+        except ContextOverflowError as exc:
+            logger.error(
+                "context_overflow_blocked",
+                chat_id=chat_id,
+                error=str(exc),
+            )
+            await websocket.send_json(
+                {
+                    "type": "error",
+                    "detail": str(exc),
+                    "code": "CONTEXT_OVERFLOW",
+                    "suggested_strategy": "sliding",
+                },
+            )
+            await _discard_user_message(session, chat_id, user_msg_id, user_parent_id)
+            return
+
+        temperature = effective.temperature
+        max_tokens = effective.max_tokens
+
+        toolset = McpToolset.empty()
+        if chat.user_id is not None:
+            toolset = await _load_mcp_toolset(session, chat.user_id, chat_id)
+            tool_schemas = build_tool_schemas() + toolset.schemas
+        else:
+            tool_schemas = None
+            logger.warning("tools_disabled_unowned_chat", chat_id=chat_id)
+
+        if llm_messages and llm_messages[0]["role"] == "system":
+            # The clock and the multi-step hint stay for the whole turn; only the
+            # rule is removable, so it must remain the last suffix.
+            suffix = "\n\n" + build_clock_line(datetime.now(timezone.utc).astimezone())
+            if tool_schemas:
+                suffix += "\n\n" + MULTI_STEP_TOOL_HINT + "\n\n" + TOOL_USE_RULE
+            llm_messages[0] = {
+                **llm_messages[0],
+                "content": llm_messages[0]["content"] + suffix,
+            }
+
+        # Budgeted after the system prompt and tool schemas are final, and merged only
+        # into the outbound copy, so fragments never reach the compression strategy.
+        schema_tokens = (
+            count_tokens(json.dumps(tool_schemas, ensure_ascii=False)) if tool_schemas else 0
+        )
+        rag_turn: RagTurn = await prepare_rag_turn(
+            session,
+            chat,
+            payload.content,
+            llm_messages,
+            effective.context_length,
+            max_tokens,
+            schema_tokens,
+            client=client,
+            model=payload.model,
+            parent_id=user_msg.parent_id,
+        )
+
+        if rag_turn.reply_text is not None:
+            await _complete_gated_turn(
+                websocket, session, chat, chat_id, user_msg, payload, rag_turn, client,
+            )
+            return
+
+        assistant_text = ""
+        pending_tool_calls: list[dict[str, Any]] = []
+        stream_task = asyncio.current_task()
+        active_streams[chat_id] = stream_task
+
+        try:
+            if tool_schemas:
+                reply_filter = _ReplyFilter()
+                async for event in client.stream_chat(
+                    llm_messages,
+                    payload.model,
+                    temperature,
+                    max_tokens,
+                    tools=tool_schemas,
+                ):
+                    if event["type"] == "content":
+                        assistant_text += await _emit_filtered(
+                            websocket, reply_filter, event["content"],
+                        )
+                    elif event["type"] == "tool_calls":
+                        pending_tool_calls = event["tool_calls"]
+                assistant_text += await _flush_filtered(websocket, reply_filter)
+                if not pending_tool_calls:
+                    pending_tool_calls = _recover_text_calls(
+                        reply_filter, tool_schemas, chat_id,
+                    )
+            else:
+                trace_filter = TraceLeakFilter()
+                async for token in client.stream_chat(
+                    llm_messages,
+                    payload.model,
+                    temperature,
+                    max_tokens,
+                ):
+                    assistant_text += await _emit_filtered(websocket, trace_filter, token)
+                assistant_text += await _flush_filtered(websocket, trace_filter)
+        except Exception as exc:
+            logger.error(
+                "llm_stream_failed",
+                chat_id=chat_id,
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
+            await websocket.send_json(_llm_error_frame(exc, provider_row))
+            await _discard_user_message(session, chat_id, user_msg_id, user_parent_id)
+            return
+        finally:
+            active_streams.pop(chat_id, None)
+
+        echo_text = assistant_text
+        claim = bool(tool_schemas) and looks_like_action_claim(assistant_text)
+        announce = bool(tool_schemas) and looks_like_action_announcement(assistant_text)
+        if tool_schemas and not pending_tool_calls and (claim or announce):
+            # One bounded retry: never re-checked, so a stubborn model cannot loop.
+            logger.info(
+                "action_claim_without_tool" if claim else "action_announce_without_tool",
+                chat_id=chat_id,
+            )
+            llm_messages.append({"role": "assistant", "content": assistant_text})
+            llm_messages.append(
+                {
+                    "role": "user",
+                    "content": ACTION_CLAIM_REMINDER if claim else ACTION_ANNOUNCE_REMINDER,
+                },
+            )
+            retry_text, pending_tool_calls = await _stream_action_claim_retry(
+                websocket,
+                client,
+                llm_messages,
+                payload,
+                temperature,
+                max_tokens,
+                tool_schemas,
+                chat_id,
+            )
+            if retry_text:
+                assistant_text += "\n\n" + retry_text
+            if pending_tool_calls:
+                echo_text = retry_text
+
+        memory_writes: list[dict[str, Any]] = []
+        task_writes: list[dict[str, Any]] = []
+        tool_trace: str | None = None
+        if pending_tool_calls:
+            turn = _ToolTurn(
+                websocket=websocket,
+                session=session,
+                chat=chat,
+                chat_id=chat_id,
+                payload=payload,
+                llm_messages=llm_messages,
+                tool_schemas=tool_schemas,
+                toolset=toolset,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                client=client,
+                provider=provider_row,
+                user_text=payload.content,
+            )
+            rounds = await _run_tool_rounds(turn, pending_tool_calls, echo_text)
+            llm_failed = rounds.error is not None
+            if rounds.error is not None and not rounds.results:
+                exc = rounds.error
+                logger.error(
+                    "llm_stream_failed",
+                    chat_id=chat_id,
+                    error=str(rounds.error),
+                    error_type=type(exc).__name__,
+                )
+                await websocket.send_json(_llm_error_frame(exc, turn.provider))
+                await _discard_user_message(session, chat_id, user_msg_id, user_parent_id)
+                return
+
+            assistant_text += rounds.text
+            tool_trace = serialize_tool_trace(rounds.results)
+            memory_writes = _collect_memory_writes(rounds.results)
+            task_writes = _collect_task_writes(rounds.results)
+            await _send_tool_error_frames(websocket, rounds.results)
+            # After an LLM failure another call would only wait out a second timeout.
+            reprompt_text = (
+                ""
+                if llm_failed
+                else await _reprompt_rejected_transitions(
+                    turn,
+                    _collect_rejected_transitions(rounds.results),
+                )
+            )
+            assistant_text += reprompt_text
+            if not (rounds.text + reprompt_text).strip():
+                assistant_text += await _send_fallback_summary(
+                    websocket, rounds.results, payload.content, assistant_text, chat_id,
+                )
+            if rounds.error is not None:
+                assistant_text += await _send_llm_failure_note(
+                    websocket, turn, rounds.error, payload.content,
+                )
+            pending_tool_calls = rounds.calls
+
+        active_invariants = await invariants.resolve_active_invariants(session, chat_id)
+        flagged: dict[str, Any] | None = None
+        justification_text = ""
+        critique: dict[str, Any] = {"conflict": False}
+        if active_invariants:
+            critique = await invariants.run_self_critique(
+                active_invariants,
+                assistant_text,
+                pending_tool_calls,
+                payload.model,
+                client,
+            )
+            flagged = invariants.match_flagged_invariant(active_invariants, critique)
+
+        if flagged is not None:
+            llm_messages.append(
+                {
+                    "role": "user",
+                    "content": invariants.build_justify_retract_prompt(flagged, critique),
+                },
+            )
+            trace_filter = TraceLeakFilter()
+            try:
+                async for token in client.stream_chat(
+                    llm_messages,
+                    payload.model,
+                    temperature,
+                    max_tokens,
+                ):
+                    safe = await _emit_filtered(websocket, trace_filter, token)
+                    justification_text += safe
+                    assistant_text += safe
+            except Exception as exc:
+                logger.warning(
+                    "invariant_justify_retract_failed",
+                    chat_id=chat_id,
+                    error=str(exc),
+                )
+            tail = await _flush_filtered(websocket, trace_filter)
+            justification_text += tail
+            assistant_text += tail
+
+        assistant_text, rag_turn = await asyncio.to_thread(
+            finalize_rag_turn, rag_turn, payload.content, assistant_text,
+        )
+        if rag_turn.mode == MODE_RAG:
+            # D-02: synchronous on purpose, so the next question and the UI never see
+            # stale task memory. It only stages the row; the persist below commits it with
+            # the message. extract_and_update_facts is a different, legacy layer.
+            snapshot = await update_task_memory(
+                session, chat, payload.content, assistant_text, client, payload.model,
+            )
+            rag_turn = rag_turn.with_task_memory(snapshot)
+        assistant_msg = await _persist_assistant_message(
+            session,
+            chat,
+            user_msg.id,
+            assistant_text,
+            tool_trace=tool_trace,
+            rag_sources=rag_turn.sources_json,
+        )
+
+        conflict_payload: dict[str, Any] | None = None
+        if flagged is not None:
+            conflict_row = await invariants.record_conflict(
+                session,
+                chat_id,
+                assistant_msg.id,
+                flagged["scope"],
+                flagged["id"],
+                flagged["title"],
+                justification_text or critique.get("explanation", ""),
+            )
+            conflict_payload = {
+                "id": conflict_row.id,
+                "chat_id": conflict_row.chat_id,
+                "message_id": conflict_row.message_id,
+                "invariant_scope": conflict_row.invariant_scope,
+                "invariant_id": conflict_row.invariant_id,
+                "invariant_title": conflict_row.invariant_title,
+                "note": conflict_row.note,
+                "created_at": conflict_row.created_at.isoformat(),
+            }
+
+        extract_and_update_facts(
+            session,
+            chat_id,
+            payload.content,
+            payload.model,
+            user_id=chat.user_id,
+            provider_id=payload.provider_id,
+        )
+        stats = await compute_chat_stats(session, chat_id, payload.model)
+        # Scheduled before the done frame so a client that already disconnected cannot
+        # skip it; nothing is awaited before the send, so the title call never delays the turn.
+        if chat.title == DEFAULT_CHAT_TITLE and user_msg.parent_id is None:
+            schedule_title_generation(
+                chat_id,
+                chat.user_id,
+                payload.content,
+                assistant_text,
+                payload.model,
+                payload.provider_id,
+            )
+        await websocket.send_json(
+            {
+                "type": "done",
+                "message_id": assistant_msg.id,
+                "stats": stats,
+                "memory_writes": memory_writes,
+                "task_writes": task_writes,
+                "invariant_conflict": conflict_payload,
+                "rag": rag_turn.done_payload,
+            },
+        )
+
+
 async def _handle_chat_message(
     websocket: WebSocket,
     chat_id: int,
     payload: MessagePayload,
 ) -> None:
     """Process one inbound chat message under the per-chat lock."""
-    current_chat_model.set(payload.model)
-    current_chat_provider_id.set(payload.provider_id)
     if chat_id not in chat_locks:
         chat_locks[chat_id] = asyncio.Lock()
     async with chat_locks[chat_id]:
-        async with async_session_factory() as session:
-            chat = await session.get(Chat, chat_id)
-            if chat is None:
-                await websocket.send_json(
-                    {"type": "error", "detail": f"Chat {chat_id} not found"},
-                )
-                return
-
-            try:
-                client, provider_row = await resolve_client(chat.user_id, payload.provider_id)
-            except ProviderUnavailableError as exc:
-                logger.info(
-                    "chat_provider_unavailable",
-                    chat_id=chat_id,
-                    provider_id=payload.provider_id,
-                )
-                await websocket.send_json(
-                    {"type": "error", "code": "PROVIDER_UNAVAILABLE", "detail": exc.message},
-                )
-                return
-
-            user_msg = await _persist_user_message(
-                session,
-                chat,
-                payload.content,
-            )
-
-            effective = await get_effective_settings(session, chat_id)
-            logger.info(
-                "strategy_selected",
-                chat_id=chat_id,
-                strategy=effective.strategy,
-            )
-
-            try:
-                llm_messages = await build_llm_context(
-                    session,
-                    chat_id,
-                    payload.model,
-                )
-            except ContextOverflowError as exc:
-                logger.error(
-                    "context_overflow_blocked",
-                    chat_id=chat_id,
-                    error=str(exc),
-                )
-                await websocket.send_json(
-                    {
-                        "type": "error",
-                        "detail": str(exc),
-                        "code": "CONTEXT_OVERFLOW",
-                        "suggested_strategy": "sliding",
-                    },
-                )
-                await session.delete(user_msg)
-                await session.commit()
-                return
-
-            temperature = effective.temperature
-            max_tokens = effective.max_tokens
-
-            toolset = McpToolset.empty()
-            if chat.user_id is not None:
-                toolset = await _load_mcp_toolset(session, chat.user_id, chat_id)
-                tool_schemas = build_tool_schemas() + toolset.schemas
-            else:
-                tool_schemas = None
-                logger.warning("tools_disabled_unowned_chat", chat_id=chat_id)
-
-            if llm_messages and llm_messages[0]["role"] == "system":
-                # The clock and the multi-step hint stay for the whole turn; only the
-                # rule is removable, so it must remain the last suffix.
-                suffix = "\n\n" + build_clock_line(datetime.now(timezone.utc).astimezone())
-                if tool_schemas:
-                    suffix += "\n\n" + MULTI_STEP_TOOL_HINT + "\n\n" + TOOL_USE_RULE
-                llm_messages[0] = {
-                    **llm_messages[0],
-                    "content": llm_messages[0]["content"] + suffix,
-                }
-
-            # Budgeted after the system prompt and tool schemas are final, and merged only
-            # into the outbound copy, so fragments never reach the compression strategy.
-            schema_tokens = (
-                count_tokens(json.dumps(tool_schemas, ensure_ascii=False)) if tool_schemas else 0
-            )
-            rag_turn: RagTurn = await prepare_rag_turn(
-                session,
-                chat,
-                payload.content,
-                llm_messages,
-                effective.context_length,
-                max_tokens,
-                schema_tokens,
-                client=client,
-                model=payload.model,
-                parent_id=user_msg.parent_id,
-            )
-
-            if rag_turn.reply_text is not None:
-                await _complete_gated_turn(
-                    websocket, session, chat, chat_id, user_msg, payload, rag_turn, client,
-                )
-                return
-
-            assistant_text = ""
-            pending_tool_calls: list[dict[str, Any]] = []
-            stream_task = asyncio.current_task()
-            active_streams[chat_id] = stream_task
-
-            try:
-                if tool_schemas:
-                    reply_filter = _ReplyFilter()
-                    async for event in client.stream_chat(
-                        llm_messages,
-                        payload.model,
-                        temperature,
-                        max_tokens,
-                        tools=tool_schemas,
-                    ):
-                        if event["type"] == "content":
-                            assistant_text += await _emit_filtered(
-                                websocket, reply_filter, event["content"],
-                            )
-                        elif event["type"] == "tool_calls":
-                            pending_tool_calls = event["tool_calls"]
-                    assistant_text += await _flush_filtered(websocket, reply_filter)
-                    if not pending_tool_calls:
-                        pending_tool_calls = _recover_text_calls(
-                            reply_filter, tool_schemas, chat_id,
-                        )
-                else:
-                    trace_filter = TraceLeakFilter()
-                    async for token in client.stream_chat(
-                        llm_messages,
-                        payload.model,
-                        temperature,
-                        max_tokens,
-                    ):
-                        assistant_text += await _emit_filtered(websocket, trace_filter, token)
-                    assistant_text += await _flush_filtered(websocket, trace_filter)
-            except Exception as exc:
-                logger.error(
-                    "llm_stream_failed",
-                    chat_id=chat_id,
-                    error=str(exc),
-                    error_type=type(exc).__name__,
-                )
-                await websocket.send_json(
-                    {
-                        "type": "error",
-                        "detail": _llm_error_detail(exc, provider_row),
-                        "code": "LLM_ERROR",
-                    },
-                )
-                await session.delete(user_msg)
-                await session.commit()
-                return
-            finally:
-                active_streams.pop(chat_id, None)
-
-            echo_text = assistant_text
-            claim = bool(tool_schemas) and looks_like_action_claim(assistant_text)
-            announce = bool(tool_schemas) and looks_like_action_announcement(assistant_text)
-            if tool_schemas and not pending_tool_calls and (claim or announce):
-                # One bounded retry: never re-checked, so a stubborn model cannot loop.
-                logger.info(
-                    "action_claim_without_tool" if claim else "action_announce_without_tool",
-                    chat_id=chat_id,
-                )
-                llm_messages.append({"role": "assistant", "content": assistant_text})
-                llm_messages.append(
-                    {
-                        "role": "user",
-                        "content": ACTION_CLAIM_REMINDER if claim else ACTION_ANNOUNCE_REMINDER,
-                    },
-                )
-                retry_text, pending_tool_calls = await _stream_action_claim_retry(
-                    websocket,
-                    client,
-                    llm_messages,
-                    payload,
-                    temperature,
-                    max_tokens,
-                    tool_schemas,
-                    chat_id,
-                )
-                if retry_text:
-                    assistant_text += "\n\n" + retry_text
-                if pending_tool_calls:
-                    echo_text = retry_text
-
-            memory_writes: list[dict[str, Any]] = []
-            task_writes: list[dict[str, Any]] = []
-            tool_trace: str | None = None
-            if pending_tool_calls:
-                turn = _ToolTurn(
-                    websocket=websocket,
-                    session=session,
-                    chat=chat,
-                    chat_id=chat_id,
-                    payload=payload,
-                    llm_messages=llm_messages,
-                    tool_schemas=tool_schemas,
-                    toolset=toolset,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    client=client,
-                    provider=provider_row,
-                    user_text=payload.content,
-                )
-                rounds = await _run_tool_rounds(turn, pending_tool_calls, echo_text)
-                llm_failed = rounds.error is not None
-                if rounds.error is not None and not rounds.results:
-                    exc = rounds.error
-                    logger.error(
-                        "llm_stream_failed",
-                        chat_id=chat_id,
-                        error=str(rounds.error),
-                        error_type=type(exc).__name__,
-                    )
-                    await websocket.send_json(
-                        {
-                            "type": "error",
-                            "detail": _llm_error_detail(exc, turn.provider),
-                            "code": "LLM_ERROR",
-                        },
-                    )
-                    await session.delete(user_msg)
-                    await session.commit()
-                    return
-
-                assistant_text += rounds.text
-                tool_trace = serialize_tool_trace(rounds.results)
-                memory_writes = _collect_memory_writes(rounds.results)
-                task_writes = _collect_task_writes(rounds.results)
-                await _send_tool_error_frames(websocket, rounds.results)
-                # After an LLM failure another call would only wait out a second timeout.
-                reprompt_text = (
-                    ""
-                    if llm_failed
-                    else await _reprompt_rejected_transitions(
-                        turn,
-                        _collect_rejected_transitions(rounds.results),
-                    )
-                )
-                assistant_text += reprompt_text
-                if not (rounds.text + reprompt_text).strip():
-                    assistant_text += await _send_fallback_summary(
-                        websocket, rounds.results, payload.content, assistant_text, chat_id,
-                    )
-                if rounds.error is not None:
-                    assistant_text += await _send_llm_failure_note(
-                        websocket, turn, rounds.error, payload.content,
-                    )
-                pending_tool_calls = rounds.calls
-
-            active_invariants = await invariants.resolve_active_invariants(session, chat_id)
-            flagged: dict[str, Any] | None = None
-            justification_text = ""
-            critique: dict[str, Any] = {"conflict": False}
-            if active_invariants:
-                critique = await invariants.run_self_critique(
-                    active_invariants,
-                    assistant_text,
-                    pending_tool_calls,
-                    payload.model,
-                    client,
-                )
-                flagged = invariants.match_flagged_invariant(active_invariants, critique)
-
-            if flagged is not None:
-                llm_messages.append(
-                    {
-                        "role": "user",
-                        "content": invariants.build_justify_retract_prompt(flagged, critique),
-                    },
-                )
-                trace_filter = TraceLeakFilter()
-                try:
-                    async for token in client.stream_chat(
-                        llm_messages,
-                        payload.model,
-                        temperature,
-                        max_tokens,
-                    ):
-                        safe = await _emit_filtered(websocket, trace_filter, token)
-                        justification_text += safe
-                        assistant_text += safe
-                except Exception as exc:
-                    logger.warning(
-                        "invariant_justify_retract_failed",
-                        chat_id=chat_id,
-                        error=str(exc),
-                    )
-                tail = await _flush_filtered(websocket, trace_filter)
-                justification_text += tail
-                assistant_text += tail
-
-            assistant_text, rag_turn = await asyncio.to_thread(
-                finalize_rag_turn, rag_turn, payload.content, assistant_text,
-            )
-            if rag_turn.mode == MODE_RAG:
-                # D-02: synchronous on purpose, so the next question and the UI never see
-                # stale task memory. It only stages the row; the persist below commits it with
-                # the message. extract_and_update_facts is a different, legacy layer.
-                snapshot = await update_task_memory(
-                    session, chat, payload.content, assistant_text, client, payload.model,
-                )
-                rag_turn = rag_turn.with_task_memory(snapshot)
-            assistant_msg = await _persist_assistant_message(
-                session,
-                chat,
-                user_msg.id,
-                assistant_text,
-                tool_trace=tool_trace,
-                rag_sources=rag_turn.sources_json,
-            )
-
-            conflict_payload: dict[str, Any] | None = None
-            if flagged is not None:
-                conflict_row = await invariants.record_conflict(
-                    session,
-                    chat_id,
-                    assistant_msg.id,
-                    flagged["scope"],
-                    flagged["id"],
-                    flagged["title"],
-                    justification_text or critique.get("explanation", ""),
-                )
-                conflict_payload = {
-                    "id": conflict_row.id,
-                    "chat_id": conflict_row.chat_id,
-                    "message_id": conflict_row.message_id,
-                    "invariant_scope": conflict_row.invariant_scope,
-                    "invariant_id": conflict_row.invariant_id,
-                    "invariant_title": conflict_row.invariant_title,
-                    "note": conflict_row.note,
-                    "created_at": conflict_row.created_at.isoformat(),
-                }
-
-            extract_and_update_facts(
-                session,
-                chat_id,
-                payload.content,
-                payload.model,
-                user_id=chat.user_id,
-                provider_id=payload.provider_id,
-            )
-            stats = await compute_chat_stats(session, chat_id, payload.model)
-            # Scheduled before the done frame so a client that already disconnected cannot
-            # skip it; nothing is awaited before the send, so the title call never delays the turn.
-            if chat.title == DEFAULT_CHAT_TITLE and user_msg.parent_id is None:
-                schedule_title_generation(
-                    chat_id,
-                    chat.user_id,
-                    payload.content,
-                    assistant_text,
-                    payload.model,
-                    payload.provider_id,
-                )
-            await websocket.send_json(
-                {
-                    "type": "done",
-                    "message_id": assistant_msg.id,
-                    "stats": stats,
-                    "memory_writes": memory_writes,
-                    "task_writes": task_writes,
-                    "invariant_conflict": conflict_payload,
-                    "rag": rag_turn.done_payload,
-                },
-            )
+        await _run_chat_turn(websocket, chat_id, payload)
 
 
 async def broadcast_model_event(model_id: str, event_type: str) -> None:
