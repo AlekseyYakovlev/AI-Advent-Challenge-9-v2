@@ -6,8 +6,61 @@
 - ✅ **v2.0 Week 4: MCP Integration** — Phases 7-9, 12 (shipped 2026-10-02)
 - ✅ **v3.0 Week 5: RAG** — Phases 10-11, 13-17 (shipped 2026-10-10)
 - ✅ **v4.0 Week 6: Local LLM as a Private Service** — Phases 18-20 (shipped 2026-10-12)
+- 🚧 **v5.0 Week 7: Pipeline** — Phases 21-23 (in progress)
 
 ## Phases
+
+- [ ] **Phase 21: Project docs in RAG (Day 31)** - README plus folder upload, accumulated selections and addition to an existing knowledge base
+- [ ] **Phase 22: Project MCP servers (Day 31)** - Own read-only git MCP server and the official GitHub server connected read-only
+- [ ] **Phase 23: /help command, verification and report (Day 31)** - `/help` in the chat and over HTTP, tests, end-to-end script and `Day31_report.md`
+
+### Phase 21: Project docs in RAG (Day 31)
+
+**Goal**: The user can load the project's documentation (README and the `docs/` folder) into one knowledge base in a few clicks and keep it current by adding changed files
+**Depends on**: Nothing (first phase of v5.0; builds on the shipped v3.0 knowledge base code)
+**Requirements**: DOC-01, KBUP-01, KBUP-02, KBUP-03, KBUP-04, KBUP-05, KBUP-06
+**Success Criteria** (what must be TRUE):
+
+  1. `README.md` exists at the repository root and describes the purpose, the directory structure, how to run the app, the main `.env` settings and the documents in `docs/`
+  2. In the knowledge base form the user picks `README.md`, then the `docs/` folder, sees both in one pending list with the count of skipped unsupported files, and creates one base from the whole list
+  3. Sources in the file list, in test search and under answers show relative paths such as `docs/API_SPEC.md`, and two files with the same base name in different folders stay separate
+  4. The user adds a new file or folder to a ready base and only the added files are indexed while earlier fragments stay searchable
+  5. Adding a file whose source name already exists replaces its fragments, and exceeding the file-count or size limit is rejected with a clear message
+
+**Plans**: TBD
+
+**UI hint**: yes
+
+### Phase 22: Project MCP servers (Day 31)
+
+**Goal**: The assistant can read the live state of the project's working copy through MCP, and the GitHub server is connected as the base for Pull Request work
+**Depends on**: Nothing (independent of Phase 21; builds on the shipped v2.0 MCP client)
+**Requirements**: PGIT-01, PGIT-02, PGIT-03, PGIT-04, GHUB-01, GHUB-02
+**Success Criteria** (what must be TRUE):
+
+  1. `python scripts/mcp_list_tools.py` against the new server lists the read-only tools: current branch, status, diff, tracked files, recent commits
+  2. A path outside the repository root or an argument that starts with `-` is rejected with a clear error, and a long diff comes back truncated with an explicit marker
+  3. The user adds the server in Settings with the values from the documentation, asks in a chat which branch the project is on, and gets the branch that is checked out at that moment, with the tool call visible
+  4. With the documented configuration the app connects to `github-mcp-server` in read-only mode and lists its tools; the token is masked after saving
+
+**Plans**: TBD
+
+### Phase 23: /help command, verification and report (Day 31)
+
+**Goal**: A developer asks a question about the project with `/help` and gets an answer built from the project documentation and the live git state, and a recorded run on a real model proves it
+**Depends on**: Phase 21, Phase 22
+**Requirements**: HELP-01, HELP-02, HELP-03, HELP-04, HELP-05, HELP-06, HELP-07, VER-07, VER-08, VER-09, VER-10
+**Success Criteria** (what must be TRUE):
+
+  1. The user marks a knowledge base as the project documentation base, and `/help <question>` in any chat answers from it with sources without changing that chat's RAG settings
+  2. `/help` with no question shows a usage text, and `/help <question>` with no marked or ready base explains what to do; neither calls the model
+  3. During `/help` the model can call the project git tools, and the call is visible in the chat; the exchange survives a page reload
+  4. The same `/help` message sent to the HTTP chat endpoint with an API key returns the answer, the sources and the tool calls in one JSON body
+  5. `Day31_report.md` records 8-10 control questions about the project run through `/help` on a real model, and pytest, the isolated-copy end-to-end script and the three documents cover everything built in this milestone
+
+**Plans**: TBD
+
+**UI hint**: yes
 
 <details>
 <summary>✅ v1.0 Week 3: Agent Memory & Task State (Phases 1-6) — SHIPPED 2026-09-23</summary>
@@ -85,6 +138,9 @@ Full details: [milestones/v4.0-ROADMAP.md](milestones/v4.0-ROADMAP.md)
 | 18. LAN exposure (Day 30) | v4.0 | 7/7 | Complete    | 2026-10-12 |
 | 19. API keys and HTTP chat (Day 30) | v4.0 | 6/6 | Complete    | 2026-10-12 |
 | 20. Limits, verification script and report (Day 30) | v4.0 | 8/8 | Complete    | 2026-10-12 |
+| 21. Project docs in RAG (Day 31) | v5.0 | 0/0 | Not started | - |
+| 22. Project MCP servers (Day 31) | v5.0 | 0/0 | Not started | - |
+| 23. /help command, verification and report (Day 31) | v5.0 | 0/0 | Not started | - |
 
 ## Backlog
 
@@ -124,4 +180,4 @@ Plans:
 
 ---
 *Roadmap created: 2026-09-19*
-*Last updated: 2026-10-12 — v4.0 shipped and archived; earlier: 2026-10-12 — v4.0 roadmap: Phases 18-20 (Day 30); earlier: 2026-10-03 — v3.0 roadmap: Phases 13-17 (RAG, Days 21-25) added; earlier: 2026-10-02 — Phase 9 planned (4 plans, TITLE-01..06); backlog 999.4/999.5/999.6/999.11 promoted to Phases 9-12 (Day 21)*
+*Last updated: 2026-10-13 — v5.0 roadmap: Phases 21-23 (Day 31); earlier: 2026-10-12 — v4.0 shipped and archived; earlier: 2026-10-12 — v4.0 roadmap: Phases 18-20 (Day 30); earlier: 2026-10-03 — v3.0 roadmap: Phases 13-17 (RAG, Days 21-25) added; earlier: 2026-10-02 — Phase 9 planned (4 plans, TITLE-01..06); backlog 999.4/999.5/999.6/999.11 promoted to Phases 9-12 (Day 21)*
