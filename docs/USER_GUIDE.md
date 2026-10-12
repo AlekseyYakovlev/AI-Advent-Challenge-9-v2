@@ -289,6 +289,44 @@ The first time Python listens on the network, Windows may show a "Windows Securi
 ### Disable
 Remove `BIND_HOST` from `.env` or set `BIND_HOST=127.0.0.1`, restart, and remove the firewall rule.
 
+## API keys and HTTP access
+
+An API key lets another program (a script, a notebook, another machine) use the app without the browser login.
+
+### Create a key
+1. Open Settings and find the section «API ключи».
+2. Press «+ Создать ключ», enter a name (up to 100 characters) and confirm.
+3. The window «Ключ создан» shows the key once, with a ready curl example. Copy the key now: it cannot be shown again. A lost key is replaced by a new one.
+
+You can have at most 20 keys. Each row shows the name, the beginning of the key and when it was last used.
+
+### Revoke a key
+Press «Отозвать» in the key row and confirm. The key stops working on the next request.
+
+### Send a message
+```bash
+curl -s -X POST http://127.0.0.1:8001/api/v1/chats/<chat_id>/messages \
+  -H "Authorization: Bearer <your key>" -H "Content-Type: application/json" \
+  -d '{"content": "Привет", "model": "<model>"}'
+```
+- `<chat_id>` is the `id` from `GET /api/v1/chats` (create a chat with `POST /api/v1/chats`).
+- `<model>` is the model id as shown in the model selector; the model must already be loaded, the endpoint does not load models.
+- Use the Agent port (`AGENT_PORT`, 8001 by default), not the UI port. From another machine the app must run in LAN mode.
+- The reply is one JSON body with the answer text (`content`), token statistics and any tool calls, memory writes and RAG information of that turn.
+- The exchange appears in the same chat in the open browser tab without a reload.
+- To use a knowledge base add `"kb_id": <id>` (ids come from `GET /api/v1/kb`); `"kb_id": null` turns RAG off; leaving it out keeps the chat's saved choice.
+
+### Errors
+- `401`: the key is wrong or revoked.
+- `409`: the chat is busy with another message; try again when it finishes.
+- `413`: the context does not fit the model window; switch the chat to a compression strategy such as `sliding`.
+- `503`: LM Studio or the provider is not available.
+
+The full scenario with all routes is in [API_SPEC.md](API_SPEC.md), section "HTTP chat (Day 30)".
+
+### Security
+Anyone holding the key acts as you on the REST API. The connection is plain HTTP, so use keys only on a trusted network. Keys cannot create other keys, add users or log out; those actions work only from the web interface.
+
 ## Tips
 
 1. **Start with Sliding Window** for most conversations

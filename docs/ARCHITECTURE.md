@@ -26,6 +26,30 @@ All three call `shared.origins.is_allowed_origin`. The address list for the cons
 3. Traffic is plain HTTP, by decision.
 4. The app never touches the firewall.
 
+## API keys and HTTP chat (Day 30)
+
+**Two credentials.** The browser and both WebSockets use the HTTP-only session cookie. REST clients may instead send `Authorization: Bearer aia_...`. Both are resolved in one place, `agent/dependencies.py::get_current_user`, which records the method in `request.state.auth_method` (`session` or `api_key`). A Bearer header alone decides: an invalid or revoked key is a 401 and the cookie is not consulted. The key is looked up by its sha256 hash on every request (no cache), so a revoked key stops working at once.
+
+**Cookie-only routes.** `get_session_user` wraps `get_current_user` and answers 403 when the caller used a key. It guards key management (`/api/v1/api-keys`), adding a user (`POST /api/v1/auth/users`) and logout (`POST /api/v1/auth/logout`): a leaked key must not be able to mint more keys, create accounts or end the owner's session. The WebSocket endpoints accept only the cookie.
+
+**Storage.** The `apikey` table holds `user_id`, `name`, `key_hash` (sha256), the 8-character `key_prefix`, `created_at` and `last_used_at`; the full key exists only in the creation response. `last_used_at` is written at most once per 60 seconds. Revoking deletes the row.
+
+**HTTP chat turn** (`agent/http_chat.py`, `POST /api/v1/chats/{chat_id}/messages`):
+1. The chat is loaded with an owner check (404 otherwise).
+2. The per-chat lock is checked without waiting; a held lock answers `409 CHAT_BUSY` and nothing is stored. Otherwise it is acquired with no `await` in between.
+3. The turn runs in a background task awaited through `asyncio.shield`, so a client disconnect does not cancel it; the task releases the lock in its outermost `finally`.
+4. When `kb_id` is present in the body, the knowledge base and RAG mode are saved for the chat under the lock (`rag_api.apply_chat_kb`).
+5. `ws._run_chat_turn` runs the turn with a `RecordingSink` instead of a socket.
+6. The terminal error frame, if any, is mapped to a status (`CONTEXT_OVERFLOW` 413, `PROVIDER_UNAVAILABLE` and an unreachable LLM 503, other `LLM_ERROR` 502, `RAG_GATED_FAILED` and unexpected failures 500).
+7. On success the reply text is read from the stored assistant message and combined with the `done` frame data.
+8. A `chat_updated` event goes to the owner's `/ws/events` sockets so open browser tabs refresh.
+
+The turn body (`_run_chat_turn`, the caller holds the lock) is shared by the WebSocket handler and the HTTP endpoint, and the headless scheduler reuses the same helpers.
+
+**Failed turns.** On both transports `ws._discard_user_message` points `Chat.current_leaf_message_id` back at the previous leaf before deleting the user message, instead of letting `ON DELETE SET NULL` clear the leaf. `LLM_ERROR` frames carry `cause` and `provider_kind`, which the HTTP status mapping uses.
+
+**Deliberately absent:** streaming over HTTP, a stateless chat mode, a per-request MCP switch (use the MCP routes) and rate limits (Phase 20).
+
 ## Context Compression Strategies
 
 The system implements 4 context compression strategies (`agent/context_engine.py::_apply_compression_strategy`)
