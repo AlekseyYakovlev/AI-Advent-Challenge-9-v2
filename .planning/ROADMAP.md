@@ -115,8 +115,8 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 20-06-PLAN.md — isolated-copy end-to-end check of the limits, the script and the three UI states (wave 3)
-- [ ] 20-07-PLAN.md — docs: API_SPEC, ARCHITECTURE, USER_GUIDE, TESTING_GUIDE "Limits (Day 30)", documentation guard (wave 3)
+- [x] 20-06-PLAN.md — isolated-copy end-to-end check of the limits, the script and the three UI states (wave 3)
+- [x] 20-07-PLAN.md — docs: API_SPEC, ARCHITECTURE, USER_GUIDE, TESTING_GUIDE "Limits (Day 30)", documentation guard (wave 3)
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -188,7 +188,7 @@ Full details: [milestones/v3.0-ROADMAP.md](milestones/v3.0-ROADMAP.md)
 | 17. Mini-chat with RAG and task memory (Day 25) | v3.0 | 11/11 | Complete    | 2026-10-10 |
 | 18. LAN exposure (Day 30) | v4.0 | 6/7 | In Progress|  |
 | 19. API keys and HTTP chat (Day 30) | v4.0 | 6/6 | Complete    | 2026-10-12 |
-| 20. Limits, verification script and report (Day 30) | v4.0 | 5/8 | In Progress|  |
+| 20. Limits, verification script and report (Day 30) | v4.0 | 7/8 | In Progress|  |
 
 ## Backlog
 
