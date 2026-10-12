@@ -399,8 +399,19 @@ class Verifier:
                                   "retry_after_body": None, "code": None, "notes": []}
         start = time.perf_counter()
         number = first_number
+        transport_errors = 0
         while number <= ceiling:
             reply = send()
+            if reply.status is None:
+                transport_errors += 1
+                if transport_errors >= 3:
+                    result["records"].append({"number": number, "status": None,
+                                              "code": body_code(reply), "elapsed": reply.elapsed})
+                    result["notes"].append("aborted: server stopped answering")
+                    say(f"  aborted after {transport_errors} requests without an answer")
+                    break
+            else:
+                transport_errors = 0
             record = {"number": number, "status": reply.status, "code": body_code(reply),
                       "elapsed": reply.elapsed}
             result["records"].append(record)
@@ -461,12 +472,18 @@ class Verifier:
                 section["sequences"].append({"mode": "fast", "prepared": False, "reached": False})
             else:
                 overflow = self.sections["overflow"]
-                prior = [{"number": 1, "status": overflow.get("status"),
-                          "code": overflow.get("code"), "elapsed": overflow.get("elapsed")}]
+                if mode == "both":
+                    # The chat sequence may have outlasted the one-minute window, so the
+                    # overflow request no longer counts: start numbering from scratch.
+                    first_number, prior = 1, []
+                else:
+                    first_number = 2
+                    prior = [{"number": 1, "status": overflow.get("status"),
+                              "code": overflow.get("code"), "elapsed": overflow.get("elapsed")}]
                 message = long_message()
                 chat_id = self.overflow_chat
                 section["sequences"].append(self.sequence(
-                    "fast", chat_id, lambda: self.turn(chat_id, message), 2, prior))
+                    "fast", chat_id, lambda: self.turn(chat_id, message), first_number, prior))
 
     # ---- cleanup ---------------------------------------------------------
 
