@@ -42,6 +42,9 @@ const state = {
     lastConflicts: [],
     pendingToolCalls: [],
     toolCallsByMessage: {},
+    apiKeys: [],
+    savingApiKey: false,
+    chatRefreshPendingId: null,
 };
 
 const TASK_STATE_LABELS = {
@@ -1455,6 +1458,13 @@ function setStreaming(active) {
     state.isStreaming = active;
     $('message-input').disabled = active;
     $('btn-send').disabled = active;
+    if (!active && state.chatRefreshPendingId !== null) {
+        const pendingId = state.chatRefreshPendingId;
+        state.chatRefreshPendingId = null;
+        if (pendingId === state.currentChatId) {
+            refreshOpenChat(pendingId).catch((err) => showToast(err.message, 'error'));
+        }
+    }
 }
 
 function renderChatList() {
@@ -1510,6 +1520,7 @@ async function selectChat(chatId) {
     disconnectWs(false);
     closeRagSearchPopover(false);
     state.currentChatId = chatId;
+    state.chatRefreshPendingId = null;
     state.editingTaskGoal = null;
     state.lastStats = null;
     state.lastStatsChatId = null;
@@ -2633,6 +2644,161 @@ async function deleteLlmProvider(provider) {
 
 // ---- end LLM providers ----
 
+// ---- API keys ----
+
+// The full key lives only here and in two DOM nodes until the modal is closed.
+let shownApiKey = null;
+
+function formatApiKeyDate(iso) {
+    if (!iso) return 'никогда';
+    return formatTaskTimestamp(iso);
+}
+
+function renderApiKeyRow(key) {
+    const row = mcpEl('div', 'rounded-lg bg-slate-800 border border-slate-700 p-3 space-y-2');
+    const header = mcpEl('div', 'flex flex-wrap items-center justify-between gap-2');
+    header.appendChild(mcpEl('span', 'text-sm font-semibold truncate', key.name));
+    const revokeBtn = mcpEl('button', 'px-2 py-1 text-xs text-red-400 hover:text-red-300 disabled:opacity-50 disabled:cursor-not-allowed', 'Отозвать');
+    revokeBtn.type = 'button';
+    revokeBtn.setAttribute('aria-label', `Отозвать ключ ${key.name}`);
+    revokeBtn.addEventListener('click', () => revokeApiKey(key, revokeBtn));
+    header.appendChild(revokeBtn);
+    row.appendChild(header);
+
+    const meta = mcpEl('p', 'text-xs text-slate-500');
+    meta.appendChild(mcpEl('span', 'font-mono text-slate-300', `${key.key_prefix}…`));
+    meta.appendChild(document.createTextNode(
+        ` · создан ${formatApiKeyDate(key.created_at)} · использован: ${formatApiKeyDate(key.last_used_at)}`,
+    ));
+    row.appendChild(meta);
+    return row;
+}
+
+function renderApiKeyList() {
+    const list = $('api-key-list');
+    list.replaceChildren();
+    state.apiKeys.forEach((key) => list.appendChild(renderApiKeyRow(key)));
+    $('api-key-empty').classList.toggle('hidden', state.apiKeys.length > 0);
+    $('api-key-status').textContent = '';
+    const addBtn = $('btn-api-key-add');
+    const atLimit = state.apiKeys.length >= 20;
+    addBtn.disabled = atLimit;
+    addBtn.title = atLimit ? 'Достигнут лимит: 20 активных ключей' : '';
+}
+
+async function loadApiKeys() {
+    const status = $('api-key-status');
+    status.className = 'text-sm text-slate-400';
+    status.textContent = 'Загрузка…';
+    try {
+        const keys = await apiFetch('/api/v1/api-keys');
+        if (keys === undefined) return;
+        state.apiKeys = keys || [];
+        renderApiKeyList();
+    } catch (err) {
+        state.apiKeys = [];
+        $('api-key-list').replaceChildren();
+        $('api-key-empty').classList.add('hidden');
+        status.className = 'text-sm text-red-400';
+        status.textContent = 'Не удалось загрузить список ключей. Попробуйте открыть настройки ещё раз.';
+    }
+}
+
+function openApiKeyForm() {
+    $('api-key-form').classList.remove('hidden');
+    $('api-key-name').value = '';
+    $('api-key-form-error').textContent = '';
+    $('api-key-name').focus();
+}
+
+function closeApiKeyForm() {
+    $('api-key-form').classList.add('hidden');
+    $('api-key-name').value = '';
+    $('api-key-form-error').textContent = '';
+}
+
+function buildApiKeyCurl(key) {
+    return [
+        `curl -X POST ${AGENT_BASE}/api/v1/chats/{chat_id}/messages \\`,
+        `  -H "Authorization: Bearer ${key}" \\`,
+        '  -H "Content-Type: application/json" \\',
+        '  -d \'{"content": "Привет!", "model": "{model}"}\'',
+    ].join('\n');
+}
+
+function openApiKeyModal(created) {
+    shownApiKey = created.key;
+    $('api-key-value-label').textContent = `Ключ «${created.name}»`;
+    $('api-key-value').textContent = created.key;
+    $('api-key-curl').textContent = buildApiKeyCurl(created.key);
+    $('api-key-modal').classList.remove('hidden');
+    $('btn-api-key-copy').focus();
+}
+
+function closeApiKeyModal() {
+    $('api-key-modal').classList.add('hidden');
+    $('api-key-value').textContent = '';
+    $('api-key-curl').textContent = '';
+    $('api-key-value-label').textContent = '';
+    shownApiKey = null;
+}
+
+async function copyShownApiKey() {
+    const ok = shownApiKey ? await copyTextToClipboard(shownApiKey) : false;
+    if (ok) showToast('Ключ скопирован', 'success');
+    else showToast('Не удалось скопировать в буфер обмена', 'error');
+}
+
+async function copyShownApiKeyCurl() {
+    const ok = shownApiKey ? await copyTextToClipboard(buildApiKeyCurl(shownApiKey)) : false;
+    if (ok) showToast('Пример запроса скопирован', 'success');
+    else showToast('Не удалось скопировать в буфер обмена', 'error');
+}
+
+async function createApiKey() {
+    if (state.savingApiKey) return;
+    const name = $('api-key-name').value.trim();
+    const errorEl = $('api-key-form-error');
+    if (!name) {
+        errorEl.textContent = 'Введите название ключа';
+        return;
+    }
+    errorEl.textContent = '';
+    state.savingApiKey = true;
+    $('btn-api-key-save').disabled = true;
+    try {
+        const created = await apiFetch('/api/v1/api-keys', {
+            method: 'POST',
+            body: JSON.stringify({ name }),
+        });
+        if (!created) return;
+        closeApiKeyForm();
+        await loadApiKeys();
+        openApiKeyModal(created);
+    } catch (err) {
+        errorEl.textContent = err.message || 'Не удалось создать ключ. Попробуйте ещё раз.';
+    } finally {
+        state.savingApiKey = false;
+        $('btn-api-key-save').disabled = false;
+    }
+}
+
+async function revokeApiKey(key, button) {
+    const message = `Отозвать ключ «${key.name}»? Все программы, использующие его, сразу потеряют доступ. Это действие нельзя отменить.`;
+    if (!confirm(message)) return;
+    button.disabled = true;
+    try {
+        await apiFetch(`/api/v1/api-keys/${key.id}`, { method: 'DELETE' });
+        showToast(`Ключ «${key.name}» отозван`, 'success');
+        await loadApiKeys();
+    } catch (err) {
+        showToast(err.message, 'error');
+        button.disabled = false;
+    }
+}
+
+// ---- end API keys ----
+
 // ---- Scheduler ----
 
 const SCHEDULER_JOB_STATUS_LABELS = {
@@ -3368,6 +3534,33 @@ function applyChatTitleUpdate(frame) {
     }
 }
 
+async function refreshOpenChat(chatId) {
+    if (chatId !== state.currentChatId) return;
+    state.childrenByParent.clear();
+    state.activeChildByParent.clear();
+    await loadChatTree(chatId);
+    await loadChatRag(chatId);
+    await loadChatStats(chatId);
+    await loadChatMemory(chatId);
+    await loadChatTasks(chatId);
+    await loadChatConflicts(chatId);
+    $('messages').scrollTop = $('messages').scrollHeight;
+}
+
+async function onChatUpdatedEvent(frame) {
+    try {
+        await loadChats();
+        if (frame.chat_id !== state.currentChatId) return;
+        if (state.isStreaming) {
+            state.chatRefreshPendingId = frame.chat_id;
+            return;
+        }
+        await refreshOpenChat(frame.chat_id);
+    } catch (err) {
+        showToast(err.message, 'error');
+    }
+}
+
 function handleEventFrame(frame) {
     if (frame && frame.type === 'chat_title_updated') {
         applyChatTitleUpdate(frame);
@@ -3385,6 +3578,10 @@ function handleEventFrame(frame) {
         renderKbPanel();
         renderRagControls();
         if (wasAttached && state.currentChatId) loadChatRag(state.currentChatId);
+        return;
+    }
+    if (frame && frame.type === 'chat_updated') {
+        onChatUpdatedEvent(frame);
         return;
     }
     applySchedulerEvent(frame);
@@ -3589,6 +3786,7 @@ async function openSettingsModal() {
     $('settings-modal').classList.remove('hidden');
     loadMcpServers().catch((err) => showToast(err.message, 'error'));
     loadLlmProviders().catch((err) => showToast(err.message, 'error'));
+    loadApiKeys();
     loadNetworkInfo();
 }
 
@@ -3679,6 +3877,15 @@ function bindEvents() {
     });
     $('btn-users').addEventListener('click', openAddUserModal);
     $('btn-close-add-user').addEventListener('click', closeAddUserModal);
+    $('btn-api-key-add').addEventListener('click', openApiKeyForm);
+    $('btn-api-key-cancel').addEventListener('click', closeApiKeyForm);
+    $('btn-api-key-save').addEventListener('click', () => createApiKey());
+    $('api-key-name').addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') createApiKey();
+    });
+    $('btn-close-api-key').addEventListener('click', closeApiKeyModal);
+    $('btn-api-key-copy').addEventListener('click', () => copyShownApiKey());
+    $('btn-api-key-curl-copy').addEventListener('click', () => copyShownApiKeyCurl());
     $('btn-cancel-add-user').addEventListener('click', closeAddUserModal);
     $('add-user-form').addEventListener('submit', (e) => {
         createUser(e).catch((err) => showToast(err.message, 'error'));
