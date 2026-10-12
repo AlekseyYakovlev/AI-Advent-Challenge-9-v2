@@ -2,32 +2,33 @@
 gsd_state_version: 1.0
 milestone: v4.0
 milestone_name: "Week 6: Local LLM as a Private Service"
-status: milestone_complete
-last_updated: 2026-10-12T19:10:44.253Z
-last_activity: 2026-10-12 -- Phase 20 execution started
+status: Awaiting next milestone
+last_updated: "2026-10-12T20:26:35.720Z"
+last_activity: 2026-10-12 — Milestone v4.0 completed and archived
 progress:
   total_phases: 6
-  completed_phases: 3
+  completed_phases: 6
   total_plans: 21
   completed_plans: 21
-  percent: 50
-stopped_at: Milestone complete (Phase 20 was final phase)
+  percent: 100
 ---
 
 # Project State
 
 ## Project Reference
 
-**Project:** AiAdventAgentV2 — Week 6: Local LLM as a Private Service
+See: .planning/PROJECT.md (updated 2026-10-12)
+
+**Project:** AiAdventAgentV2
 **Core value:** The agent must demonstrably separate and manage distinct kinds of state — short-term dialog, working task data, long-term profile/knowledge, and task lifecycle — making explicit, inspectable decisions about what goes where.
-**Current focus:** Milestone complete
+**Current focus:** Planning next milestone
 
 ## Current Position
 
-Phase: 20
-Plan: Not started
-Status: Milestone complete
-Last activity: 2026-10-12
+Phase: Milestone v4.0 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-10-12 — Milestone v4.0 completed and archived
 
 ## Performance Metrics
 
@@ -123,14 +124,20 @@ Items acknowledged and deferred at milestone close on 2026-10-10:
 | verification | 16-VERIFICATION.md | human_needed |
 | verification | 17-VERIFICATION.md | human_needed (approved by user) |
 
+Items acknowledged and deferred at milestone close on 2026-10-12:
+
+| Category | Item | Status |
+|----------|------|--------|
+| debug | rag-speeding-fine-below-threshold | investigating |
+
 ## Session Continuity
 
 **Last session:** 2026-10-12T19:09:03.236Z
-**Next action:** Run `/bm:discuss-phase 18` (or `/bm:plan-phase 18`) for v4.0 on branch Day30.
+**Next action:** Run `/bm:new-milestone` for the next course week.
 
 ---
 *State initialized: 2026-09-19*
 
 ## Operator Next Steps
 
-- Plan Phase 18: /bm:plan-phase 18
+- Start the next milestone with /gsd-new-milestone

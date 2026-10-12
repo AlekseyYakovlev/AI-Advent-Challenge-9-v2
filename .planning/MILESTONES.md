@@ -1,5 +1,23 @@
 # Milestones
 
+## v4.0 Week 6: Local LLM as a Private Service (Shipped: 2026-10-12)
+
+**Phases completed:** 3 phases (18, 19, 20), 21 plans, 26/26 requirements
+
+**Key accomplishments:**
+
+- LAN exposure (Phase 18): single validated `BIND_HOST` setting binds UI and Agent to loopback or all interfaces; one shared host-match Origin rule (`shared/origins.py`) for REST CORS, the mutation guard and WebSocket handshakes; LAN banner in `run.py`, `GET /api/v1/network` and the Settings "Сеть" section.
+- API keys (Phase 19): per-user keys (`aia_` prefix, sha256 at rest, shown once) authenticate every REST route through `Authorization: Bearer`; key management and WebSocket stay cookie-only; Settings "API ключи" section.
+- HTTP chat (Phase 19): `POST /api/v1/chats/{chat_id}/messages` runs the same turn as WebSocket (`_run_chat_turn`) and returns one JSON body with reply and statistics; failed turns now restore the chat leaf.
+- Limits (Phase 20): per-chat message window shared by WebSocket and HTTP (429 + `Retry-After`), login lockout per username and peer address, FIFO generation queue under `MAX_CONCURRENT_GENERATIONS`, `/debug/routes` behind auth.
+- Verification (Phase 20): standard-library-only `scripts/verify_service.py`, isolated-copy e2e scripts for LAN, keys and limits, and `Day30_report.md` with a live run from a Mac against the Windows server over the LAN (exit code 0).
+
+Stats: 124 commits, 71 non-planning files changed (+11463 / -507), one day (2026-10-12), branch `Day30` merged to `main`.
+
+Known deferred items at close: 1 (see STATE.md Deferred Items). No milestone audit was run. The manual second-device UI check (NET-03 / VER-05) is confirmed by the user's statement only, without recorded steps.
+
+---
+
 ## v3.0 Week 5: RAG (Shipped: 2026-10-10)
 
 **Phases completed:** 7 phases (10, 11, 13, 14, 15, 16, 17), 53 plans, 44/44 requirements

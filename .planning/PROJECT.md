@@ -1,20 +1,14 @@
-# AiAdventAgentV2 — Week 6: Local LLM as a Private Service
+# AiAdventAgentV2
 
 ## What This Is
 
-A local-first, two-process AI chat application (FastAPI UI + Agent servers, vanilla JS frontend) that is being extended with an explicit agent memory model, personalization, and a formal task state machine with invariant enforcement. This is coursework for the "AI Advent Challenge" (9th cohort) — Week 3, Days 11-15 — where each day is a self-contained assignment building on the previous one's output, implemented in its own git branch and merged to `main` once its acceptance criteria pass.
+A local-first, two-process AI chat application (FastAPI UI + Agent servers, vanilla JS frontend) with multi-user auth, a three-layer agent memory, personalization, a task state machine with invariants, MCP tool calling, a scheduler, RAG over user knowledge bases with verified citations, and a private-service mode (LAN access, API keys, plain HTTP chat, limits). This is coursework for the "AI Advent Challenge" (9th cohort): each day is a self-contained assignment building on the previous one's output, implemented in its own git branch and merged to `main` once its acceptance criteria pass.
 
-## Current Milestone: v4.0 Week 6: Local LLM as a Private Service (Day 30)
+## Current Milestone
 
-**Goal:** The app runs as a private AI service on the home network: the local model is reachable from any LAN machine, both through the browser UI and through a plain HTTP chat endpoint.
+None — v4.0 shipped 2026-10-12. The next milestone is defined with `/bm:new-milestone`.
 
-**Target features:**
-- Network access: UI and Agent listen on all interfaces when enabled in `.env` (default stays loopback only); the Origin check accepts whatever host the UI itself was opened from — no IP allowlists or IP filters.
-- Browserless HTTP chat endpoint: authenticated by an API key in the `Authorization` header, writes into an existing chat (same message tree, memory, RAG, compression), returns the whole reply as one JSON body.
-- Basic limits: configurable per-chat rate limit shared by WebSocket and HTTP chat, a login attempt limit, `/debug/routes` behind auth; max context already exists and is only verified.
-- Verification and report: a script run from another LAN machine — reachability, several parallel requests against a real model, rate-limit and context-overflow behaviour — with results in `Day30_report.md`.
-
-**Key context:** branch `Day30`; no new dependencies, no Docker, no HTTPS (home LAN). Previous milestone: **v3.0 Week 5: RAG** (shipped 2026-10-10). Test corpus for RAG: `C:\Projects\RAG` — ФЗ №196 «О безопасности дорожного движения» (file `ПДД.pdf`) and КоАП РФ (№195-ФЗ), both PDF.
+**Key context:** Test corpus for RAG: `C:\Projects\RAG` — ФЗ №196 «О безопасности дорожного движения» (file `ПДД.pdf`) and КоАП РФ (№195-ФЗ), both PDF.
 
 ## Core Value
 
@@ -74,12 +68,15 @@ The agent must demonstrably separate and manage distinct kinds of state — shor
 - ✓ **CITE-01..04**: Verified quotes, metadata-built sources, code-enforced "не знаю", `Day24_report.md` — Phase 16 (v3.0)
 - ✓ **RCHAT-01..05**: Mini-chat with per-chat task memory, history-aware retrieval, two scenarios, `Day25_report.md` — Phase 17 (v3.0)
 
+- ✓ **NET-01..06**: Opt-in LAN mode through `BIND_HOST` (loopback by default), host-match Origin rule with no IP lists, LAN banner and firewall docs — Phase 18 (v4.0)
+- ✓ **KEY-01..05**: Per-user API keys shown once, hashed at rest, revocable, accepted as `Authorization: Bearer` on REST; WebSocket stays cookie-only — Phase 19 (v4.0)
+- ✓ **HCHAT-01..04**: Plain HTTP chat endpoint writing into the normal chat tree with the same settings, memory, compression and RAG as a WebSocket turn — Phase 19 (v4.0)
+- ✓ **LIM-01..05**: Per-chat message limit shared by WebSocket and HTTP, login lockout, generation queue, authenticated `/debug/routes` — Phase 20 (v4.0)
+- ✓ **VER-01..06**: `scripts/verify_service.py`, live run from a second LAN machine in `Day30_report.md`, pytest coverage with matching `docs/TESTING_GUIDE.md` sections — Phase 20 (v4.0)
+
 ### Active
 
-- [ ] UI and Agent reachable from any machine on the local network (opt-in via `.env`, no IP filtering)
-- [ ] HTTP chat endpoint usable without a browser, authenticated by a per-user API key
-- [ ] Rate limits on chat (WebSocket + HTTP) and on login; `/debug/routes` requires auth
-- [ ] Verified from a second LAN machine: access, parallel requests on a real model, rate limit, max context — `Day30_report.md`
+(None — defined at the start of the next milestone.)
 
 ### Out of Scope
 
@@ -90,6 +87,10 @@ The agent must demonstrably separate and manage distinct kinds of state — shor
 - Long-term memory sharing across users — per-user by design; only global project invariants are shared
 
 ## Current State
+
+Shipped **v4.0 Week 6: Local LLM as a Private Service** (2026-10-12): LAN mode, API keys, HTTP chat, limits, verification script and `Day30_report.md` — Phases 18-20, 21 plans, 26/26 requirements, branch `Day30` merged to `main`. The live run from a Mac passed with exit code 0. The manual second-device UI check is confirmed by the user's statement only. Known limits documented in `docs/ARCHITECTURE.md`: DNS rebinding, plain HTTP, open `/health`, limits kept in process memory (reset on Agent restart).
+
+Shipped **v3.0 Week 5: RAG** (2026-10-10): knowledge-base indexing, RAG chat, reranking, citations with a code-enforced «не знаю», task memory — Phases 10-11, 13-17. Open debug session: `rag-speeding-fine-below-threshold`.
 
 Shipped **v2.0 Week 4: MCP Integration** (2026-10-02): MCP connection + chat tool calling (Day 16), scheduler (Day 18), chat auto-titles and LLM providers section (Day 21) — Phases 7-9, 12. Phases 10-11 carried over to v3.0.
 
@@ -114,10 +115,10 @@ Phase 17 (Mini-chat with RAG and task memory, Day 25) complete (2026-10-10): per
 
 - **Frontend**: Vanilla JS + CDN libraries only (Tailwind, Marked.js, DOMPurify) — no bundler, no npm packages. Any auth UI (login form, profile editor, memory/task panels) must follow this.
 - **Process model**: No Docker, no `multiprocessing`/`os.fork`, no Redis/RabbitMQ/Celery — UI/Agent split stays `asyncio.create_subprocess_exec` only; IPC stays REST + WebSocket.
-- **Auth mechanism**: HTTP-only session cookie (not JWT/localStorage) — matches local-first, single-deployment nature of the app and works uniformly for REST + WebSocket.
+- **Auth mechanism**: HTTP-only session cookie (not JWT/localStorage) for the browser and WebSocket; per-user API keys (`Authorization: Bearer`) for REST only, added in v4.0.
 - **Data scope**: All new data (memory layers, profiles, tasks, per-chat invariants) is scoped by `user_id`; only global project invariants remain shared across users.
 - **MCP servers**: External MCP servers run as separate stdio subprocesses spawned via the SDK (asyncio/anyio subprocess — no `multiprocessing`). Native binaries (e.g. the Go `portertech/filesystem-mcp-server` at `C:\Users\Aleksey\go\bin\filesystem.exe`) are allowed; Node/npx-based servers are not.
-- **Branching**: One branch per phase, named after the day (`Day11`...`Day16`...) except the auth foundation phase, which is named `Auth`. Branches are pushed and merged to `main`, never deleted.
+- **Branching**: One branch per phase, named after the day (`Day11`...`Day30`...) except the auth foundation phase, which is named `Auth`; phases of one day share that day's branch. Branches are pushed and merged to `main`, never deleted.
 
 ## Key Decisions
 
@@ -131,6 +132,10 @@ Phase 17 (Mini-chat with RAG and task memory, Day 25) complete (2026-10-10): per
 | Auth as its own foundation phase/branch (`Auth`), before Day 11 | All later phases (memory, profile, tasks, invariants) need `user_id` scoping from day one; avoids retrofitting | Validated in Phase 1 |
 | HTTP-only session cookie for auth | Simple, works uniformly across REST and WebSocket, fits local-first single-deployment model, no extra frontend library needed | Validated in Phase 1 |
 | Invariants enforced via prompt-injection + explicit response-conflict check | Balances realism (LLM can still err) with a real guardrail (dedicated conflict check), appropriate for course scope | ✓ Good (v1.0) |
+| One host-match Origin rule instead of IP allowlists (v4.0) | The UI is opened from whatever address the LAN gives it; a list would need manual upkeep | ✓ Good (v4.0) |
+| API keys authenticate REST only; WebSocket and key management stay cookie-only (v4.0) | Keeps the browser flow unchanged and a leaked key from minting more keys | ✓ Good (v4.0) |
+| HTTP chat reuses the WebSocket turn (`_run_chat_turn` + `RecordingSink`) (v4.0) | One code path for memory, compression, RAG and tools | ✓ Good (v4.0) |
+| Limits live in process memory, no external store (v4.0) | Hard constraint: no Redis; a restart resetting counters is acceptable on a home LAN | ⚠️ Revisit if the service is ever exposed beyond the LAN |
 
 ## Evolution
 
@@ -151,4 +156,4 @@ This document evolves at phase transitions and milestone boundaries.
 Phase 16 (Citations and Anti-Hallucination, Day 24) complete (2026-10-04): per-chat strict mode (on by default, existing RAG chats migrate to on); answers carry quotes verified on the server (exact, fuzzy, unverified, auto) with source rows built from chunk metadata only; when no fragment passes the threshold the code answers «Не знаю» with a clarifying question and makes no model call; quotes block and strict switch in the chat UI; `Day24_report.md` with a live run on the 10 control questions. Honest result: the unchanged 0.67 threshold falsely refused 3 of 8 answerable questions (Q01, Q07, Q08); out-of-corpus 2/2 refused. Review findings WR-01..04 and IN-01..03 parked as backlog 999.13-999.17 (see .planning/phases/16-citations-and-anti-hallucination-day-24/16-REVIEW.md). Open: 16-HUMAN-UAT.md (supervisor restart test never run).
 
 ---
-*Last updated: 2026-10-12 after v4.0 milestone start*
+*Last updated: 2026-10-12 after v4.0 milestone*
