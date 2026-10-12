@@ -16,6 +16,7 @@ from shared.logger import get_logger
 logger = get_logger(__name__)
 
 HEALTHCHECK_INTERVAL = 3.0
+PROCESS_POLL_INTERVAL = 0.5
 SHUTDOWN_WAIT_SECONDS = 3.0
 AGENT_STARTUP_RETRIES = 20
 AGENT_STARTUP_DELAY = 0.5
@@ -193,14 +194,18 @@ class AgentSupervisor:
         await self._launch_agent()
 
     async def _healthcheck_loop(self) -> None:
-        """Poll agent health every 3 seconds and restart on failure."""
+        """Restart a dead agent within half a second; ping /health every 3 seconds."""
+        last_ping = time.monotonic()
         while True:
             try:
-                await asyncio.sleep(HEALTHCHECK_INTERVAL)
+                await asyncio.sleep(PROCESS_POLL_INTERVAL)
                 process_dead = (
                     self.process is None or self.process.returncode is not None
                 )
                 if not process_dead:
+                    if time.monotonic() - last_ping < HEALTHCHECK_INTERVAL:
+                        continue
+                    last_ping = time.monotonic()
                     elapsed = time.monotonic() - self._last_launch_time
                     if elapsed < STARTUP_GRACE_SECONDS:
                         continue
@@ -208,5 +213,6 @@ class AgentSupervisor:
                     logger.warning("agent_unhealthy", port=self.agent_port)
                     await self._restart_agent()
                     await self._wait_for_agent_ready()
+                    last_ping = time.monotonic()
             except asyncio.CancelledError:
                 break
