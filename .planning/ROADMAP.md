@@ -27,7 +27,30 @@
   4. The user adds a new file or folder to a ready base and only the added files are indexed while earlier fragments stay searchable
   5. Adding a file whose source name already exists replaces its fragments, and exceeding the file-count or size limit is rejected with a clear message
 
-**Plans**: TBD
+**Plans**: 7 plans
+
+Plans:
+**Wave 1**
+
+- [ ] 21-01-PLAN.md — Source-name identity: drop the sha unique constraint with a chunk-preserving migration, server-side relative-path source names, MAX_FILES = 200, GET /api/v1/kb/limits
+- [ ] 21-02-PLAN.md — README.md at the repository root with a guard test
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 21-03-PLAN.md — Background addition job: non-destructive add/replace on a ready base, patched FAISS index, summary frame, restart recovery
+- [ ] 21-05-PLAN.md — Create form: folder choice, accumulating pending list, taken/skipped report, limits from the server, upload under source names
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 21-04-PLAN.md — POST /api/v1/kb/{kb_id}/files: staging, added/replaced/unchanged classification, atomic claim
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 21-06-PLAN.md — Add-files modal and card states (progress, summary, failure) for a ready base
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [ ] 21-07-PLAN.md — Documents and README updated as built, old browser script repaired, isolated-copy browser check of folder upload and addition
 
 **UI hint**: yes
 
