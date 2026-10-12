@@ -464,3 +464,57 @@ The scenarios of `tests/test_ws_origin_validation.py` and `tests/test_websocket_
 
 #### Manual check from a second device
 Automation cannot prove reachability from another machine or the Windows Firewall rule (tracked as VER-05 for the live Day 30 report). On the real app: set `BIND_HOST=0.0.0.0` in `.env` and restart; confirm the warning block and address list in the console; open ports 8000 and 8001 for the Private profile as in `docs/USER_GUIDE.md` ("LAN mode"); from a second device open one printed `http://<address>:8000`, log in, send a message and see the reply stream; open Settings -> «Сеть» and tap an address («Скопировано: ...»); finally restore `BIND_HOST=127.0.0.1` and confirm the old single-line banner.
+
+## API keys and HTTP chat (Day 30)
+
+Quick command: `pytest tests/test_api_keys.py tests/test_bearer_auth.py tests/test_http_chat.py tests/test_http_chat_rag.py -q`. The live check of the HTTP endpoint from a second machine belongs to the Day 30 report of Phase 20 (VER-05).
+
+### test_api_keys.py
+- the key is returned once and only its sha256 hash and prefix are stored
+- name validation (blank, too long, trimmed); cap of 20 keys per user (409)
+- revoke deletes the row; a foreign or missing key is 404
+- key routes, add-user and logout answer 403 to a key (cookie-only)
+- a body-less `DELETE` without `Content-Type` returns 204, while a `POST` without a JSON content type returns 415
+
+### test_bearer_auth.py
+- a key authenticates as its owner; sample of routes including `/api/v1/kb` and `/api/v1/mcp/servers`
+- an MCP server toggle with a key; another user's objects are 404
+- 401 for missing-token, empty, unknown and revoked keys, with `WWW-Authenticate: Bearer`
+- no cookie fallback when a Bearer header is present; non-Bearer schemes are ignored
+- `last_used_at` is refreshed at most once per 60 seconds
+- the WebSocket endpoints reject a key
+
+### test_ws_turn_failures.py
+- the chat leaf is restored after a context overflow and after LLM errors
+- the next turn continues the same branch (checked through the tree)
+- `cause` values `unreachable`, `timeout`, `upstream` and `provider_kind` in `LLM_ERROR`
+- a failed first turn leaves an empty chat; edge cases of the helper
+- the WebSocket handler delegates to the lock-free `_run_chat_turn`, which also runs with a `RecordingSink`
+
+### test_http_chat.py
+- the success body, the tree and the current leaf after a turn; chat settings and compression apply
+- authentication (key and cookie), 404 for a foreign chat, request validation
+- `409 CHAT_BUSY` with a pre-acquired lock and nothing stored; the lock is released after a turn
+- `413 CONTEXT_OVERFLOW` with `suggested_strategy` and the leaf restored
+- mapping of 503 (`LM_STUDIO_UNAVAILABLE`, `LLM_UNREACHABLE`, `PROVIDER_UNAVAILABLE`) and 502 (`LLM_ERROR`)
+- the `chat_updated` event on `/ws/events`; the turn completes after a client disconnect
+- background actions (title, facts) run; the endpoint has no model management
+
+### test_http_chat_rag.py
+- `kb_id` as an id, `null` and omitted; the other saved search settings stay unchanged
+- a foreign or not-ready knowledge base is rejected; the knowledge base list is readable with a key
+- tools are available over HTTP
+
+### test_api_keys_ui.py (frontend source guard)
+- the «API ключи» section, the one-time key modal, the curl example and the `chat_updated` handling in `ui/static`
+
+### test_docs_day30.py (documentation source guard)
+- the Day 30 sections of `docs/API_SPEC.md` in order; the curl scenario strings; the error codes; the status table rows
+- every route of the curl scenario exists in the Agent app
+- this testing guide lists every Day 30 test file; the architecture and user guide sections exist
+- no document uses the early placeholder path of the HTTP chat endpoint
+
+### scripts/e2e_api_keys_playwright.py (browser UAT, not part of pytest)
+- Starts an isolated copy of the app at UI :18000 / Agent :18001 with a scratch database, a stub OpenAI-compatible provider and a closed LM Studio port. Command: `python scripts/e2e_api_keys_playwright.py`. It never touches :8000/:8001, the repository `.env` or `app.db`.
+- Exit 0 all checks passed, 1 a check failed, 2 blocked (a port is busy), 4 Playwright missing. A run that ends with exit 2 or 4 is BLOCKED: it is not recorded as passed and the live browser refresh check stays an open manual UAT item.
+- Checks: K1-K7 (the Settings section, name validation, the one-time key modal and copy, closing rules, the key row, the last-used date), H1-H5 (a key alone authenticates REST routes, key creation with a key is 403, a chat turn over HTTP, the tree, a wrong key is 401), L1-L3 (an HTTP exchange appears in the open browser without a reload and leaves the input enabled), R1-R2 (revoke with confirm; a revoked key gets 401), Z (no uncaught page errors).

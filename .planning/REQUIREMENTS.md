@@ -23,7 +23,7 @@ Requirements for milestone v4.0. Each maps to exactly one roadmap phase.
 - [ ] **KEY-01**: User can create a named API key in Settings; the full key is shown exactly once.
 - [ ] **KEY-02**: Only a hash of the key is stored; the key list shows name, key prefix, creation date and last-used date.
 - [ ] **KEY-03**: User can revoke a key, and a revoked key stops working immediately.
-- [ ] **KEY-04**: `Authorization: Bearer <key>` authenticates every REST route as the key's owner, with the same ownership checks as the session cookie. WebSocket endpoints stay cookie-only.
+- [ ] **KEY-04**: `Authorization: Bearer <key>` authenticates REST routes as the key's owner, with the same ownership checks as the session cookie. Cookie-only exceptions, which answer 403 to a key: API key management (`/api/v1/api-keys`), adding a user (`POST /api/v1/auth/users`) and logout (`POST /api/v1/auth/logout`). WebSocket endpoints stay cookie-only.
 - [ ] **KEY-05**: An invalid or revoked key gets HTTP 401.
 
 ### HTTP Chat

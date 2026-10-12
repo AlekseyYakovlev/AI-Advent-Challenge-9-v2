@@ -102,3 +102,46 @@ def test_docs_have_no_placeholder_path() -> None:
     """No document uses the early placeholder path of the HTTP chat endpoint."""
     for path in DOCS_DIR.rglob("*.md"):
         assert "http-message" not in path.read_text(encoding="utf-8"), path.name
+
+
+def test_testing_guide_lists_day30_files() -> None:
+    """The testing guide has the Day 30 section and names every Day 30 test file and script."""
+    text = _read_doc("TESTING_GUIDE.md")
+    assert "## API keys and HTTP chat (Day 30)" in text
+    for name in (
+        "test_api_keys.py",
+        "test_bearer_auth.py",
+        "test_ws_turn_failures.py",
+        "test_http_chat.py",
+        "test_http_chat_rag.py",
+        "test_api_keys_ui.py",
+        "test_docs_day30.py",
+        "e2e_api_keys_playwright.py",
+    ):
+        assert name in text, name
+
+
+def test_architecture_day30_section() -> None:
+    """The architecture guide describes the key seam and the HTTP chat turn."""
+    text = _read_doc("ARCHITECTURE.md")
+    for needle in (
+        "## API keys and HTTP chat (Day 30)",
+        "get_session_user",
+        "_run_chat_turn",
+        "chat_updated",
+        "CHAT_BUSY",
+    ):
+        assert needle in text, needle
+
+
+def test_user_guide_day30_section() -> None:
+    """The user guide explains how to create a key and call the service."""
+    text = _read_doc("USER_GUIDE.md")
+    for needle in (
+        "## API keys and HTTP access",
+        "API ключи",
+        "Authorization: Bearer",
+        "/messages",
+        "kb_id",
+    ):
+        assert needle in text, needle
