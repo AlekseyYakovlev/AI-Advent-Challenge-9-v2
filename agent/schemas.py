@@ -18,6 +18,7 @@ FACTS_JSON_MAX_LENGTH = 50_000
 SUMMARY_TEXT_MAX_LENGTH = 50_000
 USERNAME_MAX_LENGTH = 64
 PASSWORD_MAX_LENGTH = 128
+API_KEY_NAME_MAX_LENGTH = 100
 MEMORY_KEY_MAX_LENGTH = 200
 MEMORY_VALUE_MAX_LENGTH = 50_000
 PROFILE_FIELD_MAX_LENGTH = 2000
@@ -393,6 +394,37 @@ class LoginRequest(BaseModel):
 
     username: str = Field(min_length=1, max_length=USERNAME_MAX_LENGTH)
     password: str = Field(min_length=1, max_length=PASSWORD_MAX_LENGTH)
+
+
+class ApiKeyCreate(BaseModel):
+    """Request body for creating a named API key."""
+
+    name: str
+
+    @field_validator("name")
+    @classmethod
+    def _validate_name(cls, value: str) -> str:
+        """Strip the name and reject a blank or over-long one."""
+        stripped = value.strip()
+        if not stripped or len(stripped) > API_KEY_NAME_MAX_LENGTH:
+            raise ValueError(f"Name must be 1-{API_KEY_NAME_MAX_LENGTH} characters")
+        return stripped
+
+
+class ApiKeyOut(BaseModel):
+    """Serialized API key metadata (never the key itself)."""
+
+    id: int
+    name: str
+    key_prefix: str
+    created_at: datetime
+    last_used_at: datetime | None = None
+
+
+class ApiKeyCreated(ApiKeyOut):
+    """Create response: the only place where the full key is returned."""
+
+    key: str
 
 
 class UserResponse(BaseModel):

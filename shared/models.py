@@ -400,6 +400,27 @@ class Session(SQLModel, table=True):
     expires_at: datetime
 
 
+class ApiKey(SQLModel, table=True):
+    """A named, revocable API key; only its sha256 hash is stored."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    user_id: int = Field(
+        sa_column=Column(
+            Integer,
+            ForeignKey("user.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        ),
+    )
+    name: str = Field(max_length=100)
+    key_hash: str = Field(unique=True, index=True)
+    key_prefix: str = Field(max_length=16)
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+    )
+    last_used_at: Optional[datetime] = Field(default=None)
+
+
 class ScheduleType(str, Enum):
     """How a scheduled job repeats."""
 
