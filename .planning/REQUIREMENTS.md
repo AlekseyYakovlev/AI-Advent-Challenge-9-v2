@@ -35,20 +35,20 @@ Requirements for milestone v4.0. Each maps to exactly one roadmap phase.
 
 ### Limits
 
-- [ ] **LIM-01**: The per-chat messages-per-minute limit is configurable in `.env` and shared by WebSocket and HTTP chat.
-- [ ] **LIM-02**: When the limit is exceeded, HTTP chat responds with 429 and a `Retry-After` header.
-- [ ] **LIM-03**: After several consecutive wrong passwords, login is temporarily blocked (threshold and block time configurable).
-- [ ] **LIM-04**: `/debug/routes` is available only to an authenticated user.
-- [ ] **LIM-05**: The number of concurrent generations is capped by a setting; excess requests wait in a queue and complete successfully.
+- [x] **LIM-01**: The per-chat messages-per-minute limit is configurable in `.env` and shared by WebSocket and HTTP chat.
+- [x] **LIM-02**: When the limit is exceeded, HTTP chat responds with 429 and a `Retry-After` header.
+- [x] **LIM-03**: After several consecutive wrong passwords, login is temporarily blocked (threshold and block time configurable).
+- [x] **LIM-04**: `/debug/routes` is available only to an authenticated user.
+- [x] **LIM-05**: The number of concurrent generations is capped by a setting; excess requests wait in a queue and complete successfully.
 
 ### Verification and Report
 
-- [ ] **VER-01**: A script given the server address and an API key checks reachability and authentication over the network.
-- [ ] **VER-02**: The script sends N parallel requests to a real model and reports successes, errors and response times.
-- [ ] **VER-03**: The script demonstrates the rate limit and the context-overflow behaviour.
+- [x] **VER-01**: A script given the server address and an API key checks reachability and authentication over the network.
+- [x] **VER-02**: The script sends N parallel requests to a real model and reports successes, errors and response times.
+- [x] **VER-03**: The script demonstrates the rate limit and the context-overflow behaviour.
 - [x] **VER-04**: `Day30_report.md` holds the results of a live run from a second LAN machine.
 - [x] **VER-05**: Manual check: chatting in the UI from another device on the same network. (Approved by the user on 2026-10-12.)
-- [ ] **VER-06**: pytest covers bind host, Origin, API keys, HTTP chat and limits; `docs/TESTING_GUIDE.md` has matching sections.
+- [x] **VER-06**: pytest covers bind host, Origin, API keys, HTTP chat and limits; `docs/TESTING_GUIDE.md` has matching sections.
 
 ## Future Requirements
 
@@ -96,17 +96,17 @@ Which phases cover which requirements. Updated during roadmap creation.
 | HCHAT-02 | Phase 19 | Complete |
 | HCHAT-03 | Phase 19 | Complete |
 | HCHAT-04 | Phase 19 | Complete |
-| LIM-01 | Phase 20 | Pending |
-| LIM-02 | Phase 20 | Pending |
-| LIM-03 | Phase 20 | Pending |
-| LIM-04 | Phase 20 | Pending |
-| LIM-05 | Phase 20 | Pending |
-| VER-01 | Phase 20 | Pending |
-| VER-02 | Phase 20 | Pending |
-| VER-03 | Phase 20 | Pending |
+| LIM-01 | Phase 20 | Complete |
+| LIM-02 | Phase 20 | Complete |
+| LIM-03 | Phase 20 | Complete |
+| LIM-04 | Phase 20 | Complete |
+| LIM-05 | Phase 20 | Complete |
+| VER-01 | Phase 20 | Complete |
+| VER-02 | Phase 20 | Complete |
+| VER-03 | Phase 20 | Complete |
 | VER-04 | Phase 20 | Complete |
 | VER-05 | Phase 20 | Complete (user-approved 2026-10-12) |
-| VER-06 | Phase 20 | Pending |
+| VER-06 | Phase 20 | Complete |
 
 **Coverage:**
 - v4.0 requirements: 26 total
