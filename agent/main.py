@@ -12,6 +12,7 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from agent.api_keys_api import router as api_keys_router
+from agent.http_chat import router as http_chat_router
 from agent.dependencies import (
     get_current_user,
     get_session_user,
@@ -454,6 +455,7 @@ app.include_router(rag_router)
 app.include_router(task_memory_router)
 app.include_router(network_router)
 app.include_router(api_keys_router)
+app.include_router(http_chat_router)
 
 
 @app.get("/debug/routes")
