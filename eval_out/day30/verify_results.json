@@ -1,0 +1,290 @@
+{
+  "started_at": "2026-10-12T18:56:13.786742+00:00",
+  "finished_at": "2026-10-12T18:56:36.729257+00:00",
+  "url": "http://192.168.88.224:8001",
+  "arguments": {
+    "url": "http://192.168.88.224:8001",
+    "n": 6,
+    "model": null,
+    "provider_id": null,
+    "timeout": 300.0,
+    "rate_mode": "both",
+    "rate_max_attempts": 40,
+    "server_rate_limit": 5,
+    "server_max_concurrent": 2,
+    "out": "day30_run",
+    "keep": false
+  },
+  "key_prefix": "aia_mD7z",
+  "python_version": "3.14.7",
+  "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+  "script_sha256": "a7687538d9a7801533aa8f8cbb8f5d39ed11300a7da8a473db482e01b157e1d2",
+  "server_rate_limit": 5,
+  "server_max_concurrent": 2,
+  "exit_code": 0,
+  "failures": [],
+  "reachability": {
+    "ran": true,
+    "status": 200,
+    "elapsed": 0.023605083988513798,
+    "error": null,
+    "ok": true
+  },
+  "authentication": {
+    "ran": true,
+    "good_status": 200,
+    "good_elapsed": 0.022825416992418468,
+    "username": "aleksey",
+    "bad_status": 401,
+    "bad_elapsed": 0.021492499974556267,
+    "ok": true
+  },
+  "model": {
+    "ran": true,
+    "model": "qwen/qwen3.5-9b",
+    "provider_id": 1,
+    "provider": "LM Studio",
+    "source": "provider list"
+  },
+  "parallel": {
+    "ran": true,
+    "n": 6,
+    "records": [
+      {
+        "number": 1,
+        "chat_id": 93,
+        "status": 200,
+        "code": null,
+        "elapsed": 4.606241833011154,
+        "queue_wait_seconds": 2.75,
+        "reply_chars": 24,
+        "reply_start": "Париж — столица Франции.",
+        "error": null
+      },
+      {
+        "number": 2,
+        "chat_id": 94,
+        "status": 200,
+        "code": null,
+        "elapsed": 2.7791861669975333,
+        "queue_wait_seconds": 0.0,
+        "reply_chars": 24,
+        "reply_start": "Париж — столица Франции.",
+        "error": null
+      },
+      {
+        "number": 3,
+        "chat_id": 95,
+        "status": 200,
+        "code": null,
+        "elapsed": 7.050788332999218,
+        "queue_wait_seconds": 4.564,
+        "reply_chars": 24,
+        "reply_start": "Париж — столица Франции.",
+        "error": null
+      },
+      {
+        "number": 4,
+        "chat_id": 96,
+        "status": 200,
+        "code": null,
+        "elapsed": 6.328145542007405,
+        "queue_wait_seconds": 4.356,
+        "reply_chars": 24,
+        "reply_start": "Париж — столица Франции.",
+        "error": null
+      },
+      {
+        "number": 5,
+        "chat_id": 97,
+        "status": 200,
+        "code": null,
+        "elapsed": 4.395168792048935,
+        "queue_wait_seconds": 2.953,
+        "reply_chars": 24,
+        "reply_start": "Столица Франции — Париж.",
+        "error": null
+      },
+      {
+        "number": 6,
+        "chat_id": 98,
+        "status": 200,
+        "code": null,
+        "elapsed": 2.989631083968561,
+        "queue_wait_seconds": 0.0,
+        "reply_chars": 24,
+        "reply_start": "Париж — столица Франции.",
+        "error": null
+      }
+    ],
+    "summary": {
+      "successes": 6,
+      "errors": 0,
+      "min": 2.7791861669975333,
+      "median": 4.5007053125300445,
+      "max": 7.050788332999218,
+      "queued": 4
+    }
+  },
+  "overflow": {
+    "ran": true,
+    "chat_id": 99,
+    "status": 413,
+    "code": "CONTEXT_OVERFLOW",
+    "suggested_strategy": "sliding",
+    "detail": "Context size (3207 tokens) exceeds context window (512 tokens). Please change compression strategy or reduce conversation length.",
+    "elapsed": 0.04410887503763661,
+    "message_chars": 6501,
+    "ok": true
+  },
+  "rate_limit": {
+    "ran": true,
+    "mode": "both",
+    "sequences": [
+      {
+        "mode": "chat",
+        "chat_id": 100,
+        "records": [
+          {
+            "number": 1,
+            "status": 200,
+            "code": null,
+            "elapsed": 7.965958625019994
+          },
+          {
+            "number": 2,
+            "status": 200,
+            "code": null,
+            "elapsed": 1.8009229589952156
+          },
+          {
+            "number": 3,
+            "status": 200,
+            "code": null,
+            "elapsed": 1.1637971670133993
+          },
+          {
+            "number": 4,
+            "status": 200,
+            "code": null,
+            "elapsed": 1.2573503750027157
+          },
+          {
+            "number": 5,
+            "status": 200,
+            "code": null,
+            "elapsed": 1.8289961660047993
+          },
+          {
+            "number": 6,
+            "status": 429,
+            "code": "RATE_LIMITED",
+            "elapsed": 0.01720058300998062
+          }
+        ],
+        "limit_request": 6,
+        "retry_after_header": "46",
+        "retry_after_body": 46,
+        "code": "RATE_LIMITED",
+        "notes": [
+          "429 arrived on request 6 as expected"
+        ],
+        "requests_sent": 6,
+        "duration": 14.036640334001277,
+        "reached": true
+      },
+      {
+        "mode": "fast",
+        "chat_id": 99,
+        "records": [
+          {
+            "number": 1,
+            "status": 413,
+            "code": "CONTEXT_OVERFLOW",
+            "elapsed": 0.04410887503763661
+          },
+          {
+            "number": 2,
+            "status": 413,
+            "code": "CONTEXT_OVERFLOW",
+            "elapsed": 0.02538012497825548
+          },
+          {
+            "number": 3,
+            "status": 413,
+            "code": "CONTEXT_OVERFLOW",
+            "elapsed": 0.025123334024101496
+          },
+          {
+            "number": 4,
+            "status": 413,
+            "code": "CONTEXT_OVERFLOW",
+            "elapsed": 0.055465459008701146
+          },
+          {
+            "number": 5,
+            "status": 413,
+            "code": "CONTEXT_OVERFLOW",
+            "elapsed": 0.02987108298111707
+          },
+          {
+            "number": 6,
+            "status": 429,
+            "code": "RATE_LIMITED",
+            "elapsed": 0.1658521249773912
+          }
+        ],
+        "limit_request": 6,
+        "retry_after_header": "46",
+        "retry_after_body": 46,
+        "code": "RATE_LIMITED",
+        "notes": [
+          "429 arrived on request 6 as expected"
+        ],
+        "requests_sent": 6,
+        "duration": 0.30381429102271795,
+        "reached": true
+      }
+    ]
+  },
+  "cleanup": {
+    "ran": true,
+    "created": 8,
+    "kept": false,
+    "deleted": 8,
+    "chats": [
+      {
+        "id": 93,
+        "title": "verify-service 20261012-185613 parallel #1"
+      },
+      {
+        "id": 94,
+        "title": "verify-service 20261012-185613 parallel #2"
+      },
+      {
+        "id": 95,
+        "title": "verify-service 20261012-185613 parallel #3"
+      },
+      {
+        "id": 96,
+        "title": "verify-service 20261012-185613 parallel #4"
+      },
+      {
+        "id": 97,
+        "title": "verify-service 20261012-185613 parallel #5"
+      },
+      {
+        "id": 98,
+        "title": "verify-service 20261012-185613 parallel #6"
+      },
+      {
+        "id": 99,
+        "title": "verify-service 20261012-185613 overflow"
+      },
+      {
+        "id": 100,
+        "title": "verify-service 20261012-185613 rate"
+      }
+    ]
+  }
+}

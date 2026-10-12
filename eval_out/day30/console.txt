@@ -1,0 +1,27 @@
+➜ python3 /Users/anyakov5/Downloads/verify_service.py --url http://192.168.88.224:8001 --n 6 --rate-mode both --server-rate-limit 5 --server-max-concurrent 2 --out day30_run
+[1/6] Reachability: GET /health without credentials
+  ok: 200 in 0.02 s
+[2/6] Authentication: GET /api/v1/auth/me
+  key accepted (user: aleksey); wrong key answered 401
+[3/6] Model choice
+  provider LM Studio (id 1), model qwen/qwen3.5-9b
+[4/6] Parallel requests: 6 at once
+  request 2: status=200 time=2.78 s queue_wait=0.0
+  request 6: status=200 time=2.99 s queue_wait=0.0
+  request 5: status=200 time=4.40 s queue_wait=2.953
+  request 1: status=200 time=4.61 s queue_wait=2.75
+  request 4: status=200 time=6.33 s queue_wait=4.356
+  request 3: status=200 time=7.05 s queue_wait=4.564
+  successes=6 errors=0 min=2.78 s median=4.50 s max=7.05 s queued=4
+[5/6] Context overflow
+  status=413 code=CONTEXT_OVERFLOW suggested_strategy=sliding
+[6/6] Rate limit (mode: both)
+  mode chat: short messages one after another
+  429 on request 6: Retry-After=46 retry_after=46 code=RATE_LIMITED
+  mode fast: repeated overflow request (request 1 is the overflow demonstration)
+  429 on request 6: Retry-After=46 retry_after=46 code=RATE_LIMITED
+Cleanup: deleted 8 of 8 chats
+Results written: day30_run/verify_results.md and day30_run/verify_results.json
+Result: all expectations met
+
+~ took 23,5s
