@@ -63,7 +63,27 @@ Plans:
   4. `POST` of text and model to an existing chat returns the whole reply as one JSON body with token statistics, and the exchange appears in the UI with the same settings, memory, compression and RAG as a WebSocket turn
   5. Context overflow (`CONTEXT_OVERFLOW`), LM Studio not running and chat busy each return a clear HTTP status, and `docs/API_SPEC.md` documents the endpoint with a full curl scenario (create key, create chat, send message)
 
-**Plans**: TBD
+**Plans**: 6 plans
+
+Plans:
+**Wave 1**
+
+- [ ] 19-01-PLAN.md — ApiKey table, Bearer branch in get_current_user, cookie-only /api/v1/api-keys routes, tests (wave 1)
+- [ ] 19-02-PLAN.md — agent/ws.py: extract _run_chat_turn, leaf-restore bug fix on failed turns, LLM_ERROR cause (wave 1)
+- [ ] 19-03-PLAN.md — Settings "API ключи" section, one-time key modal with curl example, chat_updated handling (wave 1)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 19-04-PLAN.md — POST /api/v1/chats/{chat_id}/messages: shared turn, kb_id selection, status mapping, event, tests (wave 2)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 19-05-PLAN.md — isolated-copy browser + HTTP e2e script for keys and HTTP chat (wave 3)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 19-06-PLAN.md — API_SPEC with full curl scenario, TESTING_GUIDE, ARCHITECTURE, USER_GUIDE, KEY-04 rewording (wave 4)
+
 **UI hint**: yes
 
 ### Phase 20: Limits, verification script and report (Day 30)
