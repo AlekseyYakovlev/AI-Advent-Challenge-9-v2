@@ -155,7 +155,10 @@ async def test_success_body_has_exact_keys_and_stats(authenticated_client: Async
         assert data["tool_calls"] == []
         stats = await api.get(f"/api/v1/chats/{chat_id}/stats", headers=_bearer(key))
         assert stats.status_code == 200
-        assert data["stats"] == stats.json()
+        assert "queue_wait_seconds" not in stats.json()
+        response_stats = dict(data["stats"])
+        assert response_stats.pop("queue_wait_seconds") == 0.0
+        assert response_stats == stats.json()
 
 
 @respx.mock
