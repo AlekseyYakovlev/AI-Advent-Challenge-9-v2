@@ -5,11 +5,32 @@ import re
 import sys
 
 from dotenv import dotenv_values
-from pydantic import ValidationError, field_validator
+from pydantic import Field, ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BIND_LOOPBACK: str = "127.0.0.1"
 BIND_ALL: str = "0.0.0.0"
+
+# Smallest accepted value of each limit setting; used by the fail-fast error message.
+LIMIT_SETTING_MINIMUMS: dict[str, int] = {
+    "RATE_LIMIT_MESSAGES_PER_MINUTE": 0,
+    "LOGIN_MAX_FAILED_ATTEMPTS": 0,
+    "LOGIN_LOCKOUT_SECONDS": 1,
+    "MAX_CONCURRENT_GENERATIONS": 0,
+}
+
+
+def limit_setting_error_message(name: str, raw: object) -> str:
+    """Return the ASCII-only explanation printed when a limit setting holds a bad value."""
+    minimum = LIMIT_SETTING_MINIMUMS[name]
+    expected = f"Expected a whole number >= {minimum}"
+    if minimum == 0:
+        expected += " (0 switches this limit off)"
+    return (
+        f"ERROR: invalid {name} value {ascii(raw)}.\n"
+        f"{expected}.\n"
+        f"Fix {name} in .env and start again."
+    )
 
 
 def bind_host_error_message(value: str) -> str:
@@ -76,6 +97,15 @@ class Settings(BaseSettings):
     # Eval-only switch: false turns off task memory and history-aware query condensing
     # for the "no memory" baseline run; it has no UI and no API surface.
     TASK_MEMORY_ENABLED: bool = True
+    # Messages per minute per chat, shared by WebSocket and HTTP chat; 0 = off.
+    RATE_LIMIT_MESSAGES_PER_MINUTE: int = Field(default=30, ge=0)
+    # Wrong passwords per username and client IP before login is blocked; counted until a
+    # successful login, with no expiry by time; 0 = off.
+    LOGIN_MAX_FAILED_ATTEMPTS: int = Field(default=5, ge=0)
+    # How long that login block lasts, in seconds.
+    LOGIN_LOCKOUT_SECONDS: int = Field(default=300, ge=1)
+    # Chat turns allowed to generate at once, all providers together; 0 = no cap.
+    MAX_CONCURRENT_GENERATIONS: int = Field(default=2, ge=0)
 
     @field_validator("BIND_HOST", mode="before")
     @classmethod
@@ -96,7 +126,7 @@ class Settings(BaseSettings):
 
 
 def _load_settings() -> Settings:
-    """Build settings; an invalid BIND_HOST prints a short message and exits with code 2."""
+    """Build settings; an invalid BIND_HOST or limit value prints a short message and exits 2."""
     try:
         return Settings()
     except ValidationError as exc:
@@ -104,6 +134,10 @@ def _load_settings() -> Settings:
             if error["loc"] == ("BIND_HOST",):
                 # Logging is not configured at import time, so stderr is used directly.
                 print(str(error["ctx"]["error"]), file=sys.stderr)
+                raise SystemExit(2) from None
+            if error["loc"] and error["loc"][0] in LIMIT_SETTING_MINIMUMS:
+                name = str(error["loc"][0])
+                print(limit_setting_error_message(name, error.get("input")), file=sys.stderr)
                 raise SystemExit(2) from None
         raise
 

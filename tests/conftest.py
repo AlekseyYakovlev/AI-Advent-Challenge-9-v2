@@ -18,9 +18,15 @@ os.environ["DEEPSEEK_API_KEY"] = ""
 # The suite must behave the same when the developer's .env enables LAN mode;
 # mode-dependent tests set settings.BIND_HOST with monkeypatch.setattr.
 os.environ["BIND_HOST"] = "127.0.0.1"
+# A developer .env holding a demo limit (a tiny rate limit, a one-slot gate) must not
+# change test results; tests that need other values patch settings with monkeypatch.
+os.environ["RATE_LIMIT_MESSAGES_PER_MINUTE"] = "30"
+os.environ["LOGIN_MAX_FAILED_ATTEMPTS"] = "5"
+os.environ["LOGIN_LOCKOUT_SECONDS"] = "300"
+os.environ["MAX_CONCURRENT_GENERATIONS"] = "2"
 os.environ["LLM_PROVIDER_ENV_FILE"] = str(Path(__file__).parent / "no-such-provider.env")
 
-from agent import kb_indexer, mcp_client, providers
+from agent import kb_indexer, limits, mcp_client, providers
 from agent import state as agent_state
 from agent.events import hub as events_hub
 from agent.main import app
@@ -40,7 +46,8 @@ async def clean_test_db() -> None:
     `asyncio.Lock` left in `chat_locks` from an earlier test's (now-closed)
     loop would otherwise deadlock a later test that reuses the same chat id.
     The per-user event hub is cleared for the same reason: queues bound to a
-    closed loop must not leak into later tests.
+    closed loop must not leak into later tests. The same goes for the login throttle
+    and the generation gate (its semaphore is bound to an event loop).
     Provider seeding/model caches are reset so seeds never leak between tests, and
     DEEPSEEK_API_KEY is forced empty at import so tests never use the real key.
     """
@@ -50,6 +57,8 @@ async def clean_test_db() -> None:
     await init_db()
     agent_state.active_streams.clear()
     agent_state.ws_rate_limiter.clear()
+    limits.login_throttle.clear()
+    limits.generation_gate.reset()
     agent_state.chat_locks.clear()
     agent_state.title_tasks.clear()
     agent_state.kb_jobs.clear()
