@@ -344,9 +344,16 @@ async def revoke_checks(
 ) -> None:
     """Run K7, R1, R2 and Z."""
     await page.click("#btn-settings")
-    await page.wait_for_function(
-        "document.querySelectorAll('#api-key-list > div').length === 1", timeout=STEP_TIMEOUT_MS,
-    )
+    # The list still holds the row rendered before the HTTP turns until the reload on open
+    # finishes, so wait for the refreshed text rather than for the row to exist.
+    try:
+        await page.wait_for_function(
+            "() => { const r = document.querySelector('#api-key-list > div');"
+            " return r && !r.textContent.includes('использован: никогда'); }",
+            timeout=STEP_TIMEOUT_MS,
+        )
+    except Exception as exc:  # noqa: BLE001 - the check below reports the observed text
+        print(f"note: last-used wait ended with {type(exc).__name__}")
     row_text = await page.locator("#api-key-list > div").first.inner_text()
     report(
         "K7 reopened Settings shows a last-used date",
