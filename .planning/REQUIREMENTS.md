@@ -20,18 +20,18 @@ Requirements for milestone v4.0. Each maps to exactly one roadmap phase.
 
 ### API Keys
 
-- [ ] **KEY-01**: User can create a named API key in Settings; the full key is shown exactly once.
-- [ ] **KEY-02**: Only a hash of the key is stored; the key list shows name, key prefix, creation date and last-used date.
-- [ ] **KEY-03**: User can revoke a key, and a revoked key stops working immediately.
-- [ ] **KEY-04**: `Authorization: Bearer <key>` authenticates REST routes as the key's owner, with the same ownership checks as the session cookie. Cookie-only exceptions, which answer 403 to a key: API key management (`/api/v1/api-keys`), adding a user (`POST /api/v1/auth/users`) and logout (`POST /api/v1/auth/logout`). WebSocket endpoints stay cookie-only.
-- [ ] **KEY-05**: An invalid or revoked key gets HTTP 401.
+- [x] **KEY-01**: User can create a named API key in Settings; the full key is shown exactly once.
+- [x] **KEY-02**: Only a hash of the key is stored; the key list shows name, key prefix, creation date and last-used date.
+- [x] **KEY-03**: User can revoke a key, and a revoked key stops working immediately.
+- [x] **KEY-04**: `Authorization: Bearer <key>` authenticates REST routes as the key's owner, with the same ownership checks as the session cookie. Cookie-only exceptions, which answer 403 to a key: API key management (`/api/v1/api-keys`), adding a user (`POST /api/v1/auth/users`) and logout (`POST /api/v1/auth/logout`). WebSocket endpoints stay cookie-only.
+- [x] **KEY-05**: An invalid or revoked key gets HTTP 401.
 
 ### HTTP Chat
 
-- [ ] **HCHAT-01**: User can `POST` a message (text and model) to an existing chat and receive the whole reply in one JSON body together with token statistics.
-- [ ] **HCHAT-02**: Messages sent over HTTP are written to the chat's message tree and are visible in the UI; the same settings, memory, context compression and RAG apply as for a WebSocket turn.
-- [ ] **HCHAT-03**: Failures are returned as clear HTTP statuses: context overflow with the `CONTEXT_OVERFLOW` code, LM Studio not running, and chat busy with another request.
-- [ ] **HCHAT-04**: `docs/API_SPEC.md` documents the endpoint and a full `curl` scenario: create key, create chat, send message.
+- [x] **HCHAT-01**: User can `POST` a message (text and model) to an existing chat and receive the whole reply in one JSON body together with token statistics.
+- [x] **HCHAT-02**: Messages sent over HTTP are written to the chat's message tree and are visible in the UI; the same settings, memory, context compression and RAG apply as for a WebSocket turn.
+- [x] **HCHAT-03**: Failures are returned as clear HTTP statuses: context overflow with the `CONTEXT_OVERFLOW` code, LM Studio not running, and chat busy with another request.
+- [x] **HCHAT-04**: `docs/API_SPEC.md` documents the endpoint and a full `curl` scenario: create key, create chat, send message.
 
 ### Limits
 
@@ -87,15 +87,15 @@ Which phases cover which requirements. Updated during roadmap creation.
 | NET-04 | Phase 18 | Complete |
 | NET-05 | Phase 18 | Complete |
 | NET-06 | Phase 18 | Complete |
-| KEY-01 | Phase 19 | Pending |
-| KEY-02 | Phase 19 | Pending |
-| KEY-03 | Phase 19 | Pending |
-| KEY-04 | Phase 19 | Pending |
-| KEY-05 | Phase 19 | Pending |
-| HCHAT-01 | Phase 19 | Pending |
-| HCHAT-02 | Phase 19 | Pending |
-| HCHAT-03 | Phase 19 | Pending |
-| HCHAT-04 | Phase 19 | Pending |
+| KEY-01 | Phase 19 | Complete |
+| KEY-02 | Phase 19 | Complete |
+| KEY-03 | Phase 19 | Complete |
+| KEY-04 | Phase 19 | Complete |
+| KEY-05 | Phase 19 | Complete |
+| HCHAT-01 | Phase 19 | Complete |
+| HCHAT-02 | Phase 19 | Complete |
+| HCHAT-03 | Phase 19 | Complete |
+| HCHAT-04 | Phase 19 | Complete |
 | LIM-01 | Phase 20 | Pending |
 | LIM-02 | Phase 20 | Pending |
 | LIM-03 | Phase 20 | Pending |
