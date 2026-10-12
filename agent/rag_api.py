@@ -11,7 +11,13 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from agent.dependencies import get_current_user, require_allowed_origin, require_json_content_type
 from agent.kb_api import MSG_KB_NOT_FOUND, _get_owned_kb, _unprocessable
-from agent.rag import DEFAULT_CANDIDATE_K, MODE_OFF, calibrated_threshold, resolve_threshold
+from agent.rag import (
+    DEFAULT_CANDIDATE_K,
+    MODE_OFF,
+    MODE_RAG,
+    calibrated_threshold,
+    resolve_threshold,
+)
 from shared.database import get_session
 from shared.logger import get_logger
 from shared.models import Chat, ChatRagConfig, KbChunk, KbStatus, KnowledgeBase, User
@@ -196,6 +202,30 @@ async def put_rag_config(
         history_turns=row.history_turns,
     )
     return await _config_out(session, chat, row)
+
+
+async def apply_chat_kb(
+    session: AsyncSession, chat_id: int, user_id: int, kb_id: int | None
+) -> None:
+    """Set only the chat's knowledge base and RAG mode, keeping every saved search setting."""
+    if kb_id is not None:
+        kb = await _get_owned_kb(session, kb_id, user_id)
+        if kb.status != KbStatus.READY:
+            raise _unprocessable(MSG_KB_NOT_READY)
+    mode = MODE_RAG if kb_id is not None else MODE_OFF
+    try:
+        row = await session.get(ChatRagConfig, chat_id)
+        if row is None:
+            row = ChatRagConfig(chat_id=chat_id)
+            session.add(row)
+        row.kb_id = kb_id
+        row.mode = mode
+        row.updated_at = datetime.now(timezone.utc)
+        await session.commit()
+    except SQLAlchemyError:
+        await session.rollback()
+        raise
+    logger.info("rag_kb_selected", chat_id=chat_id, kb_id=kb_id, mode=mode)
 
 
 @router.get("/api/v1/kb/{kb_id}/chunks/{chunk_id}")

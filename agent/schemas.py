@@ -366,6 +366,33 @@ class MessagePayload(BaseModel):
     provider_id: int | None = Field(default=None, ge=1)
 
 
+class HttpChatRequest(MessagePayload):
+    """Body of the plain-HTTP chat message; an omitted kb_id and an explicit null differ.
+
+    Omitted keeps the chat's saved RAG configuration, null turns RAG off, an id selects
+    that knowledge base.
+    """
+
+    kb_id: int | None = Field(default=None, ge=1)
+
+
+class HttpChatResponse(BaseModel):
+    """One JSON body carrying the whole reply of a plain-HTTP chat turn."""
+
+    chat_id: int
+    user_message_id: int
+    assistant_message_id: int
+    content: str
+    model: str
+    provider_id: int | None
+    stats: dict[str, Any]
+    tool_calls: list[dict[str, Any]]
+    memory_writes: list[dict[str, Any]]
+    task_writes: list[dict[str, Any]]
+    invariant_conflict: dict[str, Any] | None
+    rag: dict[str, Any] | None
+
+
 class ToolCallEvent(BaseModel):
     """WebSocket frame announcing one executed tool call."""
 
