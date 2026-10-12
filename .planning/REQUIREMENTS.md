@@ -1,0 +1,118 @@
+# Requirements: AiAdventAgentV2 — Week 7: Pipeline
+
+**Defined:** 2026-10-13
+**Core Value:** The agent must demonstrably separate and manage distinct kinds of state — short-term dialog, working task data, long-term profile/knowledge, and task lifecycle — making explicit, inspectable decisions about what goes where, rather than dumping everything into one undifferentiated context window.
+
+**Milestone goal:** The app becomes a developer assistant that understands its own project: project documentation is searchable through RAG, the project's git state is reachable through MCP, and a `/help` command answers questions about the project (Day 31 assignment).
+
+## v5.0 Requirements
+
+Requirements for milestone v5.0. Each maps to exactly one roadmap phase.
+
+### Project Documentation
+
+- [ ] **DOC-01**: The repository has a `README.md` at its root that describes what the app is, the directory structure, how to install and run it, the main settings in `.env`, and links to the documents in `docs/`.
+
+### Knowledge Base Upload
+
+- [ ] **KBUP-01**: In the knowledge base form the user can choose a whole folder; supported files (`.pdf`, `.txt`, `.md`) are taken recursively and unsupported files are skipped, with the number of skipped files shown before the upload starts.
+- [ ] **KBUP-02**: The user can build one pending list from several selections (single files and folders in any order), see every entry, and remove an entry before the upload starts.
+- [ ] **KBUP-03**: A file chosen through a folder keeps its relative path (for example `docs/API_SPEC.md`) as the source name in the knowledge base file list, in search results and in answer sources; two files with the same base name in different folders are stored as two separate sources.
+- [ ] **KBUP-04**: One upload accepts more files than the previous limit of 10 (the new limit is a named constant shown in the form); exceeding the file-count or total-size limit is rejected with a clear message and nothing is stored.
+- [ ] **KBUP-05**: The user can add files and folders to an existing ready knowledge base; only the added files are indexed, with the base's own chunking and embedding settings, and the fragments indexed earlier stay searchable during and after the addition.
+- [ ] **KBUP-06**: Adding a file whose source name already exists in the knowledge base replaces that file's fragments with the new content, so an updated document does not produce duplicate fragments.
+
+### Project Git MCP Server
+
+- [ ] **PGIT-01**: The repository contains a Python stdio MCP server, built on the already pinned `mcp` SDK with no new dependencies, with read-only tools: current branch, working tree status, diff (working tree, staged, or against a ref), list of tracked files, and recent commits.
+- [ ] **PGIT-02**: Each tool runs one fixed `git` command without a shell, only inside the configured repository root; arguments that would leave the root or inject options are rejected with a clear error, every call has a timeout, and long output is truncated with an explicit marker.
+- [ ] **PGIT-03**: The user can add the server through the existing "MCP серверы" form in Settings, and its tools become callable in a chat turn; the documentation gives the exact form values.
+- [ ] **PGIT-04**: Asked which branch the project is on, the assistant calls the server and answers with the branch that is checked out in the working copy at that moment.
+
+### GitHub MCP Server
+
+- [ ] **GHUB-01**: The documentation describes how to connect the official `github-mcp-server` binary in read-only mode with the `repos` and `pull_requests` toolsets (command, arguments, token variable), and the token value is never shown back after saving.
+- [ ] **GHUB-02**: With that configuration the app connects and lists the server's read-only tools, confirmed by a recorded check.
+
+### Help Command
+
+- [ ] **HELP-01**: The user can mark one of their knowledge bases as the project documentation base, see which one is marked, and change or clear the mark.
+- [ ] **HELP-02**: A message that starts with `/help` followed by a question is answered from the project documentation base with sources, whatever the chat's own RAG settings are, and those settings are left unchanged.
+- [ ] **HELP-03**: During a `/help` turn the project git tools are available to the model, and a tool call made in that turn is visible in the chat like any other tool call.
+- [ ] **HELP-04**: `/help` with no question shows a short usage text without calling the model.
+- [ ] **HELP-05**: When no project documentation base is marked, or the marked base is not ready, `/help` with a question answers with a clear instruction on what to do and makes no model call.
+- [ ] **HELP-06**: `/help` works through the plain HTTP chat endpoint with an API key, with the same behaviour as in the browser; the JSON reply carries the answer, the sources and the tool calls.
+- [ ] **HELP-07**: The `/help` question and its answer are stored in the chat tree as ordinary messages and survive a page reload with their sources.
+
+### Verification and Report
+
+- [ ] **VER-07**: pytest covers folder and accumulated upload, addition to an existing base, replacement of an updated file, the git MCP server (tools, root confinement, bad arguments), and `/help` over WebSocket and HTTP; `docs/TESTING_GUIDE.md` has matching sections.
+- [ ] **VER-08**: An isolated-copy end-to-end script (ports 18000/18001, scratch database) uploads a folder through the real UI, connects the git MCP server and runs `/help` in the browser and over HTTP.
+- [ ] **VER-09**: `docs/API_SPEC.md`, `docs/ARCHITECTURE.md` and `docs/USER_GUIDE.md` describe the new upload options, the git MCP server, the GitHub server setup and the `/help` command as built.
+- [ ] **VER-10**: `Day31_report.md` records a run of 8-10 control questions about the project through `/help` on a real model, with the answer, the sources, the tool calls and a verdict for each question, including the questions that failed.
+
+## Future Requirements
+
+Deferred to later days of Week 7. Tracked but not in the current roadmap.
+
+### Git Write Access
+
+- **PGIT-05**: Write tools in the project git server: stage, commit, create and switch branch, push, pull.
+- **GHUB-03**: `github-mcp-server` in write mode for Pull Requests (create, update, review, merge).
+
+### MCP Settings
+
+- **MCPS-01**: Enable or disable individual tools of an MCP server in Settings, so that only the chosen tool schemas are sent to the model.
+
+### Knowledge Base Upload
+
+- **KBUP-07**: Text files of code and schemas (`.py`, `.json`, `.yaml`, `.sql`) accepted into a knowledge base.
+- **KBUP-08**: Remove a single file from an existing knowledge base.
+
+## Out of Scope
+
+| Feature | Reason |
+|---------|--------|
+| A shell or "skill" tool that runs arbitrary commands | The assignment requires MCP; arbitrary shell from a local model on a LAN-exposed service is an unacceptable risk |
+| Third-party local git MCP servers (`@cyanheads/git-mcp-server`, `git-mcp-go`, `mcp-server-git`) | Checked live on 2026-10-13: 9261 schema tokens for 28 tools, or unmaintained without licence, or no push; the app cannot switch off single tools |
+| GitLab mirror with GitLabMcpMini | Sees only the remote repository, not the checked-out branch or the working tree |
+| Automatic re-indexing of project documents at start-up | Slows start-up and needs LM Studio running; the user re-adds changed files instead (KBUP-06) |
+| Own GitHub API client | The official server already covers repositories and Pull Requests |
+
+## Traceability
+
+| Requirement | Phase | Status |
+|-------------|-------|--------|
+| DOC-01 | Phase 21 | Pending |
+| KBUP-01 | Phase 21 | Pending |
+| KBUP-02 | Phase 21 | Pending |
+| KBUP-03 | Phase 21 | Pending |
+| KBUP-04 | Phase 21 | Pending |
+| KBUP-05 | Phase 21 | Pending |
+| KBUP-06 | Phase 21 | Pending |
+| PGIT-01 | Phase 22 | Pending |
+| PGIT-02 | Phase 22 | Pending |
+| PGIT-03 | Phase 22 | Pending |
+| PGIT-04 | Phase 22 | Pending |
+| GHUB-01 | Phase 22 | Pending |
+| GHUB-02 | Phase 22 | Pending |
+| HELP-01 | Phase 23 | Pending |
+| HELP-02 | Phase 23 | Pending |
+| HELP-03 | Phase 23 | Pending |
+| HELP-04 | Phase 23 | Pending |
+| HELP-05 | Phase 23 | Pending |
+| HELP-06 | Phase 23 | Pending |
+| HELP-07 | Phase 23 | Pending |
+| VER-07 | Phase 23 | Pending |
+| VER-08 | Phase 23 | Pending |
+| VER-09 | Phase 23 | Pending |
+| VER-10 | Phase 23 | Pending |
+
+**Coverage:**
+- v5.0 requirements: 24 total
+- Mapped to phases: 24
+- Unmapped: 0 ✓
+
+---
+*Requirements defined: 2026-10-13*
+*Last updated: 2026-10-13 after initial definition*
