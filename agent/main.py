@@ -480,7 +480,7 @@ app.include_router(api_keys_router)
 app.include_router(http_chat_router)
 
 
-@app.get("/debug/routes")
+@app.get("/debug/routes", dependencies=[Depends(get_current_user)])
 async def debug_routes() -> dict[str, list[dict[str, Any]]]:
     """List all registered routes for debugging."""
     routes: list[dict[str, Any]] = []

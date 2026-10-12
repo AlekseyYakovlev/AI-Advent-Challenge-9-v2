@@ -54,13 +54,24 @@ async def test_rest_routes_require_session_cookie(
 
 
 @pytest.mark.asyncio
-async def test_health_and_debug_routes_stay_open(client: AsyncClient) -> None:
-    """The supervisor's health/debug probes must never require a session."""
-    health_resp = await client.get("/health")
-    assert health_resp.status_code == 200
+async def test_health_is_open_and_debug_routes_need_auth(
+    client: AsyncClient, authenticated_client: AsyncClient
+) -> None:
+    """/health stays open; /debug/routes needs a session cookie or an API key."""
+    assert (await client.get("/health")).status_code == 200
+    assert (await client.get("/debug/routes")).status_code == 401
 
-    debug_resp = await client.get("/debug/routes")
-    assert debug_resp.status_code == 200
+    cookie_resp = await authenticated_client.get("/debug/routes")
+    assert cookie_resp.status_code == 200
+    assert "/ws/chat/{chat_id}" in [r["path"] for r in cookie_resp.json()["routes"]]
+
+    created = await authenticated_client.post("/api/v1/api-keys", json={"name": "probe"})
+    assert created.status_code == 201
+    key = created.json()["key"]
+    bearer = await client.get("/debug/routes", headers={"Authorization": f"Bearer {key}"})
+    assert bearer.status_code == 200
+    bad = await client.get("/debug/routes", headers={"Authorization": "Bearer nope"})
+    assert bad.status_code == 401
 
 
 @pytest.mark.asyncio

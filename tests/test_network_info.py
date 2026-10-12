@@ -68,7 +68,8 @@ async def test_foreign_origin_gets_no_cors_header(
 
 
 @pytest.mark.asyncio
-async def test_route_registered(client: AsyncClient) -> None:
+async def test_route_registered(authenticated_client: AsyncClient) -> None:
     """The route is listed in /debug/routes."""
-    resp = await client.get("/debug/routes")
+    resp = await authenticated_client.get("/debug/routes")
+    assert resp.status_code == 200
     assert "/api/v1/network" in resp.text
