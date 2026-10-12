@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from agent import ws
+from agent import limits, ws
 from agent.dependencies import get_current_user, require_allowed_origin, require_json_content_type
 from agent.events import hub
 from agent.headless import RecordingSink
@@ -41,6 +41,7 @@ def _error_response(
     detail: str,
     code: str,
     user_message_kept: bool | None,
+    headers: dict[str, str] | None = None,
     **extra: Any,
 ) -> JSONResponse:
     """Build the uniform error body; a JSONResponse keeps `code` that HTTPException drops."""
@@ -50,7 +51,7 @@ def _error_response(
         "user_message_kept": user_message_kept,
         **extra,
     }
-    return JSONResponse(status_code=status_code, content=content)
+    return JSONResponse(status_code=status_code, content=content, headers=headers)
 
 
 def _internal_error() -> JSONResponse:
@@ -133,7 +134,7 @@ async def _run_http_turn(
             content=body.content, model=body.model, provider_id=body.provider_id,
         )
         try:
-            await ws._run_chat_turn(sink, chat_id, payload)
+            await ws.run_limited_turn(sink, chat_id, payload)
         except Exception as exc:
             logger.error("http_chat_failed", chat_id=chat_id, error=str(exc))
             return _internal_error()
@@ -184,6 +185,17 @@ async def post_chat_message(
     lock = chat_locks.setdefault(chat_id, asyncio.Lock())
     if lock.locked():
         return _error_response(409, MSG_CHAT_BUSY, CODE_CHAT_BUSY, False)
+    retry_after = limits.check_message_rate(chat_id)
+    if retry_after is not None:
+        logger.warning("rate_limited", chat_id=chat_id, channel="http", retry_after=retry_after)
+        return _error_response(
+            429,
+            limits.MSG_RATE_LIMITED,
+            limits.CODE_RATE_LIMITED,
+            False,
+            headers={"Retry-After": str(retry_after)},
+            retry_after=retry_after,
+        )
     await lock.acquire()
     task = asyncio.create_task(
         _run_http_turn(chat_id, current_user.id, body, "kb_id" in body.model_fields_set, lock)
