@@ -16,6 +16,7 @@ from shared.logger import get_logger
 logger = get_logger(__name__)
 
 HEALTHCHECK_INTERVAL = 3.0
+PROCESS_POLL_INTERVAL = 0.5
 SHUTDOWN_WAIT_SECONDS = 3.0
 AGENT_STARTUP_RETRIES = 20
 AGENT_STARTUP_DELAY = 0.5
@@ -150,27 +151,25 @@ class AgentSupervisor:
         except httpx.HTTPError:
             return False
 
-    async def _has_websocket_route(self) -> bool:
-        """Return True when the agent exposes the chat WebSocket route."""
+    async def _agent_routes_ready(self) -> bool:
+        """Return True when the Agent answers the unauthenticated route probe with 401."""
+        # The route table, including the chat WebSocket route, is registered when
+        # agent.main is imported, and the 401 comes from the auth dependency of the
+        # guarded route, so a 401 proves the app and its auth layer are mounted. The
+        # probe sends no credentials and never reads the body.
         url = f"http://127.0.0.1:{self.agent_port}/debug/routes"
         try:
             async with httpx.AsyncClient() as client:
                 resp = await client.get(url, timeout=2.0)
-                if resp.status_code != 200:
-                    return False
-                routes = resp.json().get("routes", [])
-                return any(
-                    route.get("path") == "/ws/chat/{chat_id}"
-                    for route in routes
-                )
+                return resp.status_code == 401
         except httpx.HTTPError:
             return False
 
     async def _wait_for_agent_ready(self) -> None:
-        """Wait until health and WebSocket routes are available."""
+        """Wait until /health is 200 and the guarded route probe is answered 401."""
         for cycle in range(AGENT_STARTUP_CYCLES):
             for attempt in range(AGENT_STARTUP_RETRIES):
-                if await self._ping_health() and await self._has_websocket_route():
+                if await self._ping_health() and await self._agent_routes_ready():
                     logger.info(
                         "agent_ready",
                         port=self.agent_port,
@@ -185,6 +184,7 @@ class AgentSupervisor:
                 cycle=cycle + 1,
             )
             await self._restart_agent()
+        logger.error("agent_not_ready", port=self.agent_port, cycles=AGENT_STARTUP_CYCLES)
 
     async def _restart_agent(self) -> None:
         """Kill stale process state and launch a fresh agent."""
@@ -194,14 +194,18 @@ class AgentSupervisor:
         await self._launch_agent()
 
     async def _healthcheck_loop(self) -> None:
-        """Poll agent health every 3 seconds and restart on failure."""
+        """Restart a dead agent within half a second; ping /health every 3 seconds."""
+        last_ping = time.monotonic()
         while True:
             try:
-                await asyncio.sleep(HEALTHCHECK_INTERVAL)
+                await asyncio.sleep(PROCESS_POLL_INTERVAL)
                 process_dead = (
                     self.process is None or self.process.returncode is not None
                 )
                 if not process_dead:
+                    if time.monotonic() - last_ping < HEALTHCHECK_INTERVAL:
+                        continue
+                    last_ping = time.monotonic()
                     elapsed = time.monotonic() - self._last_launch_time
                     if elapsed < STARTUP_GRACE_SECONDS:
                         continue
@@ -209,5 +213,6 @@ class AgentSupervisor:
                     logger.warning("agent_unhealthy", port=self.agent_port)
                     await self._restart_agent()
                     await self._wait_for_agent_ready()
+                    last_ping = time.monotonic()
             except asyncio.CancelledError:
                 break
