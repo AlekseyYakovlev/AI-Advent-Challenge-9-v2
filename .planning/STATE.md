@@ -2,11 +2,11 @@
 gsd_state_version: 1.0
 milestone: v5.0
 milestone_name: "Week 7: Pipeline"
-status: planning
-last_updated: "2026-10-12T23:07:07.182Z"
-last_activity: 2026-10-12
+status: Defining requirements
+last_updated: "2026-10-12T23:21:39.279Z"
+last_activity: 2026-10-12 — Milestone v5.0 started
 progress:
-  total_phases: 3
+  total_phases: 6
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -134,7 +134,7 @@ Items acknowledged and deferred at milestone close on 2026-10-12:
 
 ## Session Continuity
 
-**Last session:** 2026-10-12T19:09:03.236Z
+**Last session:** 2026-10-12T23:21:39.272Z
 **Next action:** Run `/bm:discuss-phase 21` (or `/bm:plan-phase 21`) for v5.0 on branch Day31.
 
 ---
