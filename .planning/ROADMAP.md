@@ -104,9 +104,9 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 20-01-PLAN.md — four limit settings with fail-fast validation, agent/limits.py primitives, test isolation (wave 1)
-- [ ] 20-04-PLAN.md — frontend: rate-limit toast, queue caption, login lockout message (wave 1)
-- [ ] 20-05-PLAN.md — scripts/verify_service.py (standard library only) and its stub-server tests (wave 1)
+- [x] 20-01-PLAN.md — four limit settings with fail-fast validation, agent/limits.py primitives, test isolation (wave 1)
+- [x] 20-04-PLAN.md — frontend: rate-limit toast, queue caption, login lockout message (wave 1)
+- [x] 20-05-PLAN.md — scripts/verify_service.py (standard library only) and its stub-server tests (wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -188,7 +188,7 @@ Full details: [milestones/v3.0-ROADMAP.md](milestones/v3.0-ROADMAP.md)
 | 17. Mini-chat with RAG and task memory (Day 25) | v3.0 | 11/11 | Complete    | 2026-10-10 |
 | 18. LAN exposure (Day 30) | v4.0 | 6/7 | In Progress|  |
 | 19. API keys and HTTP chat (Day 30) | v4.0 | 6/6 | Complete    | 2026-10-12 |
-| 20. Limits, verification script and report (Day 30) | v4.0 | 0/0 | Not started | - |
+| 20. Limits, verification script and report (Day 30) | v4.0 | 3/8 | In Progress|  |
 
 ## Backlog
 
