@@ -6,7 +6,18 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
-from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Response, WebSocket, status
+from fastapi import (
+    Cookie,
+    Depends,
+    FastAPI,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    WebSocket,
+    status,
+)
+from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -58,7 +69,17 @@ from agent.llm_client import LMStudioClient, get_lm_studio_client
 from agent.state import chat_locks, cleanup_chat_caches
 from shared.origins import HostMatchCORSMiddleware
 from agent.context_engine import compute_chat_stats
-from agent import invariants, kb_indexer, mcp_client, mcp_config, memory, profile, providers, tasks
+from agent import (
+    invariants,
+    kb_indexer,
+    limits,
+    mcp_client,
+    mcp_config,
+    memory,
+    profile,
+    providers,
+    tasks,
+)
 from agent import scheduler_tools  # noqa: F401  (registers the scheduler LLM tools)
 from agent.events import ws_events
 from agent.scheduler import scheduler
@@ -429,6 +450,7 @@ async def _build_tree_path(
 async def lifespan(_app: FastAPI):
     """Init the database and scheduler on startup; stop the scheduler and dispose the engine on exit."""
     logger.info("agent_starting")
+    logger.info("limits_in_force", **limits.limits_in_force())
     await init_db()
     # The supervisor hard-kills the Agent, so shutdown hooks may never have run: fail any
     # run left RUNNING before the loop can claim or block on it.
@@ -480,21 +502,55 @@ async def health() -> HealthResponse:
     return HealthResponse()
 
 
+def _login_throttle_key(username: str, request: Request) -> tuple[str, str]:
+    """Return the (username, client IP) lockout key.
+
+    The browser talks to the Agent directly and no proxy sits in front of it, so the
+    socket peer address is the client itself. No forwarded header is read: a header is
+    chosen by the caller and would let an attacker dodge the per-address count.
+    """
+    return (username, request.client.host if request.client else "unknown")
+
+
 @app.post("/api/v1/auth/login", response_model=UserResponse)
 async def login(
     body: LoginRequest,
+    request: Request,
     response: Response,
     session: AsyncSession = Depends(get_session),
-) -> UserResponse:
+) -> UserResponse | JSONResponse:
     """Verify credentials and issue a DB-backed HTTP-only session cookie."""
+    key = _login_throttle_key(body.username, request)
+    blocked = limits.login_throttle.blocked_seconds(key)
+    if blocked is not None:
+        logger.warning("login_blocked", username=body.username, ip=key[1], retry_after=blocked)
+        # JSONResponse, not HTTPException: the body must carry code and retry_after.
+        return JSONResponse(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            content={
+                "detail": limits.MSG_LOGIN_BLOCKED,
+                "code": limits.CODE_LOGIN_BLOCKED,
+                "retry_after": blocked,
+            },
+            headers={"Retry-After": str(blocked)},
+        )
     result = await session.exec(select(User).where(User.username == body.username))
     user = result.first()
     if user is None or not verify_password(body.password, user.password_hash):
-        logger.info("login_failed", username=body.username)
+        started = limits.login_throttle.record_failure(key)
+        logger.info("login_failed", username=body.username, ip=key[1])
+        if started:
+            logger.warning(
+                "login_block_started",
+                username=body.username,
+                ip=key[1],
+                lockout_seconds=app_config.LOGIN_LOCKOUT_SECONDS,
+            )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Неверное имя пользователя или пароль",
         )
+    limits.login_throttle.reset(key)
 
     token = generate_session_token()
     session_row = SessionRow(

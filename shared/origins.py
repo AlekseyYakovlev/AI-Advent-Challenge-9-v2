@@ -71,5 +71,6 @@ class HostMatchCORSMiddleware:
             allow_credentials=True,
             allow_methods=["*"],
             allow_headers=["*"],
+            expose_headers=["Retry-After"],
         )
         await cors(scope, receive, send)
