@@ -61,3 +61,42 @@ async def test_agent_restarts_within_5_seconds(monkeypatch: pytest.MonkeyPatch) 
         assert supervisor.process.returncode is None
     finally:
         await supervisor.stop()
+
+
+@pytest.mark.asyncio
+async def test_start_reaches_ready_without_forced_restart(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A real start launches the Agent once and finds it ready.
+
+    Guards the regression of a guarded /debug/routes combined with a readiness probe
+    that still expects 200: every start then ran extra launch cycles without failing.
+    """
+    agent_port = _free_port()
+    db_path = settings.DB_PATH
+    monkeypatch.setenv("AGENT_PORT", str(agent_port))
+    monkeypatch.setenv("DB_PATH", db_path)
+
+    supervisor = AgentSupervisor(agent_port, db_path)
+    launches: list[int] = []
+    original_launch = supervisor._launch_agent
+
+    async def counting_launch() -> None:
+        launches.append(1)
+        await original_launch()
+
+    monkeypatch.setattr(supervisor, "_launch_agent", counting_launch)
+    try:
+        await supervisor.start()
+        assert len(launches) == 1
+        assert supervisor.process is not None
+        assert supervisor.process.returncode is None
+        async with httpx.AsyncClient() as client:
+            health = await client.get(f"http://127.0.0.1:{agent_port}/health", timeout=2.0)
+            routes = await client.get(
+                f"http://127.0.0.1:{agent_port}/debug/routes", timeout=2.0
+            )
+        assert health.status_code == 200
+        assert routes.status_code == 401
+    finally:
+        await supervisor.stop()
