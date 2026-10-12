@@ -423,6 +423,35 @@
                 <div id="llm-provider-list" class="space-y-2"></div>
             </section>
 
+            <section id="api-keys-section" class="border-t border-slate-700 p-5 space-y-3">
+                <div class="flex items-center justify-between">
+                    <h3 class="text-lg font-semibold">API ключи</h3>
+                    <button type="button" id="btn-api-key-add"
+                        class="rounded-lg bg-indigo-600 hover:bg-indigo-500 px-3 py-1.5 text-sm font-medium transition disabled:opacity-50 disabled:cursor-not-allowed">+ Создать ключ</button>
+                </div>
+                <p id="api-key-explainer" class="text-xs text-slate-500">Ключ позволяет вызывать API из любого клиента: передавайте его в заголовке <code class="font-mono text-slate-300">Authorization: Bearer &lt;ключ&gt;</code>. Ключами нельзя управлять другими ключами.</p>
+                <div id="api-key-form" class="hidden rounded-lg bg-slate-800/50 border border-slate-700 p-3 space-y-3">
+                    <div>
+                        <label for="api-key-name" class="block text-sm text-slate-400 mb-1">Название</label>
+                        <input type="text" id="api-key-name" maxlength="100" placeholder="Например, ноутбук или скрипт" class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        <p class="text-xs text-slate-500 mt-1">Название нужно только для того, чтобы вы отличали ключи в списке.</p>
+                    </div>
+                    <p id="api-key-form-error" class="text-xs text-red-400"></p>
+                    <div class="flex justify-end gap-2">
+                        <button type="button" id="btn-api-key-cancel"
+                            class="rounded-lg px-4 py-2 text-sm text-slate-400 hover:text-white transition">Отмена</button>
+                        <button type="button" id="btn-api-key-save"
+                            class="rounded-lg bg-indigo-600 hover:bg-indigo-500 px-4 py-2 text-sm font-medium transition disabled:opacity-50">Создать</button>
+                    </div>
+                </div>
+                <p id="api-key-status" class="text-sm text-slate-400"></p>
+                <div id="api-key-empty" class="hidden text-center text-slate-500 text-sm py-4">
+                    <p class="font-semibold">Ключей пока нет</p>
+                    <p>Создайте ключ, чтобы обращаться к чату по HTTP из curl, скриптов или других программ.</p>
+                </div>
+                <div id="api-key-list" class="space-y-2"></div>
+            </section>
+
             <section id="network-section" class="border-t border-slate-700 p-5 space-y-3">
                 <h3 class="text-lg font-semibold">Сеть</h3>
                 <p id="network-status" role="status" class="text-sm text-slate-400">Загрузка…</p>
@@ -462,6 +491,35 @@
                     </button>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <!-- API key one-time modal -->
+    <div id="api-key-modal" class="hidden fixed inset-0 z-[60] flex items-center justify-center bg-black/60"
+        role="dialog" aria-modal="true" aria-labelledby="api-key-modal-title">
+        <div class="bg-slate-900 border border-slate-700 rounded-xl shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
+            <div class="flex items-center justify-between px-5 py-4 border-b border-slate-700">
+                <h3 id="api-key-modal-title" class="text-lg font-semibold">Ключ создан</h3>
+                <button type="button" id="btn-close-api-key" aria-label="Закрыть" class="text-slate-400 hover:text-white text-xl leading-none">&times;</button>
+            </div>
+            <div class="p-5 space-y-4">
+                <p role="alert" class="text-sm text-yellow-500">Скопируйте ключ сейчас — после закрытия этого окна он больше не будет показан. Если вы его потеряете, создайте новый ключ.</p>
+                <div>
+                    <label id="api-key-value-label" class="block text-sm text-slate-400 mb-1"></label>
+                    <div class="flex items-center gap-2">
+                        <code id="api-key-value" class="flex-1 rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm font-mono break-all select-all"></code>
+                        <button type="button" id="btn-api-key-copy" class="rounded-lg bg-indigo-600 hover:bg-indigo-500 px-3 py-1.5 text-sm font-medium transition shrink-0">Скопировать</button>
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-sm text-slate-400 mb-1">Пример запроса</label>
+                    <div class="flex items-start gap-2">
+                        <pre id="api-key-curl" class="flex-1 rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-xs font-mono overflow-x-auto whitespace-pre"></pre>
+                        <button type="button" id="btn-api-key-curl-copy" class="rounded-lg bg-indigo-600 hover:bg-indigo-500 px-3 py-1.5 text-sm font-medium transition shrink-0">Скопировать</button>
+                    </div>
+                    <p class="text-xs text-slate-500 mt-1">Подставьте номер чата, название модели и текст сообщения. Список чатов: GET /api/v1/chats.</p>
+                </div>
+            </div>
         </div>
     </div>
 
