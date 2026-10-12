@@ -320,3 +320,14 @@ async def test_parallel_guesses_do_not_bypass_lockout(seed_user, threshold3) -> 
     codes = [r.status_code for r in resps]
     assert codes.count(401) <= 3
     assert codes.count(429) == 17
+
+
+@pytest.mark.asyncio
+async def test_address_cannot_flood_throttle_table(threshold3) -> None:
+    """One address holding the maximum of pairs gets new pairs refused."""
+    throttle = limits.LoginThrottle()
+    for i in range(throttle.MAX_PAIRS_PER_ADDRESS):
+        assert throttle.register_attempt((f"u{i}", "10.0.0.1"))[0] is None
+    assert throttle.register_attempt(("extra", "10.0.0.1"))[0] is not None
+    assert throttle.register_attempt(("extra", "10.0.0.2"))[0] is None
+    assert throttle.register_attempt(("u0", "10.0.0.1"))[0] is None

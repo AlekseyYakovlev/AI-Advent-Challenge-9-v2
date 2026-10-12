@@ -57,6 +57,9 @@ class LoginThrottle:
     """Counts wrong passwords per (username, client IP) and blocks a pair at the threshold."""
 
     MAX_ENTRIES: int = 10_000
+    # Failure pairs one address may hold; beyond it new pairs are refused so a flood of
+    # throwaway usernames cannot evict that address's real counters.
+    MAX_PAIRS_PER_ADDRESS: int = 50
 
     def __init__(self) -> None:
         self._entries: dict[tuple[str, str], _Entry] = {}
@@ -105,6 +108,10 @@ class LoginThrottle:
         blocked = self.blocked_seconds(key)
         if blocked is not None:
             return blocked, False
+        if settings.LOGIN_MAX_FAILED_ATTEMPTS > 0 and key not in self._entries:
+            held = sum(1 for k in self._entries if k[1] == key[1])
+            if held >= self.MAX_PAIRS_PER_ADDRESS:
+                return max(1, settings.LOGIN_LOCKOUT_SECONDS), False
         return None, self.record_failure(key)
 
     # Memory bound. Step 1 drops entries whose block has expired (no information lost).
