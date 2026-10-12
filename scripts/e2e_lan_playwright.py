@@ -228,9 +228,252 @@ async def network_checks(
         )
 
 
+WS_PROBE_JS: str = """
+(url) => new Promise((resolve) => {
+  let opened = false;
+  const ws = new WebSocket(url);
+  ws.onopen = () => { opened = true; };
+  ws.onclose = (event) => resolve({opened, code: event.code});
+  setTimeout(() => resolve({opened, code: 'timeout'}), 10000);
+})
+"""
+
+FETCH_JS: str = """
+async ([url, method, body]) => {
+  try {
+    const init = {method, credentials: 'include'};
+    if (body !== null) {
+      init.headers = {'Content-Type': 'application/json'};
+      init.body = body;
+    }
+    const resp = await fetch(url, init);
+    return 'status ' + resp.status;
+  } catch (err) {
+    return 'blocked';
+  }
+}
+"""
+
+FOREIGN_PAGE_HTML: str = "<!doctype html><title>foreign</title><p>foreign page</p>"
+
+
+async def start_foreign_server() -> tuple[Any, asyncio.Task[None]]:
+    """Serve one static page on 0.0.0.0:18770, standing in for an attacker's site."""
+    import uvicorn
+    from fastapi import FastAPI
+    from fastapi.responses import HTMLResponse
+
+    foreign = FastAPI()
+
+    @foreign.get("/")
+    async def index() -> HTMLResponse:
+        return HTMLResponse(FOREIGN_PAGE_HTML)
+
+    config = uvicorn.Config(foreign, host="0.0.0.0", port=FOREIGN_PORT, log_level="warning")
+    server = uvicorn.Server(config)
+    task = asyncio.create_task(server.serve())
+    deadline = time.monotonic() + 10
+    while not server.started and time.monotonic() < deadline and not task.done():
+        await asyncio.sleep(0.1)
+    if not server.started:
+        raise RuntimeError("foreign page server did not start")
+    return server, task
+
+
+async def stop_foreign_server(foreign: tuple[Any, asyncio.Task[None]] | None) -> None:
+    """Stop the extra static server."""
+    if foreign is None:
+        return
+    server, task = foreign
+    server.should_exit = True
+    try:
+        await asyncio.wait_for(task, 10)
+    except (TimeoutError, asyncio.CancelledError):
+        task.cancel()
+
+
 async def drive_browser(lan_ip: str, username: str, password: str, scratch: Path) -> None:
     """Run the browser scenarios L1-L7 against the LAN address."""
-    return None
+    from playwright.async_api import async_playwright
+
+    lan_ui = f"http://{lan_ip}:{UI_PORT}"
+    lan_agent = f"http://{lan_ip}:{AGENT_PORT}"
+    foreign_url = f"http://{lan_ip}:{FOREIGN_PORT}/"
+    foreign_host_url = f"http://localhost:{FOREIGN_PORT}/"
+    page_errors: list[str] = []
+    ws_urls: list[str] = []
+    foreign: tuple[Any, asyncio.Task[None]] | None = None
+
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(headless=True)
+        context = await browser.new_context()
+        page = await context.new_page()
+        await page.add_init_script(prov.TOAST_RECORDER_JS)
+        page.set_default_timeout(STEP_TIMEOUT_MS)
+        page.on("pageerror", lambda exc: page_errors.append(str(exc)))
+        page.on("websocket", lambda ws: ws_urls.append(ws.url))
+        try:
+            foreign = await start_foreign_server()
+
+            # L1
+            await page.goto(f"{lan_ui}/static/login.html")
+            await page.fill("#login-username", username)
+            await page.fill("#login-password", password)
+            await page.click("#login-form button[type=submit]")
+            await page.wait_for_url("**/static/index.html", timeout=15000)
+            await page.wait_for_function(
+                "document.querySelector('#model-select') !== null", timeout=15000,
+            )
+            secure = await page.evaluate("window.isSecureContext")
+            hostname = await page.evaluate("window.location.hostname")
+            report(
+                "L1 login over the LAN address in a non-secure context",
+                secure is False and hostname == lan_ip,
+                f"isSecureContext={secure}, hostname={hostname}",
+            )
+            await prov.shot(page, scratch, "L1")
+
+            # L2
+            await page.click("#btn-settings")
+            await page.wait_for_function(
+                "document.querySelector('#network-status').textContent"
+                " === 'Открыт в локальной сети'",
+                timeout=15000,
+            )
+            texts = await page.locator("#network-address-list button").all_inner_texts()
+            api_addresses = await page.evaluate(
+                "async (url) => (await (await fetch(url, {credentials: 'include'})).json())"
+                ".addresses",
+                f"{lan_agent}/api/v1/network",
+            )
+            report(
+                "L2 'Сеть' section shows the LAN address list from the API",
+                lan_ui in texts and texts[-1] == f"http://127.0.0.1:{UI_PORT}"
+                and texts == api_addresses,
+                f"buttons={texts}",
+            )
+            await prov.shot(page, scratch, "L2")
+
+            # L3
+            await page.locator("#network-address-list button", has_text=lan_ui).first.click()
+            await page.wait_for_function(
+                "(text) => window.__toasts.includes(text)",
+                arg=f"Скопировано: {lan_ui}",
+                timeout=10000,
+            )
+            report(
+                "L3 clicking an address copies it over plain HTTP",
+                not page_errors,
+                f"toast ok, pageerrors={len(page_errors)}",
+            )
+
+            # L4
+            await page.click("#btn-llm-provider-add")
+            await prov.fill_form(
+                page, "Stub", f"http://{prov.HOST}:{prov.STUB_PORT}/v1/", "STUB_KEY",
+            )
+            await page.click("#btn-llm-provider-save")
+            await prov.wait_card(page, "Stub", "доступен")
+            await page.click("#btn-close-settings")
+            await page.wait_for_function(
+                "() => Array.from(document.querySelectorAll('#model-select optgroup'))"
+                ".some(g => g.label === 'Stub')",
+                timeout=30000,
+            )
+            chats_before = await page.evaluate("state.chats.length")
+            await page.click("#btn-new-chat")
+            await page.wait_for_function(
+                "(before) => state.chats.length > before"
+                " && state.currentChatId === state.chats[0].id"
+                " && state.ws && state.ws.readyState === WebSocket.OPEN"
+                " && state.ws.url.endsWith('/ws/chat/' + state.currentChatId)",
+                arg=chats_before,
+                timeout=15000,
+            )
+            stub_value = await page.evaluate(
+                "() => Array.from(document.querySelectorAll('#model-select option'))"
+                ".find(o => o.textContent === 'Stub · stub-model').value",
+            )
+            await page.select_option("#model-select", stub_value)
+            await page.fill("#message-input", "Привет по локальной сети")
+            await page.click("#btn-send")
+            bubble = page.locator(
+                "#messages [data-message-id] .message-content", has_text=prov.STUB_ANSWER,
+            )
+            await bubble.first.wait_for(timeout=60000)
+            chat_id = await page.evaluate("state.currentChatId")
+            lan_ws = [u for u in ws_urls if u.startswith(f"ws://{lan_ip}:{AGENT_PORT}/ws/chat/")]
+            report(
+                "L4 streamed reply over a WebSocket on the LAN address",
+                bool(lan_ws),
+                f"answer={prov.STUB_ANSWER!r}, ws={lan_ws[:1]}",
+            )
+            await prov.shot(page, scratch, "L4")
+            app_errors = list(page_errors)
+
+            # L5
+            await page.goto(foreign_url)
+            read = await page.evaluate(FETCH_JS, [f"{lan_agent}/api/v1/chats", "GET", None])
+            write = await page.evaluate(
+                FETCH_JS,
+                [
+                    f"{lan_agent}/api/v1/llm-providers",
+                    "POST",
+                    json.dumps({
+                        "name": "foreign-created",
+                        "base_url": f"http://{prov.HOST}:{prov.STUB_PORT}",
+                        "api_key_env": "STUB_KEY",
+                        "enabled": False,
+                    }),
+                ],
+            )
+            events_ws = await page.evaluate(WS_PROBE_JS, f"ws://{lan_ip}:{AGENT_PORT}/ws/events")
+            chat_ws = await page.evaluate(
+                WS_PROBE_JS, f"ws://{lan_ip}:{AGENT_PORT}/ws/chat/{chat_id}",
+            )
+            await page.goto(f"{lan_ui}/static/index.html")
+            names = await page.evaluate(
+                "async (url) => (await (await fetch(url, {credentials: 'include'})).json())"
+                ".map(p => p.name)",
+                f"{lan_agent}/api/v1/llm-providers",
+            )
+            agent_log = (scratch / "app" / "logs" / "agent.log").read_text(
+                encoding="utf-8", errors="replace",
+            )
+            logged = (
+                "ws_origin_rejected" in agent_log and f"http://{lan_ip}:{FOREIGN_PORT}" in agent_log
+            )
+            report(
+                "L5 foreign page with the session cookie is blocked on REST and WebSockets",
+                read == "blocked" and write == "blocked" and "foreign-created" not in names
+                and not events_ws["opened"] and not chat_ws["opened"] and logged,
+                f"read={read}, write={write}, events={events_ws}, chat={chat_ws}, logged={logged}",
+            )
+
+            # L6
+            await page.goto(foreign_host_url)
+            host_ws = await page.evaluate(WS_PROBE_JS, f"ws://{lan_ip}:{AGENT_PORT}/ws/events")
+            report(
+                "L6 page on a foreign host cannot open the events WebSocket",
+                not host_ws["opened"],
+                f"result={host_ws}",
+            )
+
+            # L7
+            report(
+                "L7 no browser errors on the app page",
+                not app_errors,
+                f"pageerrors={app_errors}",
+            )
+        except Exception as exc:
+            report("browser scenario completed", False, f"{type(exc).__name__}: {str(exc)[:300]}")
+            try:
+                await prov.shot(page, scratch, "failure")
+            except Exception as inner:  # noqa: BLE001 - evidence capture is best effort
+                print(f"note: failure capture failed: {type(inner).__name__}")
+        finally:
+            await browser.close()
+            await stop_foreign_server(foreign)
 
 
 async def run_e2e(addresses: list[str]) -> None:

@@ -455,3 +455,12 @@ The scenarios of `tests/test_ws_origin_validation.py` and `tests/test_websocket_
 
 ### test_port_literals.py
 - no default-port literals in application code; e2e scripts do not patch agent state
+
+### scripts/e2e_lan_playwright.py (browser UAT, not part of pytest)
+- Runs a temporary copy of the app with `BIND_HOST=0.0.0.0` at UI :18000 / Agent :18001, a scratch database, a stub OpenAI-compatible provider on :18766 and a foreign-page server on :18770. Command: `python scripts/e2e_lan_playwright.py`. It never touches :8000/:8001, the repository `.env` or the firewall and stops only the processes it started. Windows may show a Security Alert when the copy binds `0.0.0.0`; the checks work without answering it because the connections come from the same machine.
+- Exit 0 all passed, 1 a check failed, 2 blocked (a port busy or no non-loopback IPv4 address), 4 Playwright missing. The first LAN address whose Agent `/health` answers is used as `LAN_IP`.
+- Network checks (httpx): 1 startup banner and LAN URL; 2 both sockets listen on `0.0.0.0`; 3 UI root and `/health` on the LAN address; 4 preflight reflects the LAN origin, not a foreign one; 5 machine-name origin reflected; 6 login and `GET /api/v1/network` in `lan` mode (401 without cookie); 7 own-origin mutation succeeds, foreign and Agent-port origins get 403.
+- Browser scenarios (Chromium opened on the LAN address only): L1 login in a non-secure context; L2 «Сеть» list equals the API list; L3 copying an address over plain HTTP; L4 streamed stub reply over `ws://<LAN_IP>:18001/ws/chat/...`; L5 a foreign page on another port with the session cookie cannot read or mutate over REST and cannot open `/ws/events` or `/ws/chat` (Agent log has `ws_origin_rejected`); L6 a page on another host cannot open the events socket; L7 no page errors.
+
+#### Manual check from a second device
+Automation cannot prove reachability from another machine or the Windows Firewall rule (tracked as VER-05 for the live Day 30 report). On the real app: set `BIND_HOST=0.0.0.0` in `.env` and restart; confirm the warning block and address list in the console; open ports 8000 and 8001 for the Private profile as in `docs/USER_GUIDE.md` ("LAN mode"); from a second device open one printed `http://<address>:8000`, log in, send a message and see the reply stream; open Settings -> «Сеть» and tap an address («Скопировано: ...»); finally restore `BIND_HOST=127.0.0.1` and confirm the old single-line banner.
