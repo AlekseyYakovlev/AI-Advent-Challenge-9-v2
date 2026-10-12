@@ -453,3 +453,41 @@ def test_limits_in_force_reports_settings(monkeypatch: pytest.MonkeyPatch) -> No
         "login_lockout_seconds": 300,
         "max_concurrent_generations": 0,
     }
+
+
+@pytest.mark.asyncio
+async def test_slow_on_wait_does_not_let_later_turn_overtake() -> None:
+    """A queued turn whose on_wait is slow still runs before a later arrival."""
+    gate = limits.GenerationGate()
+    order: list[str] = []
+    release_a_wait = asyncio.Event()
+
+    async def slow_wait() -> None:
+        await release_a_wait.wait()
+
+    async def turn(name: str, on_wait=None) -> None:
+        async with gate.slot(on_wait):
+            order.append(name)
+            await asyncio.sleep(0)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(limits.settings, "MAX_CONCURRENT_GENERATIONS", 1)
+        holder_started = asyncio.Event()
+        holder_release = asyncio.Event()
+
+        async def holder() -> None:
+            async with gate.slot():
+                holder_started.set()
+                await holder_release.wait()
+
+        h = asyncio.create_task(holder())
+        await holder_started.wait()
+        a = asyncio.create_task(turn("A", slow_wait))
+        await asyncio.sleep(0.01)
+        holder_release.set()
+        await asyncio.sleep(0.01)
+        b = asyncio.create_task(turn("B"))
+        await asyncio.sleep(0.01)
+        release_a_wait.set()
+        await asyncio.gather(h, a, b)
+    assert order == ["A", "B"]

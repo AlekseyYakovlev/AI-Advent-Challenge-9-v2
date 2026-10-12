@@ -187,10 +187,19 @@ class GenerationGate:
         if semaphore.locked():
             started = _now()
             self._waiting += 1
+            # Join the semaphore queue before announcing, so a slow on_wait cannot let a
+            # later arrival overtake this turn.
+            acquire = asyncio.ensure_future(semaphore.acquire())
             try:
                 if on_wait is not None:
                     await on_wait()
-                await semaphore.acquire()
+                await acquire
+            except BaseException:
+                if acquire.done() and not acquire.cancelled() and acquire.exception() is None:
+                    semaphore.release()
+                else:
+                    acquire.cancel()
+                raise
             finally:
                 self._waiting -= 1
             waited = round(_now() - started, 3)
