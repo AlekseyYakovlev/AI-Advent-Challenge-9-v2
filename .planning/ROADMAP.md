@@ -120,7 +120,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 20-08-PLAN.md — run sheet, live run from the Mac by the user, Day30_report.md (wave 4, has checkpoint)
+- [x] 20-08-PLAN.md — run sheet, live run from the Mac by the user, Day30_report.md (wave 4, has checkpoint)
 
 **UI hint**: yes
 
@@ -188,7 +188,7 @@ Full details: [milestones/v3.0-ROADMAP.md](milestones/v3.0-ROADMAP.md)
 | 17. Mini-chat with RAG and task memory (Day 25) | v3.0 | 11/11 | Complete    | 2026-10-10 |
 | 18. LAN exposure (Day 30) | v4.0 | 6/7 | In Progress|  |
 | 19. API keys and HTTP chat (Day 30) | v4.0 | 6/6 | Complete    | 2026-10-12 |
-| 20. Limits, verification script and report (Day 30) | v4.0 | 7/8 | In Progress|  |
+| 20. Limits, verification script and report (Day 30) | v4.0 | 8/8 | Complete   | 2026-10-12 |
 
 ## Backlog
 

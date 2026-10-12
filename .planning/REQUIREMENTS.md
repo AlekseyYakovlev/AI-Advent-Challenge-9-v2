@@ -46,7 +46,7 @@ Requirements for milestone v4.0. Each maps to exactly one roadmap phase.
 - [ ] **VER-01**: A script given the server address and an API key checks reachability and authentication over the network.
 - [ ] **VER-02**: The script sends N parallel requests to a real model and reports successes, errors and response times.
 - [ ] **VER-03**: The script demonstrates the rate limit and the context-overflow behaviour.
-- [ ] **VER-04**: `Day30_report.md` holds the results of a live run from a second LAN machine.
+- [x] **VER-04**: `Day30_report.md` holds the results of a live run from a second LAN machine.
 - [x] **VER-05**: Manual check: chatting in the UI from another device on the same network. (Approved by the user on 2026-10-12.)
 - [ ] **VER-06**: pytest covers bind host, Origin, API keys, HTTP chat and limits; `docs/TESTING_GUIDE.md` has matching sections.
 
@@ -104,7 +104,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | VER-01 | Phase 20 | Pending |
 | VER-02 | Phase 20 | Pending |
 | VER-03 | Phase 20 | Pending |
-| VER-04 | Phase 20 | Pending |
+| VER-04 | Phase 20 | Complete |
 | VER-05 | Phase 20 | Complete (user-approved 2026-10-12) |
 | VER-06 | Phase 20 | Pending |
 
