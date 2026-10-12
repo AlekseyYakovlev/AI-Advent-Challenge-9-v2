@@ -117,7 +117,7 @@ Phase 17 (Mini-chat with RAG and task memory, Day 25) complete (2026-10-10): per
 - **Process model**: No Docker, no `multiprocessing`/`os.fork`, no Redis/RabbitMQ/Celery — UI/Agent split stays `asyncio.create_subprocess_exec` only; IPC stays REST + WebSocket.
 - **Auth mechanism**: HTTP-only session cookie (not JWT/localStorage) for the browser and WebSocket; per-user API keys (`Authorization: Bearer`) for REST only, added in v4.0.
 - **Data scope**: All new data (memory layers, profiles, tasks, per-chat invariants) is scoped by `user_id`; only global project invariants remain shared across users.
-- **MCP servers**: External MCP servers run as separate stdio subprocesses spawned via the SDK (asyncio/anyio subprocess — no `multiprocessing`). Native binaries (e.g. the Go `portertech/filesystem-mcp-server` at `C:\Users\Aleksey\go\bin\filesystem.exe`) are allowed; Node/npx-based servers are not.
+- **MCP servers**: External MCP servers run as separate stdio subprocesses spawned via the SDK (asyncio/anyio subprocess — no `multiprocessing`). Native binaries (e.g. the Go `portertech/filesystem-mcp-server` at `C:\Users\Aleksey\go\bin\filesystem.exe`) and Node/npx-based servers are both allowed (the Node ban was lifted by the user on 2026-10-13).
 - **Branching**: One branch per phase, named after the day (`Day11`...`Day30`...) except the auth foundation phase, which is named `Auth`; phases of one day share that day's branch. Branches are pushed and merged to `main`, never deleted.
 
 ## Key Decisions

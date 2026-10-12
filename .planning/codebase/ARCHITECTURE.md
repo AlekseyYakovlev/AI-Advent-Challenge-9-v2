@@ -65,7 +65,7 @@
 - **Per-chat settings with global fallback:** Settings can be overridden per-chat; `NULL` chat_id means global defaults
 - **Pluggable LLM backends:** OpenAI-compatible API for DeepSeek (cloud) and LM Studio (local)
 - **Async-first:** All I/O is async (asyncio, aiosqlite, httpx) with typed dependencies
-- **No Docker, no npm, no external services:** Single SQLite DB, standard Python packages only
+- **No Docker, no external services:** Single SQLite DB, standard Python packages only; Node.js only as a runtime for external MCP servers
 
 ## Layers
 

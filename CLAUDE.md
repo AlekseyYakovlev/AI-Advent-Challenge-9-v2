@@ -23,7 +23,7 @@ There is no configured linter/formatter (no ruff/mypy/flake8 config) — don't a
 
 ## Architecture
 
-This is a **two-process, single-user, local-first** AI chat app. There is no Docker, no npm/Node, no message broker, and no auth — see Hard Constraints below.
+This is a **two-process, single-user, local-first** AI chat app. There is no Docker, no message broker, and no auth — see Hard Constraints below.
 
 ### Process split
 - **UI process** (`ui/`, port 8000, entry `run.py`): serves the static frontend (`ui/static/`) and owns an `AgentSupervisor` (`ui/supervisor.py`) that spawns, health-checks (`GET /health` every 3s), and auto-restarts the Agent as a subprocess (`asyncio.create_subprocess_exec`). It also kills orphaned processes still bound to ports 8000/8001 on startup (via `psutil`).
@@ -59,7 +59,8 @@ Single endpoint `WS /ws/chat/{chat_id}` streams tokens and emits a final `done` 
 
 ## Hard constraints (never violate)
 
-- No Docker, npm, Node.js, Redis, RabbitMQ, Celery.
+- No Docker, Redis, RabbitMQ, Celery. Node.js is allowed as a runtime for external tools (for example MCP servers started with `node`/`npx`); the app itself stays Python.
+- External MCP servers run as separate stdio subprocesses; native binaries, Python and Node/npx-based servers are all allowed.
 - No `multiprocessing` or `os.fork` — the UI/Agent split uses `asyncio.create_subprocess_exec` only.
 - No external identity providers, no RBAC/fine-grained roles. Simple multi-user auth was added in the "Week 3" milestone (see `.planning/PROJECT.md`): username/password login, every account has equal "admin" capability, session via HTTP-only cookie (never JWT/localStorage). All new data (memory, tasks, invariants, profiles) is scoped by `user_id`; only global project invariants remain shared across users.
 - IPC between UI and Agent is FastAPI REST + WebSockets only, with in-memory state per process (no external cache/broker).
@@ -297,7 +298,7 @@ A local-first, two-process AI chat application (FastAPI UI + Agent servers, vani
 - **Per-chat settings with global fallback:** Settings can be overridden per-chat; `NULL` chat_id means global defaults
 - **Pluggable LLM backends:** OpenAI-compatible API for DeepSeek (cloud) and LM Studio (local)
 - **Async-first:** All I/O is async (asyncio, aiosqlite, httpx) with typed dependencies
-- **No Docker, no npm, no external services:** Single SQLite DB, standard Python packages only
+- **No Docker, no external services:** Single SQLite DB, standard Python packages only; Node.js only as a runtime for external MCP servers
 ## Layers
 - Purpose: User-facing chat UI, message rendering, tree branching controls
 - Location: `ui/static/`
