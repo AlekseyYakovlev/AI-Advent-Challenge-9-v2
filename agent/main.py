@@ -11,8 +11,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
+from agent.api_keys_api import router as api_keys_router
 from agent.dependencies import (
     get_current_user,
+    get_session_user,
     require_allowed_origin,
     require_json_content_type,
 )
@@ -451,6 +453,7 @@ app.include_router(kb_router)
 app.include_router(rag_router)
 app.include_router(task_memory_router)
 app.include_router(network_router)
+app.include_router(api_keys_router)
 
 
 @app.get("/debug/routes")
@@ -533,7 +536,7 @@ async def logout(
     response: Response,
     session_id: str | None = Cookie(default=None, alias=SESSION_COOKIE_NAME),
     session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_session_user),
 ) -> None:
     """Revoke the presented session server-side and clear the cookie."""
     if session_id is not None:
@@ -578,7 +581,7 @@ async def get_me(current_user: User = Depends(get_current_user)) -> UserResponse
 async def create_user(
     body: CreateUserRequest,
     session: AsyncSession = Depends(get_session),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_session_user),
 ) -> UserResponse:
     """Create an additional equal-privilege account (AUTH-02); no public signup route exists (D-06)."""
     result = await session.exec(select(User).where(User.username == body.username))
