@@ -78,7 +78,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 19-05-PLAN.md — isolated-copy browser + HTTP e2e script for keys and HTTP chat (wave 3)
+- [x] 19-05-PLAN.md — isolated-copy browser + HTTP e2e script for keys and HTTP chat (wave 3)
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
@@ -164,7 +164,7 @@ Full details: [milestones/v3.0-ROADMAP.md](milestones/v3.0-ROADMAP.md)
 | 16. Citations and anti-hallucination (Day 24) | v3.0 | 8/8 | Complete    | 2026-10-04 |
 | 17. Mini-chat with RAG and task memory (Day 25) | v3.0 | 11/11 | Complete    | 2026-10-10 |
 | 18. LAN exposure (Day 30) | v4.0 | 6/7 | In Progress|  |
-| 19. API keys and HTTP chat (Day 30) | v4.0 | 4/6 | In Progress|  |
+| 19. API keys and HTTP chat (Day 30) | v4.0 | 5/6 | In Progress|  |
 | 20. Limits, verification script and report (Day 30) | v4.0 | 0/0 | Not started | - |
 
 ## Backlog
