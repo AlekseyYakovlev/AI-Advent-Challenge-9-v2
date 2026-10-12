@@ -4,11 +4,18 @@
 
 A local-first, two-process AI chat application (FastAPI UI + Agent servers, vanilla JS frontend) with multi-user auth, a three-layer agent memory, personalization, a task state machine with invariants, MCP tool calling, a scheduler, RAG over user knowledge bases with verified citations, and a private-service mode (LAN access, API keys, plain HTTP chat, limits). This is coursework for the "AI Advent Challenge" (9th cohort): each day is a self-contained assignment building on the previous one's output, implemented in its own git branch and merged to `main` once its acceptance criteria pass.
 
-## Current Milestone
+## Current Milestone: v5.0 Week 7: Pipeline (Day 31)
 
-None — v4.0 shipped 2026-10-12. The next milestone is defined with `/bm:new-milestone`.
+**Goal:** The app becomes a developer assistant that understands its own project: project documentation is searchable through RAG, the project's git state is reachable through MCP, and a `/help` command answers questions about the project.
 
-**Key context:** Test corpus for RAG: `C:\Projects\RAG` — ФЗ №196 «О безопасности дорожного движения» (file `ПДД.pdf`) and КоАП РФ (№195-ФЗ), both PDF.
+**Target features:**
+- Project documentation in RAG: a new `README.md`; the knowledge base form takes whole folders and several selections in one list, keeps relative paths as source names, and can add files to an existing base (an updated file replaces its old fragments).
+- Project git MCP server: an own Python stdio server in this repository with read-only tools (current branch, status, diff, tracked files, recent commits), confined to the repository root.
+- GitHub MCP server: the official `github-mcp-server` connected read-only (`repos`, `pull_requests`) as the base for Pull Request work later in the week.
+- `/help` command: in the chat and over the plain HTTP chat endpoint, answered from the marked project documentation base with sources and with the git tools available.
+- Verification and report: pytest, isolated-copy end-to-end script, `Day31_report.md` with control questions on a real model.
+
+**Key context:** branch `Day31`. Later days of Week 7 need git write tools and Pull Requests; they are listed as future requirements. Test corpus for RAG: `C:\Projects\RAG` — ФЗ №196 «О безопасности дорожного движения» (file `ПДД.pdf`) and КоАП РФ (№195-ФЗ), both PDF.
 
 ## Core Value
 
@@ -76,7 +83,10 @@ The agent must demonstrably separate and manage distinct kinds of state — shor
 
 ### Active
 
-(None — defined at the start of the next milestone.)
+- [ ] Project documentation (README + `docs/`) loaded into RAG through folder upload, with addition to an existing base
+- [ ] Project git state reachable through an own read-only MCP server; GitHub reachable through the official server
+- [ ] `/help` answers questions about the project in the chat and over HTTP, with sources
+- [ ] Verified on a real model with control questions — `Day31_report.md`
 
 ### Out of Scope
 
@@ -136,6 +146,9 @@ Phase 17 (Mini-chat with RAG and task memory, Day 25) complete (2026-10-10): per
 | API keys authenticate REST only; WebSocket and key management stay cookie-only (v4.0) | Keeps the browser flow unchanged and a leaked key from minting more keys | ✓ Good (v4.0) |
 | HTTP chat reuses the WebSocket turn (`_run_chat_turn` + `RecordingSink`) (v4.0) | One code path for memory, compression, RAG and tools | ✓ Good (v4.0) |
 | Limits live in process memory, no external store (v4.0) | Hard constraint: no Redis; a restart resetting counters is acceptable on a home LAN | ⚠️ Revisit if the service is ever exposed beyond the LAN |
+| Own Python git MCP server instead of a third-party one (v5.0) | Live check on 2026-10-13: `@cyanheads/git-mcp-server` costs 9261 schema tokens for 28 tools and the app cannot switch off single tools; `git-mcp-go` is unmaintained and has no pull; an own server has exactly the needed tools and grows with write tools later | — Pending |
+| Official `github-mcp-server` for GitHub and Pull Requests (v5.0) | Maintained, native Windows binary, `--read-only` and `--toolsets` limit the tool set (16 read-only tools, 5005 schema tokens) | — Pending |
+| Node.js allowed as a runtime for external MCP servers (2026-10-13) | User decision; the app itself stays Python and the frontend stays vanilla JS | — Pending |
 
 ## Evolution
 
@@ -156,4 +169,4 @@ This document evolves at phase transitions and milestone boundaries.
 Phase 16 (Citations and Anti-Hallucination, Day 24) complete (2026-10-04): per-chat strict mode (on by default, existing RAG chats migrate to on); answers carry quotes verified on the server (exact, fuzzy, unverified, auto) with source rows built from chunk metadata only; when no fragment passes the threshold the code answers «Не знаю» with a clarifying question and makes no model call; quotes block and strict switch in the chat UI; `Day24_report.md` with a live run on the 10 control questions. Honest result: the unchanged 0.67 threshold falsely refused 3 of 8 answerable questions (Q01, Q07, Q08); out-of-corpus 2/2 refused. Review findings WR-01..04 and IN-01..03 parked as backlog 999.13-999.17 (see .planning/phases/16-citations-and-anti-hallucination-day-24/16-REVIEW.md). Open: 16-HUMAN-UAT.md (supervisor restart test never run).
 
 ---
-*Last updated: 2026-10-12 after v4.0 milestone*
+*Last updated: 2026-10-13 after v5.0 milestone start*

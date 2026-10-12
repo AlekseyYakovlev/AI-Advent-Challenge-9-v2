@@ -1,34 +1,34 @@
 ---
 gsd_state_version: 1.0
-milestone: v4.0
-milestone_name: "Week 6: Local LLM as a Private Service"
-status: Awaiting next milestone
-last_updated: "2026-10-12T20:26:35.720Z"
-last_activity: 2026-10-12 — Milestone v4.0 completed and archived
+milestone: v5.0
+milestone_name: "Week 7: Pipeline"
+status: planning
+last_updated: "2026-10-12T23:07:07.182Z"
+last_activity: 2026-10-12
 progress:
-  total_phases: 6
-  completed_phases: 6
-  total_plans: 21
-  completed_plans: 21
-  percent: 100
+  total_phases: 3
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-10-12)
+See: .planning/PROJECT.md (updated 2026-10-13)
 
 **Project:** AiAdventAgentV2
 **Core value:** The agent must demonstrably separate and manage distinct kinds of state — short-term dialog, working task data, long-term profile/knowledge, and task lifecycle — making explicit, inspectable decisions about what goes where.
-**Current focus:** Planning next milestone
+**Current focus:** v5.0 Week 7: Pipeline — Phase 21 (Project docs in RAG)
 
 ## Current Position
 
-Phase: Milestone v4.0 complete
+Phase: Not started (defining requirements)
 Plan: —
-Status: Awaiting next milestone
-Last activity: 2026-10-12 — Milestone v4.0 completed and archived
+Status: Defining requirements
+Last activity: 2026-10-12 — Milestone v5.0 started
 
 ## Performance Metrics
 
@@ -59,6 +59,8 @@ No phases executed yet — metrics will populate after Phase 1 completes.
 - Phase 8 added: Scheduler (Day 18) — delayed/periodic jobs, written from scratch in Python (not a fork of mcp-cron), branch `Day18`
 - Phases 9-12 added (2026-10-02): backlog 999.4 / 999.5 / 999.6 / 999.11 promoted as Day 21 work, all on branch `Day21` (auto-rename chats, modals close only via x, edit/delete long-term memory in UI, LLM providers section in Settings)
 - v3.0 roadmap created 2026-10-03: carried-over 10-11 + RAG phases 13-17 (Days 21-25)
+
+- v5.0 roadmap created 2026-10-13: Phases 21-23 (Day 31, single branch Day31); no separate research, the MCP server candidates were checked live; 24/24 requirements mapped
 
 - v4.0 roadmap created 2026-10-12: Phases 18-20 (Day 30, single branch Day30); no research, 26/26 requirements mapped; VER-06 pytest coverage is written alongside each phase but tracked in Phase 20
 
@@ -133,11 +135,11 @@ Items acknowledged and deferred at milestone close on 2026-10-12:
 ## Session Continuity
 
 **Last session:** 2026-10-12T19:09:03.236Z
-**Next action:** Run `/bm:new-milestone` for the next course week.
+**Next action:** Run `/bm:discuss-phase 21` (or `/bm:plan-phase 21`) for v5.0 on branch Day31.
 
 ---
 *State initialized: 2026-09-19*
 
 ## Operator Next Steps
 
-- Start the next milestone with /gsd-new-milestone
+- Plan Phase 21: /bm:plan-phase 21
