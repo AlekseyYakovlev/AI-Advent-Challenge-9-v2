@@ -42,12 +42,13 @@ Returns real-time statistics for a chat.
   "total_response_tokens": 5120,
   "current_context_size": 3500,
   "context_window_size": 16384,
-  "context_usage_percent": 85.4,
+  "usage_percent": 85.4,
   "message_count": 20
 }
 ```
 
 **Notes:**
+- `queue_wait_seconds` is not part of this response; it is only sent with a finished turn (see "Limits (Day 30)")
 - current_context_size reflects active compression strategy
 - Updates automatically after each message
 - Can be polled via REST or received via WebSocket "done" message
@@ -85,10 +86,28 @@ Returns real-time statistics for a chat.
     "total_response_tokens": 5120,
     "current_context_size": 3500,
     "context_window_size": 16384,
-    "context_usage_percent": 85.4
+    "usage_percent": 85.4,
+    "queue_wait_seconds": 0.0
   }
 }
 ```
+`queue_wait_seconds` is the time in seconds the turn waited for a generation slot (`0.0` when it did not wait).
+
+**queued** (the turn waits for a generation slot, see "Limits (Day 30)"):
+```json
+{"type": "queued", "chat_id": 12}
+```
+
+**error (rate limit):**
+```json
+{
+  "type": "error",
+  "code": "RATE_LIMITED",
+  "detail": "Rate limit exceeded",
+  "retry_after": 17
+}
+```
+`retry_after` is the number of whole seconds until the chat's oldest counted message leaves the 60-second window. The socket stays open and the message is not stored.
 
 **tool_call** (one frame per executed tool call, sent before the follow-up tokens):
 ```json
@@ -851,7 +870,8 @@ Request body:
     "total_response_tokens": 140,
     "current_context_size": 960,
     "context_window_size": 16384,
-    "context_usage_percent": 5.9
+    "usage_percent": 5.9,
+    "queue_wait_seconds": 0.0
   },
   "tool_calls": [],
   "memory_writes": [],
@@ -870,8 +890,10 @@ Request body:
 - The message is attached to the chat's current leaf. To continue another branch, call `POST /api/v1/chats/{chat_id}/branch` first.
 - The endpoint never loads or switches a model. Use `GET /api/v1/lm-studio/models` and `POST /api/v1/lm-studio/load-model` before the call.
 - A chat that is already processing a turn is answered at once with `409 CHAT_BUSY` and nothing is stored (a WebSocket turn on the same chat waits for the lock instead).
+- The per-chat message limit and the generation queue apply to this endpoint as well (see "Limits (Day 30)"). The checks run in the order 404, 409 `CHAT_BUSY`, 429 `RATE_LIMITED`. A request that waits for a generation slot simply waits for its response; there is no extra status for it.
+- `stats.queue_wait_seconds` in the `200` body is the seconds the turn waited for a slot (`0.0` when it did not wait). `GET /api/v1/chats/{chat_id}/stats` does not carry it.
 - A client that disconnects does not stop the turn: it completes, the reply is stored and the lock is released. Read the result from `GET /api/v1/chats/{chat_id}/tree`.
-- There is no streaming, no stateless mode and no per-request MCP switch (use `PUT /api/v1/mcp/servers/{server_id}` with `{"enabled": ...}`). There is no rate limit in this version.
+- There is no streaming, no stateless mode and no per-request MCP switch (use `PUT /api/v1/mcp/servers/{server_id}` with `{"enabled": ...}`).
 
 ### Statuses
 
@@ -887,6 +909,7 @@ Errors marked "uniform" use the body `{"detail", "code", "user_message_kept"}` (
 | 413 | `CONTEXT_OVERFLOW` | The context exceeds the window with strategy `no_compression` (uniform, `suggested_strategy: "sliding"`) | no |
 | 415 | - | `Content-Type` is not `application/json` (default shape) | no turn |
 | 422 | - | Body validation failed, or the chosen knowledge base is not ready (default shape) | no turn |
+| 429 | `RATE_LIMITED` | The chat's messages-per-minute limit is exceeded (uniform, plus `retry_after` and the `Retry-After` header); nothing is stored | no turn |
 | 500 | `RAG_GATED_FAILED` / `INTERNAL_ERROR` | The strict RAG reply could not be stored / unexpected failure (uniform; the detail never contains exception text) | no / unknown (`null`) |
 | 502 | `LLM_ERROR` | The provider answered with an error (uniform) | no |
 | 503 | `LM_STUDIO_UNAVAILABLE` | LM Studio is not running (`LM Studio is not running`, uniform) | no |
@@ -908,6 +931,12 @@ Errors marked "uniform" use the body `{"detail", "code", "user_message_kept"}` (
   "user_message_kept": false,
   "suggested_strategy": "sliding"
 }
+```
+
+429 example (header `Retry-After: 17`):
+
+```json
+{"detail": "Rate limit exceeded", "code": "RATE_LIMITED", "user_message_kept": false, "retry_after": 17}
 ```
 
 ### Event
@@ -1004,6 +1033,46 @@ Expected response of step 11 after the revoke (`401`, header `WWW-Authenticate: 
 {"detail": "Invalid or revoked API key"}
 ```
 
+## Limits (Day 30)
+
+Four settings bound abuse of the service: a per-chat message limit, a cap on concurrent generations, and a login lockout. All state is in memory in the Agent process; a restart clears it.
+
+### Message rate limit
+
+- Counted per chat in a 60-second sliding window, shared by the WebSocket and the HTTP endpoint (a message sent over either channel uses the same budget).
+- At most `RATE_LIMIT_MESSAGES_PER_MINUTE` messages (default 30) per chat per window; `0` switches the limit off.
+- Every accepted attempt takes a slot, including an attempt that then fails (for example a WebSocket frame with an invalid payload, or a turn that ends in an LLM error). Requests answered with 404, 409 or 429 take no slot.
+- Over the limit the HTTP endpoint answers `429 RATE_LIMITED` (body above) and the WebSocket sends the `RATE_LIMITED` error frame. `retry_after` and the `Retry-After` header are the whole seconds until the oldest slot leaves the window (at least 1).
+
+### Generation queue
+
+- At most `MAX_CONCURRENT_GENERATIONS` chat turns (default 2) generate at the same time, on both channels and for every provider; `0` means no cap.
+- A turn over the cap waits. The queue is unbounded and has no wait timeout; turns are released in arrival order.
+- `LLM_TIMEOUT` counts only after the turn has left the queue.
+- A WebSocket client receives `{"type": "queued", "chat_id": N}` when its turn starts waiting. The finished turn reports the wait in `stats.queue_wait_seconds` of the `done` frame (and of the HTTP `200` body), `0.0` when it did not wait.
+- Outside the cap: scheduler runs, chat titles, fact extraction and knowledge-base indexing.
+
+### Login lockout
+
+- Wrong passwords are counted per username and client address. After `LOGIN_MAX_FAILED_ATTEMPTS` (default 5; `0` switches the lockout off) the pair is blocked for `LOGIN_LOCKOUT_SECONDS` (default 300).
+- A wrong password is counted until a successful login or until the block is applied; the count does not expire with time, so attempts spaced far apart still add up. After a block has ended the count starts from zero.
+- While blocked, `POST /api/v1/auth/login` answers `429` with the header `Retry-After` and the body below. A correct password is refused during the block too.
+- The attempt that reaches the threshold still answers `401`; the following attempt gets the `429`.
+- The answer does not depend on whether the username exists.
+- Kept in memory only: a restart clears every block and counter.
+
+```json
+{"detail": "Слишком много неудачных попыток входа. Повторите позже", "code": "LOGIN_BLOCKED", "retry_after": 297}
+```
+
+### /debug/routes and /health
+
+`GET /debug/routes` answers `401` without credentials and `200` with a session cookie or an API key. `GET /health` is open.
+
+### Visibility
+
+No route returns the limit values and the UI does not show them. They are set in `.env` (see `.env.example`), described in the user guide and written to the Agent log as `limits_in_force` at start. For allowed origins the CORS response carries `Access-Control-Expose-Headers: Retry-After`, so a browser client can read the header.
+
 ## Environment Settings
 
 | Variable | Default | Meaning |
@@ -1024,6 +1093,10 @@ Expected response of step 11 after the revoke (`401`, header `WWW-Authenticate: 
 | KB_EMBED_TIMEOUT | 120.0 | Seconds allowed for one embeddings request to LM Studio |
 | TASK_MEMORY_ENABLED | true | Eval-only switch: `false` turns off task memory and history-aware condensing (the «no memory» baseline of `rag_eval.py dialog`); no UI or API surface |
 | TASK_MEMORY_TIMEOUT | 30.0 | Seconds allowed for the task-memory extraction call after an answer |
+| RATE_LIMIT_MESSAGES_PER_MINUTE | 30 | Messages per chat in a 60-second window, shared by WebSocket and HTTP; `0` switches the limit off. A negative or non-numeric value exits with code 2 |
+| LOGIN_MAX_FAILED_ATTEMPTS | 5 | Wrong passwords per username and client address before a block; `0` switches the lockout off. A negative or non-numeric value exits with code 2 |
+| LOGIN_LOCKOUT_SECONDS | 300 | Seconds a block lasts (minimum 1). A lower or non-numeric value exits with code 2 |
+| MAX_CONCURRENT_GENERATIONS | 2 | Chat turns generating at the same time; further turns wait in a queue; `0` means no cap. A negative or non-numeric value exits with code 2 |
 | MCP_AUTO_CONNECT | true | Connect the user's enabled, unconnected MCP servers at the start of a chat turn (failures not retried until manual reconnect/edit) |
 
 With `MCP_AUTO_CONNECT` on, the first chat turn may wait up to `MCP_CONNECT_TIMEOUT` for a server

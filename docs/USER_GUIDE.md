@@ -284,7 +284,8 @@ The first time Python listens on the network, Windows may show a "Windows Securi
 - Traffic is plain HTTP and can be read by others on the same network.
 - Do not enable LAN mode on public or shared networks (cafe, hotel, office guest Wi-Fi).
 - Requests from other web sites are still rejected by the Origin check.
-- `/health` and `/debug/routes` are reachable without login in this version.
+- `/health` is open without login. `/debug/routes` needs a login or an API key.
+- Wrong passwords are limited by a lockout, see "Limits".
 
 ### Disable
 Remove `BIND_HOST` from `.env` or set `BIND_HOST=127.0.0.1`, restart, and remove the firewall rule.
@@ -318,6 +319,7 @@ curl -s -X POST http://127.0.0.1:8001/api/v1/chats/<chat_id>/messages \
 
 ### Errors
 - `401`: the key is wrong or revoked.
+- `429`: the chat's message limit is exceeded; wait the number of seconds in the `Retry-After` header and send again.
 - `409`: the chat is busy with another message; try again when it finishes.
 - `413`: the context does not fit the model window; switch the chat to a compression strategy such as `sliding`.
 - `503`: LM Studio or the provider is not available.
@@ -326,6 +328,57 @@ The full scenario with all routes is in [API_SPEC.md](API_SPEC.md), section "HTT
 
 ### Security
 Anyone holding the key acts as you on the REST API. The connection is plain HTTP, so use keys only on a trusted network. Keys cannot create other keys, add users or log out; those actions work only from the web interface.
+
+## Limits
+
+Four settings in `.env` limit how fast the service is used:
+
+| Setting | Default | Meaning |
+|---------|---------|---------|
+| `RATE_LIMIT_MESSAGES_PER_MINUTE` | 30 | Messages per chat per minute, counted together for the browser and the HTTP endpoint. `0` = off |
+| `LOGIN_MAX_FAILED_ATTEMPTS` | 5 | Wrong passwords per username and client machine before login is blocked. `0` = off |
+| `LOGIN_LOCKOUT_SECONDS` | 300 | How long a login block lasts (at least 1) |
+| `MAX_CONCURRENT_GENERATIONS` | 2 | Chat turns generating at the same time, all models together; the rest wait in line. `0` = no cap |
+
+To change a value, edit `.env` and restart `python run.py`. A restart also clears every login block, which is how you unblock someone. A negative or non-numeric value stops the start with a message.
+
+Wrong passwords are counted until a successful login, however far apart they are, so mistypes on different days add up. After a block has ended the count starts again from zero. The lockout slows casual guessing but does not stop a determined attacker who is already on your home network.
+
+What you see:
+- A message over the per-chat limit: a toast «Слишком много сообщений. Повторите через N с»; the text returns to the input field.
+- A message waiting for a free generation slot: the caption «В очереди, ожидание свободного места…», then the reply.
+- A blocked login: «Слишком много неудачных попыток. Повторите через N мин».
+
+The values are not shown in the app. They are visible only in `.env` and in the Agent log line `limits_in_force` written at start.
+
+## Checking the service from another machine
+
+`scripts/verify_service.py` checks a running service the way an outside client would: it tests that the service is reachable and the key works, sends several requests at once to a real model and reports their timings and queue waits, shows the message limit answering 429 and the context-overflow answer. It is a single file that needs only Python 3.11 or newer. Nothing has to be installed and the repository does not have to be copied.
+
+Steps:
+1. On the host, turn on LAN mode and create the firewall rule (see "LAN mode"), load a model in LM Studio and create an API key in Settings (see "API keys and HTTP access").
+2. For the demonstration set a low limit in `.env`, for example `RATE_LIMIT_MESSAGES_PER_MINUTE=5`, and restart. Put the normal value back afterwards.
+3. Copy `scripts/verify_service.py` to the other machine.
+4. Set the key in the environment variable `AIA_API_KEY` (or pass `--key`) and run:
+
+```bash
+export AIA_API_KEY="<your key>"
+python3 verify_service.py --url http://<lan-ip>:8001 --n 6
+```
+
+Flags:
+- `--url`: the Agent address (port 8001), required.
+- `--key`: the API key, instead of `AIA_API_KEY`.
+- `--n`: number of parallel requests (default 6).
+- `--model` and `--provider-id`: choose the model and provider; given together, otherwise the script picks one.
+- `--timeout`: seconds allowed per request.
+- `--rate-mode chat|fast|both`: how the message limit is shown. `chat` sends real turns until the 429. `fast` uses a tiny chat that overflows its context so the replies come back at once; use it with a slow model that cannot finish enough turns inside one minute. `both` runs both.
+- `--rate-max-attempts`: ceiling of requests in one rate sequence.
+- `--server-rate-limit` and `--server-max-concurrent`: the limits set on the host, written to the report for information only.
+- `--out`: output directory (default `verify_out_<time>`).
+- `--keep`: keep the chats the script created (they are deleted by default).
+
+Output: the console, `verify_results.md` (tables) and `verify_results.json` (raw records) in the output directory. The key is never written to them. Exit codes: `0` everything behaved as expected, `1` an expectation was not met, `2` the check could not start (bad arguments, server unreachable, key refused, no usable model).
 
 ## Tips
 
