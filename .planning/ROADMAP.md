@@ -68,9 +68,9 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 19-01-PLAN.md — ApiKey table, Bearer branch in get_current_user, cookie-only /api/v1/api-keys routes, tests (wave 1)
-- [ ] 19-02-PLAN.md — agent/ws.py: extract _run_chat_turn, leaf-restore bug fix on failed turns, LLM_ERROR cause (wave 1)
-- [ ] 19-03-PLAN.md — Settings "API ключи" section, one-time key modal with curl example, chat_updated handling (wave 1)
+- [x] 19-01-PLAN.md — ApiKey table, Bearer branch in get_current_user, cookie-only /api/v1/api-keys routes, tests (wave 1)
+- [x] 19-02-PLAN.md — agent/ws.py: extract _run_chat_turn, leaf-restore bug fix on failed turns, LLM_ERROR cause (wave 1)
+- [x] 19-03-PLAN.md — Settings "API ключи" section, one-time key modal with curl example, chat_updated handling (wave 1)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -164,7 +164,7 @@ Full details: [milestones/v3.0-ROADMAP.md](milestones/v3.0-ROADMAP.md)
 | 16. Citations and anti-hallucination (Day 24) | v3.0 | 8/8 | Complete    | 2026-10-04 |
 | 17. Mini-chat with RAG and task memory (Day 25) | v3.0 | 11/11 | Complete    | 2026-10-10 |
 | 18. LAN exposure (Day 30) | v4.0 | 6/7 | In Progress|  |
-| 19. API keys and HTTP chat (Day 30) | v4.0 | 0/0 | Not started | - |
+| 19. API keys and HTTP chat (Day 30) | v4.0 | 3/6 | In Progress|  |
 | 20. Limits, verification script and report (Day 30) | v4.0 | 0/0 | Not started | - |
 
 ## Backlog
