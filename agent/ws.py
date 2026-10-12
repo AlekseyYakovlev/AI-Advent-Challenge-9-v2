@@ -2,7 +2,6 @@
 
 import asyncio
 import json
-import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Protocol
@@ -22,7 +21,7 @@ from agent.context_engine import (
     serialize_tool_trace,
 )
 from agent.dependencies import get_current_user_ws
-from agent import invariants, tasks
+from agent import invariants, limits, tasks
 from agent.llm_client import LLMClient, count_tokens
 from agent.mcp_tools import McpToolset, build_mcp_toolset
 from agent.rag import MODE_RAG
@@ -34,7 +33,6 @@ from agent.state import (
     chat_locks,
     current_chat_model,
     current_chat_provider_id,
-    ws_rate_limiter,
 )
 from agent.schemas import (
     TOOL_EVENT_ARGS_PREVIEW_CHARS,
@@ -71,8 +69,6 @@ from shared.origins import is_allowed_origin
 logger = get_logger(__name__)
 
 IDLE_TIMEOUT_SECONDS = 300.0
-RATE_LIMIT_MAX = 10
-RATE_LIMIT_WINDOW = 60.0
 TASK_TOOL_NAMES = ("create_task", "transition_task", "pause_task", "resume_task")
 SCHEDULER_TOOL_NAMES = ("schedule_task", "list_scheduled_tasks", "cancel_scheduled_task")
 NON_MEMORY_TOOL_NAMES = TASK_TOOL_NAMES + SCHEDULER_TOOL_NAMES
@@ -157,19 +153,6 @@ async def _user_owns_chat(db: AsyncSession, user_id: int, chat_id: int) -> bool:
     if chat is None or chat.user_id != user_id:
         logger.warning("ws_auth_rejected", chat_id=chat_id, reason="not_owner")
         return False
-    return True
-
-
-def _check_rate_limit(chat_id: int) -> bool:
-    """Allow up to RATE_LIMIT_MAX messages per chat per minute."""
-    now = time.monotonic()
-    timestamps = ws_rate_limiter.setdefault(chat_id, [])
-    ws_rate_limiter[chat_id] = [
-        ts for ts in timestamps if now - ts < RATE_LIMIT_WINDOW
-    ]
-    if len(ws_rate_limiter[chat_id]) >= RATE_LIMIT_MAX:
-        return False
-    ws_rate_limiter[chat_id].append(now)
     return True
 
 
@@ -1207,6 +1190,41 @@ async def _run_chat_turn(
         )
 
 
+class _QueueStatsSink:
+    """Pass frames through and add the queue wait to the stats of the done frame."""
+
+    def __init__(self, inner: Any, queue_wait_seconds: float) -> None:
+        self._inner = inner
+        self._queue_wait_seconds = queue_wait_seconds
+
+    async def send_json(self, frame: dict[str, Any]) -> None:
+        if frame.get("type") == "done" and isinstance(frame.get("stats"), dict):
+            stats = dict(frame["stats"])
+            stats["queue_wait_seconds"] = self._queue_wait_seconds
+            frame = {**frame, "stats": stats}
+        await self._inner.send_json(frame)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+async def run_limited_turn(
+    websocket: Any,
+    chat_id: int,
+    payload: MessagePayload,
+) -> None:
+    """Run one chat turn inside a generation slot; the caller holds the per-chat lock."""
+
+    async def announce_queue() -> None:
+        logger.info("turn_queued", chat_id=chat_id)
+        await websocket.send_json({"type": "queued", "chat_id": chat_id})
+
+    async with limits.generation_gate.slot(on_wait=announce_queue) as waited:
+        if waited > 0:
+            logger.info("turn_dequeued", chat_id=chat_id, queue_wait_seconds=waited)
+        await _run_chat_turn(_QueueStatsSink(websocket, waited), chat_id, payload)
+
+
 async def _handle_chat_message(
     websocket: WebSocket,
     chat_id: int,
@@ -1216,7 +1234,7 @@ async def _handle_chat_message(
     if chat_id not in chat_locks:
         chat_locks[chat_id] = asyncio.Lock()
     async with chat_locks[chat_id]:
-        await _run_chat_turn(websocket, chat_id, payload)
+        await run_limited_turn(websocket, chat_id, payload)
 
 
 async def broadcast_model_event(model_id: str, event_type: str) -> None:
@@ -1267,11 +1285,17 @@ async def ws_chat(websocket: WebSocket, chat_id: int) -> None:
                 await websocket.close(code=1000, reason="Idle timeout")
                 break
 
-            if not _check_rate_limit(chat_id):
+            retry_after = limits.check_message_rate(chat_id)
+            if retry_after is not None:
+                logger.warning(
+                    "rate_limited", chat_id=chat_id, channel="ws", retry_after=retry_after
+                )
                 await websocket.send_json(
                     {
                         "type": "error",
-                        "detail": "Rate limit exceeded",
+                        "code": limits.CODE_RATE_LIMITED,
+                        "detail": limits.MSG_RATE_LIMITED,
+                        "retry_after": retry_after,
                     },
                 )
                 continue
