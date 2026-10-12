@@ -16,6 +16,7 @@ from shared.auth import hash_password
 from shared.config import settings
 from shared.logger import get_logger
 from shared.models import (  # noqa: F401
+    ApiKey,
     Chat,
     LlmProvider,
     LlmProviderSeed,
