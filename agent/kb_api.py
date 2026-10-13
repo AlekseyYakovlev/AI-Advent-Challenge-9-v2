@@ -4,12 +4,14 @@ import asyncio
 import hashlib
 import re
 import unicodedata
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, BinaryIO
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile, status
 from pydantic import BaseModel, Field
+from sqlalchemy import update
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -36,6 +38,7 @@ from agent.kb_limits import (
     MAX_REQUEST_BYTES,
     MAX_SOURCE_NAME_CHARS,
     MAX_TOTAL_BYTES,
+    PHASE_ADDING,
     SEARCH_DEFAULT_TOP_K,
     SEARCH_MAX_TOP_K,
 )
@@ -47,8 +50,8 @@ from agent.kb_search import (
     KbNotReadyError,
     search_kb,
 )
-from shared.database import get_session
-from shared.kb_storage import remove_kb_dir, uploads_dir
+from shared.database import async_session_factory, get_session
+from shared.kb_storage import new_staging_dir, remove_kb_dir, remove_tree, uploads_dir
 from shared.logger import get_logger
 from shared.models import KbDocument, KbStatus, KbStrategy, KnowledgeBase, User
 
@@ -69,6 +72,8 @@ MSG_EMPTY_FILE = "Файл {name} пустой."
 MSG_DUPLICATE = "Файл {name} уже добавлен."
 MSG_BAD_STRATEGY = "Неизвестная стратегия разбиения."
 MSG_MODEL_REQUIRED = "Выберите модель эмбеддингов."
+MSG_ADD_NOT_READY = "Добавлять файлы можно только в готовую базу знаний."
+MSG_ADD_BUSY = "Идёт добавление файлов. Дождитесь его окончания."
 
 READ_CHUNK_BYTES = 1024 * 1024
 _CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
@@ -242,6 +247,81 @@ async def _store_all(
     return stored_rows
 
 
+async def _classify_additions(
+    session: AsyncSession,
+    kb_id: int,
+    staging: Path,
+    stored: list[tuple[str, str, int, str]],
+) -> tuple[list[kb_indexer.AddItem], int]:
+    """Split staged files into added, replaced and unchanged by source name and hash."""
+    rows = await session.exec(
+        select(KbDocument.id, KbDocument.filename, KbDocument.sha256).where(
+            KbDocument.kb_id == kb_id
+        )
+    )
+    groups: dict[str, list[tuple[int, str]]] = {}
+    for doc_id, filename, sha in rows.all():
+        groups.setdefault(filename, []).append((doc_id, sha))
+    items: list[kb_indexer.AddItem] = []
+    unchanged = 0
+    for source, stored_name, size, sha in stored:
+        group = groups.get(source, [])
+        if len(group) == 1 and group[0][1] == sha:
+            unchanged += 1
+            await asyncio.to_thread((staging / stored_name).unlink, missing_ok=True)
+            continue
+        items.append(
+            kb_indexer.AddItem(
+                source=source,
+                stored_name=stored_name,
+                sha256=sha,
+                size_bytes=size,
+                replaces=tuple(sorted(doc_id for doc_id, _ in group)),
+            )
+        )
+    return items, unchanged
+
+
+async def _claim_kb_for_add(session: AsyncSession, kb_id: int) -> bool:
+    """Atomically mark a ready, idle base as being added to; False when another request won."""
+    try:
+        result = await session.execute(
+            update(KnowledgeBase)
+            .where(
+                KnowledgeBase.id == kb_id,
+                KnowledgeBase.status == KbStatus.READY,
+                KnowledgeBase.phase.is_(None),
+            )
+            .values(
+                phase=PHASE_ADDING,
+                error=None,
+                done_chunks=0,
+                total_chunks=0,
+                updated_at=datetime.now(timezone.utc),
+            )
+        )
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    return result.rowcount == 1
+
+
+async def _release_add_claim(kb_id: int) -> None:
+    """Clear the addition marker when a claimed request fails before its job starts."""
+    async with async_session_factory() as session:
+        try:
+            await session.execute(
+                update(KnowledgeBase)
+                .where(KnowledgeBase.id == kb_id, KnowledgeBase.phase == PHASE_ADDING)
+                .values(phase=None)
+            )
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+
+
 @router.get("/embedding-models")
 async def embedding_models_route(
     current_user: User = Depends(get_current_user),
@@ -399,6 +479,71 @@ async def delete_kb_route(
     kb = await _get_owned_kb(session, kb_id, current_user.id)
     await kb_indexer.delete_kb(session, kb)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/{kb_id}/files",
+    response_model=KbOut,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(require_allowed_origin), Depends(_require_content_length_within_cap)],
+)
+async def add_files_route(
+    kb_id: int,
+    files: list[UploadFile] | None = File(None),
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> KbOut:
+    """Validate and stage the uploads, classify them against the base and queue the addition (202)."""
+    user_id = current_user.id
+    kb = await _get_owned_kb(session, kb_id, user_id)
+    if kb.status != KbStatus.READY:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail=MSG_ADD_NOT_READY)
+    if kb.phase is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT, detail=MSG_ADD_BUSY)
+    try:
+        names = _clean_source_names(files)
+    except HTTPException as exc:
+        logger.warning("kb_add_rejected", kb_id=kb_id, user_id=user_id, status=exc.status_code)
+        raise
+    staging: Path | None = None
+    claimed = False
+    try:
+        staging = await asyncio.to_thread(new_staging_dir, user_id, kb_id)
+        stored = await _store_all(files or [], names, staging)
+        items, unchanged = await _classify_additions(session, kb_id, staging, stored)
+        claimed = await _claim_kb_for_add(session, kb_id)
+        if not claimed:
+            raise HTTPException(status.HTTP_409_CONFLICT, detail=MSG_ADD_BUSY)
+        await session.refresh(kb)
+        kb_indexer.spawn_add_job(kb.id, user_id, staging, items, unchanged)
+    except UploadRejectedError as exc:
+        await session.rollback()
+        if staging is not None:
+            await asyncio.to_thread(remove_tree, staging)
+        logger.warning("kb_add_rejected", kb_id=kb_id, user_id=user_id, reason="upload_rule")
+        raise _unprocessable(exc.message) from exc
+    except HTTPException:
+        if staging is not None:
+            remove_tree(staging)
+        raise
+    except BaseException:
+        # BaseException so a client disconnect (CancelledError) still cleans up.
+        await asyncio.shield(session.rollback())
+        if staging is not None:
+            remove_tree(staging)
+        if claimed:
+            await asyncio.shield(_release_add_claim(kb_id))
+        raise
+    hub.publish(user_id, kb_progress_frame(kb))
+    logger.info(
+        "kb_add_accepted",
+        kb_id=kb_id,
+        user_id=user_id,
+        added=sum(1 for item in items if not item.replaces),
+        replaced=sum(1 for item in items if item.replaces),
+        unchanged=unchanged,
+    )
+    return kb_out(kb)
 
 
 @router.post(
