@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from agent import limits, ws
+from agent import help_command, limits, ws
 from agent.dependencies import get_current_user, require_allowed_origin, require_json_content_type
 from agent.events import hub
 from agent.headless import RecordingSink
@@ -57,6 +57,18 @@ def _error_response(
 def _internal_error() -> JSONResponse:
     """Build the fixed 500 response that never leaks exception text."""
     return _error_response(500, MSG_INTERNAL, CODE_INTERNAL_ERROR, None)
+
+
+def _notice_response(chat_id: int, frame: dict[str, Any]) -> JSONResponse:
+    """Build the 200 body of a /help service notice; nothing is stored in the chat."""
+    return JSONResponse(
+        status_code=200,
+        content={
+            "chat_id": chat_id,
+            "stored": False,
+            "help": {"kind": frame["kind"], "text": frame["text"]},
+        },
+    )
 
 
 def _map_error_frame(frame: dict[str, Any]) -> JSONResponse:
@@ -109,6 +121,7 @@ async def _build_success(
         task_writes=done.get("task_writes") or [],
         invariant_conflict=done.get("invariant_conflict"),
         rag=done.get("rag"),
+        help=(done.get("rag") or {}).get("help"),
     )
 
 
@@ -121,7 +134,7 @@ async def _run_http_turn(
 ) -> JSONResponse | HttpChatResponse:
     """Run the turn while owning the already-acquired chat lock and release it at the end."""
     try:
-        if kb_given:
+        if kb_given and help_command.parse_help(body.content) is None:
             try:
                 async with async_session_factory() as session:
                     await apply_chat_kb(session, chat_id, user_id, body.kb_id)
@@ -138,6 +151,11 @@ async def _run_http_turn(
         except Exception as exc:
             logger.error("http_chat_failed", chat_id=chat_id, error=str(exc))
             return _internal_error()
+        notice = next(
+            (f for f in sink.frames if f.get("type") == help_command.NOTICE_FRAME_TYPE), None,
+        )
+        if notice is not None:
+            return _notice_response(chat_id, notice)
         done = next((f for f in sink.frames if f.get("type") == "done"), None)
         if done is None:
             errors = [
@@ -182,6 +200,12 @@ async def post_chat_message(
         provider_id=body.provider_id,
         kb_selection=kb_selection,
     )
+    question = help_command.parse_help(body.content)
+    if question is not None:
+        notice = await help_command.resolve_help_notice(session, current_user.id, question)
+        if notice is not None:
+            logger.info("http_chat_finished", chat_id=chat_id, status=200)
+            return _notice_response(chat_id, notice)
     lock = chat_locks.setdefault(chat_id, asyncio.Lock())
     if lock.locked():
         return _error_response(409, MSG_CHAT_BUSY, CODE_CHAT_BUSY, False)

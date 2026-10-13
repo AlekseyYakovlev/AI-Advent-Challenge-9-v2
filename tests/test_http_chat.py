@@ -39,6 +39,7 @@ RESPONSE_KEYS = {
     "task_writes",
     "invariant_conflict",
     "rag",
+    "help",
 }
 
 

@@ -370,7 +370,7 @@ class HttpChatRequest(MessagePayload):
     """Body of the plain-HTTP chat message; an omitted kb_id and an explicit null differ.
 
     Omitted keeps the chat's saved RAG configuration, null turns RAG off, an id selects
-    that knowledge base.
+    that knowledge base. A kb_id sent with a /help message is ignored.
     """
 
     kb_id: int | None = Field(default=None, ge=1)
@@ -391,6 +391,7 @@ class HttpChatResponse(BaseModel):
     task_writes: list[dict[str, Any]]
     invariant_conflict: dict[str, Any] | None
     rag: dict[str, Any] | None
+    help: dict[str, Any] | None = None
 
 
 class ToolCallEvent(BaseModel):
