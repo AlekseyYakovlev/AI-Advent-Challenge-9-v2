@@ -759,3 +759,30 @@ no UI and no API surface and exists for the «no memory» baseline run of `scrip
 
 **Measured behaviour** is in `Day25_report.md` (two dialog scenarios, memory against the baseline, goal
 adherence judged by DeepSeek).
+
+## /help command (Day 31)
+
+`/help <question>` answers from a documentation knowledge base the user marked and from a chosen set of tools. It is a separate turn type, not a mode of the ordinary RAG turn.
+
+**Recognition.** `agent/help_command.py::parse_help` accepts a message whose first word is `/help` (case-insensitive, leading whitespace allowed); `/helpme` is ordinary text. The branch sits at the top of `agent/ws.py::_run_chat_turn`, which both the WebSocket handler and the HTTP chat endpoint (`agent/http_chat.py`) call, so the rule exists once, on the server.
+
+**Service notices.** `/help` without a question, and `/help <question>` without a marked ready base, produce a notice (`{"type": "help_notice", "kind": "usage" | "no_base", "stored": false}`; over HTTP a `200` body with `stored: false`). A notice is decided before the rate check, the generation queue slot and the provider lookup, so it calls no model, stores nothing and costs no slot. A real turn takes the slots as any other turn.
+
+**Settings.** Table `HelpConfig` (one row per user, `user_id` primary key): the marked `kb_id`, the search settings (`top_k`, `candidate_k`, `threshold`, four stage flags), the stored MCP server choice and three built-in group flags. `kb_id` is a foreign key with `ON DELETE SET NULL`, so deleting the marked base clears the mark. The row is read only by `/help`; the chat's `ChatRagConfig` is never read or written, and a `kb_id` in an HTTP `/help` request is ignored (`apply_chat_kb` is skipped).
+
+**Flow of a real turn (`agent/ws.py::_run_help_turn`).**
+1. Load `HelpConfig` and the marked base with the chat owner's id; the base must be owned and ready (a base that is still adding files counts as ready).
+2. Store the user message exactly as typed.
+3. `build_help_tools` selects the tools; `build_help_messages` builds the whole outbound list: the `/help` system prompt, the clock line and the tool rule, then the question. No chat history, profile, invariants or chat system prompt are sent.
+4. `prepare_help_turn` runs the retrieval pipeline with the `/help` settings. There is no «не знаю» gate: when nothing passes the threshold the model gets a note that nothing was found and may still answer from tools or say it does not know. Fragments are budgeted like ordinary RAG and put in strict mode, so the model must cite `[N]` and add a «Цитаты:» block.
+5. `_run_turn_middle` (shared with the ordinary turn) streams the answer and runs tool rounds, with `allowed_tools` set to exactly the enabled built-in tools.
+6. `finalize_help_turn` verifies the quotes; when a tool call succeeded and every remaining quote is code-picked (not written by the model), those automatic quotes are dropped so a git-only answer does not show unrelated quotes.
+7. Two ordinary messages are stored (user and assistant) and `done` is sent.
+
+**Tool selection.** MCP servers are chosen as whole servers, never as single tools. With no stored choice only the server named `local-git` is used. The three built-in groups (memory, tasks, scheduler) are off by default; `allowed_tools` is always an explicit `frozenset`, empty by default, so no built-in tool is callable unless enabled. Enabled built-in groups and write-capable MCP servers can change data during a `/help` turn.
+
+**Failures never refuse the turn.** A chosen MCP server that is missing, disabled or did not connect becomes an entry in `rag.help.warnings` and the turn continues without its tools. A retrieval failure becomes `rag.warning`, and the turn continues without fragments.
+
+**Skipped side jobs.** A `/help` turn updates no task memory, extracts no facts, generates no chat title and runs no invariant resolution or self-critique; `done.invariant_conflict` is always `null`. A new chat opened with `/help` keeps the default title until an ordinary message is sent.
+
+**Storage.** The label and the warnings are stored in the `help` object inside `Message.rag_sources` of the assistant message, next to the sources and quotes, so they survive a reload. Later ordinary turns see the stored pair as ordinary history. Tool-call cards are live-only for every chat and are not restored from the message tree after a reload.

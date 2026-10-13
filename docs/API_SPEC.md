@@ -900,6 +900,8 @@ Request body:
 | `provider_id` | integer or omitted | Id from `GET /api/v1/llm-providers`; omitted means the user's LM Studio provider |
 | `kb_id` | integer, `null` or omitted | An id selects that knowledge base and saves it for the chat with mode `rag`, leaving the other saved search settings unchanged. `null` turns RAG off and saves that. Omitted keeps the chat's saved RAG configuration, so the first turn of a new chat has no RAG. A newly created config row has `strict` on, as in the UI |
 
+A message that starts with `/help` is a separate command: it ignores `kb_id` and uses the documentation base marked in the `/help` settings. See "/help command (Day 31)".
+
 ```json
 {"content": "Что такое сжатие контекста?", "model": "qwen2.5-7b-instruct", "kb_id": 3}
 ```
@@ -1156,6 +1158,112 @@ The response lists the variable names only:
 
 Env values are never returned by any route. Updating a server with the value `•••` keeps the stored
 value. The tools are exposed to the model as `mcp__local-git__<tool>` and `mcp__github__<tool>`.
+
+## /help command (Day 31)
+
+`/help <question>` answers a question about the project from a user-marked documentation knowledge base and from the chosen tools (by default the read-only `local-git` MCP server). The command works in the browser (WebSocket) and over `POST /api/v1/chats/{chat_id}/messages`. The settings are stored per user.
+
+### GET /api/v1/help/config
+
+Returns the caller's `/help` settings; defaults when never configured. Authentication: cookie session or API key, as for the other REST routes.
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `kb_id` | integer or `null` | The marked documentation base (only the caller's own base is shown) |
+| `kb_name` | string or `null` | Name of that base |
+| `kb_status` | string or `null` | Status of that base |
+| `top_k` | integer | Fragments passed to the model, default 5 |
+| `candidate_k` | integer | Candidates kept at the first stage, default 20 |
+| `threshold` | number or `null` | Cosine cut-off, default 0.45; `null` means the calibrated value of the embedding model |
+| `calibrated_threshold` | number or `null` | Calibrated value for the marked base's embedding model, `null` when unknown |
+| `lexical`, `llm_rerank`, `hybrid`, `rewrite` | boolean | Search stages, same meaning as in the chat RAG settings, all off by default |
+| `mcp_server_ids` | list of integers | MCP servers used by `/help` (whole servers, never single tools) |
+| `mcp_default` | boolean | `true` while no explicit choice is stored: the server named `local-git` is used |
+| `mcp_missing` | list of strings | Names of stored servers that no longer exist |
+| `tools_memory`, `tools_tasks`, `tools_scheduler` | boolean | Built-in tool groups available to `/help`, all off by default |
+
+The default `threshold` of a new setting is `0.45` (an explicit `null` switches to the calibrated value). It is lower than the calibrated `0.67` of the `bge-m3` model because the control set measured on the project documentation scored its documentation questions between 0.5584 and 0.6665 and the outside question at 0.3944; the measurement is in `eval_out/day31/CALIBRATION.md`.
+
+```json
+{
+  "kb_id": 3,
+  "kb_name": "Project docs",
+  "kb_status": "ready",
+  "top_k": 5,
+  "candidate_k": 20,
+  "threshold": 0.45,
+  "calibrated_threshold": 0.67,
+  "lexical": false,
+  "llm_rerank": false,
+  "hybrid": false,
+  "rewrite": false,
+  "mcp_server_ids": [7],
+  "mcp_default": true,
+  "mcp_missing": [],
+  "tools_memory": false,
+  "tools_tasks": false,
+  "tools_scheduler": false
+}
+```
+
+### PUT /api/v1/help/config
+
+Stores the settings and returns the same body as GET. The `Content-Type` must be `application/json`; a foreign `Origin` is refused with `403`. Every field is optional and an omitted field stays unchanged.
+
+| Field | Range | Notes |
+|-------|-------|-------|
+| `kb_id` | integer >= 1 or `null` | An explicit `null` clears the mark. The base must be the caller's and ready |
+| `top_k` | 1..20 | `candidate_k` is raised to `top_k` when smaller |
+| `candidate_k` | 1..50 | |
+| `threshold` | 0..1 or `null` | An explicit `null` returns to the calibrated value |
+| `lexical`, `llm_rerank`, `hybrid`, `rewrite`, `tools_memory`, `tools_tasks`, `tools_scheduler` | strict booleans | |
+| `mcp_server_ids` | list of the caller's server ids, at most 50 | An explicit `null` returns to the default (`local-git`); an empty list means no MCP server |
+
+Status codes: `200`, `401` (no session or key), `403` (foreign origin), `404` (base or server missing or owned by someone else), `422` (base not ready, value out of range, not a strict boolean). Deleting the marked base clears the mark.
+
+### Command recognition
+
+A message is a `/help` command when, after optional leading whitespace, it starts with the whole word `/help` (case-insensitive) followed by the end of the text or whitespace. `/helpme` and `see /help` are ordinary messages. The server decides this for both channels; the browser does not.
+
+### WebSocket
+
+Two cases return a service notice instead of a turn:
+
+```json
+{"type": "help_notice", "kind": "usage", "text": "Использование: /help <вопрос> ...", "stored": false}
+```
+
+- `kind` is `usage` for `/help` without a question, `no_base` when no base is marked or the marked base is not ready.
+- No `done` frame follows a notice. Nothing is stored, no model is called, and no rate slot and no generation queue slot is used.
+
+A real turn streams `token` frames and `tool_call` frames as any other turn and ends with `done`. Its `rag` object is the ordinary RAG payload (`sources`, `quotes`, `strict`, `gated`, `search`) with these values: `strict` is `true` when fragments were passed, `gated` is always `false` (there is no «не знаю» gate), and an additive key `help = {"kb_name": "<base name>", "warnings": [{"server": "local-git", "text": "..."}]}`. A warning is added for every chosen MCP server that is missing or did not connect; the turn continues without its tools. A search failure becomes `rag.warning`, and the turn also continues. `invariant_conflict` is always `null`.
+
+The same `help` object is stored in `Message.rag_sources` of the assistant message, so the label, sources, quotes and warnings are restored after a reload. Tool-call cards are live-only and are not restored.
+
+### HTTP: POST /api/v1/chats/{chat_id}/messages with a /help message
+
+A successful turn returns the ordinary body (see "HTTP chat (Day 30)") with `content`, `rag`, `tool_calls` and an additional key `help`:
+
+```json
+{"help": {"kb_name": "Project docs", "warnings": []}}
+```
+
+`help` is `null` for ordinary messages. A notice returns status `200` with a body that stores nothing:
+
+```json
+{"chat_id": 12, "stored": false, "help": {"kind": "no_base", "text": "База документации не выбрана. ..."}}
+```
+
+This happens for `/help` without a question (`kind` `usage`) and for no marked or no ready base (`kind` `no_base`). The notice is returned before the busy check and the rate check.
+
+A `kb_id` sent together with a `/help` message is ignored: the answer comes from the marked documentation base and the chat's RAG settings stay unchanged. The value is not even validated.
+
+```bash
+curl -s -X POST http://127.0.0.1:8001/api/v1/chats/12/messages \
+  -H "Authorization: Bearer <API_KEY>" \
+  -H "Content-Type: application/json" \
+  -d '{"content": "/help как запустить приложение?", "model": "qwen2.5-7b-instruct"}'
+```
 
 ## Environment Settings
 
