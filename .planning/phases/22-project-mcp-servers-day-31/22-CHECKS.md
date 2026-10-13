@@ -72,6 +72,55 @@ Status: not run
 
 To repeat: start LM Studio with a chat model loaded, keep ports 18000/18001 free, run `python scripts/e2e_mcp_git_playwright.py` and add the dated result below this record.
 
+Run 2 (2026-10-13, during `/bm:verify-work 22`), same command, LM Studio running
+Exit code: 1
+Model id: qwen/qwen3.5-9b
+
+```
+PASS: local-git added through the «MCP серверы» form
+FAIL: scenario run aborted - Error: Page.evaluate: TypeError: Cannot read properties of undefined (reading 'value')
+RESULT: FAIL (model qwen/qwen3.5-9b)
+```
+
+Cause: a defect in the check script, not in the app. `select_chat_model` read the `#model-select` options before `loadModels()` had filled the picker (the failure screenshot still showed the «Загрузка моделей…» placeholder). Fix: the script now waits for an option naming the model before selecting it.
+
+Run 3 (2026-10-13), same command after the script fix
+Exit code: 0
+Model id: qwen/qwen3.5-9b
+
+```
+PASS: isolated copy patched to ports 18000/18001
+PASS: isolated app instance is up (UI :18000 + Agent :18001)
+PASS: local-git added through the «MCP серверы» form
+PASS: first question: new tool-call card for the branch tool - 🔧 local-git · git_current_branch — ok Аргументы{} Результат Branch: alpha
+PASS: first answer names the branch alpha - Проект находится на ветке alpha.
+PASS: second question: a second new tool-call card - 🔧 local-git · git_current_branch — ok Аргументы{} Результат Branch: beta
+PASS: second answer follows the switch to beta - Проект сейчас находится на ветке beta.
+PASS: isolated ports are free again
+RESULT: PASS (attempt 1 of 2, model qwen/qwen3.5-9b)
+```
+
+Status: passed (Run 3)
+
+## GHUB-01 token mask in the Settings form (browser)
+
+Date: 2026-10-13, during `/bm:verify-work 22`. One-off Playwright run on an isolated copy (ports 18000/18001, scratch database, removed afterwards); the script was a throwaway and is not in the repository. The real token was read from the local `.env` into the form only; its value was never printed.
+
+```
+PASS: github connected and lists 16 tools - github подключено ... github-mcp-server · v2.0.2 · MCP 2025-11-25 ▸ Инструменты (16)
+PASS: form shows the token masked - GITHUB_PERSONAL_ACCESS_TOKEN=•••
+PASS: token value absent from the page DOM
+PASS: token value absent from the frontend state
+PASS: token value absent from every API response body - 26 responses
+PASS: re-saving the masked form keeps the stored token (still 16 tools)
+PASS: token value absent from the app log
+RESULT: PASS
+```
+
+Note: saving the form does not connect the server; «Подключить» was pressed after saving, as a user would.
+
+Status: passed
+
 ## Test suite
 
 Date: 2026-10-13. Commit at the time of the run: c266dbe (after Plans 22-04 and 22-05 were complete).
