@@ -78,4 +78,66 @@ Status: pending (recorded by Plan 22-06)
 
 ## GHUB-02 GitHub server
 
-Status: pending (recorded by Plan 22-06)
+### Binary
+
+`C:\Users\Aleksey\go\bin\github-mcp-server.exe` exists. `github-mcp-server.exe --version`: GitHub MCP Server, Version 2.0.2, Commit eb47a99ddb866ca2b8a162920e6bda9521f33ebb, Build Date 2026-10-08T11:26:40Z.
+SHA-256 of the exe (Get-FileHash): `1BBF1CD5BE216D5C622CCB0DA4529D747C983FCF6BBF76F9C3E6C3B32877C1DF`.
+
+### Tool listing (scripts/mcp_list_tools.py)
+
+Command: `python scripts/mcp_list_tools.py C:\Users\Aleksey\go\bin\github-mcp-server.exe stdio --read-only --toolsets=repos,pull_requests` (no token passed; the server started and listed without it).
+Exit code: 0
+
+```
+Server: github-mcp-server
+Version: 2.0.2
+Protocol: 2025-11-25
+
+Tools (16):
+
+- get_commit
+- get_file_contents
+- get_latest_release
+- get_release_by_tag
+- get_tag
+- list_branches
+- list_commits
+- list_pull_requests
+- list_releases
+- list_repository_collaborators
+- list_tags
+- pull_request_read
+- search_code
+- search_commits
+- search_pull_requests
+- search_repositories
+```
+
+(Descriptions omitted here; server name, version, count and the 16 tool names are verbatim from the script output.)
+
+16 tools listed; the set equals the 16 expected names exactly (no difference). None of the write tools `create_pull_request`, `merge_pull_request`, `update_pull_request`, `create_branch`, `create_or_update_file`, `push_files` is present.
+
+Listing: passed
+
+### Real-binary pytest (tests/test_mcp_real_github.py)
+
+Command: `pytest tests/test_mcp_real_github.py -v -rs`, run by the executor with the token loaded from the local `.env` into the process environment (value never printed).
+
+```
+tests/test_mcp_real_github.py::test_github_read_only_toolset_via_app_connect PASSED [ 33%]
+tests/test_mcp_real_github.py::test_github_list_branches_read_call_succeeds PASSED [ 66%]
+tests/test_mcp_real_github.py::test_github_token_value_is_never_returned_by_api PASSED [100%]
+======================== 3 passed, 2 warnings in 1.45s ========================
+```
+
+Pytest: passed (run by the executor)
+
+### In-app connection (reported by the user)
+
+not run: the user did not report an in-app connection in Settings in this session. The masking is covered automatically by the always-on test `test_github_token_value_is_never_returned_by_api` (PASSED in the run above); the read call `test_github_list_branches_read_call_succeeds` (PASSED) went through the app's connect and dispatch path with the real token.
+
+### Status
+
+Status: passed
+
+For Phase 23: copy the `Listing: passed`, `Pytest: passed` and `Status: passed` lines of this section, together with the release version 2.0.2, into `Day31_report.md`.
