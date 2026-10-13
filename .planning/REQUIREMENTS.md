@@ -31,8 +31,8 @@ Requirements for milestone v5.0. Each maps to exactly one roadmap phase.
 
 ### GitHub MCP Server
 
-- [ ] **GHUB-01**: The documentation describes how to connect the official `github-mcp-server` binary in read-only mode with the `repos` and `pull_requests` toolsets (command, arguments, token variable), and the token value is never shown back after saving.
-- [ ] **GHUB-02**: With that configuration the app connects and lists the server's read-only tools, confirmed by a recorded check.
+- [x] **GHUB-01**: The documentation describes how to connect the official `github-mcp-server` binary in read-only mode with the `repos` and `pull_requests` toolsets (command, arguments, token variable), and the token value is never shown back after saving.
+- [x] **GHUB-02**: With that configuration the app connects and lists the server's read-only tools, confirmed by a recorded check.
 
 ### Help Command
 
@@ -94,8 +94,8 @@ Deferred to later days of Week 7. Tracked but not in the current roadmap.
 | PGIT-02 | Phase 22 | Complete |
 | PGIT-03 | Phase 22 | Pending |
 | PGIT-04 | Phase 22 | Pending |
-| GHUB-01 | Phase 22 | Pending |
-| GHUB-02 | Phase 22 | Pending |
+| GHUB-01 | Phase 22 | Complete |
+| GHUB-02 | Phase 22 | Complete |
 | HELP-01 | Phase 23 | Pending |
 | HELP-02 | Phase 23 | Pending |
 | HELP-03 | Phase 23 | Pending |
