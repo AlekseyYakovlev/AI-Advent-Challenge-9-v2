@@ -120,7 +120,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 23-05-PLAN.md — Control-run driver, threshold re-measurement, prompt spike on both models, frozen control set
+- [x] 23-05-PLAN.md — Control-run driver, threshold re-measurement, prompt spike on both models, frozen control set
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
@@ -211,7 +211,7 @@ Full details: [milestones/v4.0-ROADMAP.md](milestones/v4.0-ROADMAP.md)
 | 20. Limits, verification script and report (Day 30) | v4.0 | 8/8 | Complete    | 2026-10-12 |
 | 21. Project docs in RAG (Day 31) | v5.0 | 7/7 | Complete   | 2026-10-13 |
 | 22. Project MCP servers (Day 31) | v5.0 | 6/6 | Complete   | 2026-10-13 |
-| 23. /help command, verification and report (Day 31) | v5.0 | 4/8 | In Progress|  |
+| 23. /help command, verification and report (Day 31) | v5.0 | 5/8 | In Progress|  |
 
 ## Backlog
 
