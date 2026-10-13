@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v5.0
 milestone_name: "Week 7: Pipeline"
 status: executing
-last_updated: "2026-10-13T07:36:05.096Z"
-last_activity: 2026-10-12 -- Phase 21 execution started
+last_updated: "2026-10-13T08:59:58.335Z"
+last_activity: 2026-10-13 -- Phase 22 execution started
 progress:
   total_phases: 6
   completed_phases: 1
   total_plans: 13
-  completed_plans: 7
+  completed_plans: 8
   percent: 17
 ---
 
@@ -21,14 +21,14 @@ See: .planning/PROJECT.md (updated 2026-10-13)
 
 **Project:** AiAdventAgentV2
 **Core value:** The agent must demonstrably separate and manage distinct kinds of state — short-term dialog, working task data, long-term profile/knowledge, and task lifecycle — making explicit, inspectable decisions about what goes where.
-**Current focus:** Phase 21 — project-docs-in-rag-day-31
+**Current focus:** Phase 22 — project-mcp-servers-day-31
 
 ## Current Position
 
-Phase: 21 (project-docs-in-rag-day-31) — EXECUTING
-Plan: 7 of 7
-Status: Executing Phase 21
-Last activity: 2026-10-12 -- Phase 21 execution started
+Phase: 22 (project-mcp-servers-day-31) — EXECUTING
+Plan: 2 of 6
+Status: Executing Phase 22
+Last activity: 2026-10-13 -- Phase 22 execution started
 
 ## Performance Metrics
 
@@ -57,6 +57,7 @@ No phases executed yet — metrics will populate after Phase 1 completes.
 - [Phase 21-05]: KB form limits and extension filter come only from /api/v1/kb/limits; one createKbPending controller serves both modals
 - [Phase 21]: [Phase 21-04]: Add admission is a conditional UPDATE (ready AND phase IS NULL) checked by rowcount
 - [Phase ?]: [Phase 21-07]: Multipart file names verified from browser-encoded FormData (Playwright cannot read File-part bodies); part B blocked, exit 3
+- [Phase 22-01]: project git MCP server supports A..B and A...B ranges; avoids shared logger since stdout is the protocol channel
 
 ### Roadmap Evolution
 
@@ -113,6 +114,7 @@ None.
 | Phase 21 P05 | 10min | 2 tasks | 3 files |
 | Phase 21 P04 | 25m | 2 tasks | 3 files |
 | Phase 21 P07 | 45min | 2 tasks | 8 files |
+| Phase 22 P01 | 40min | 2 tasks | 3 files |
 
 ## Deferred Items
 
@@ -142,7 +144,7 @@ Items acknowledged and deferred at milestone close on 2026-10-12:
 
 ## Session Continuity
 
-**Last session:** 2026-10-13T07:36:01.152Z
+**Last session:** 2026-10-13T08:59:54.733Z
 **Next action:** Phase 21 is planned (7 plans, 5 waves). Run `/bm:execute-phase 21` on branch Day31.
 
 ---

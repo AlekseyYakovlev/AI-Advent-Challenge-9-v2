@@ -24,8 +24,8 @@ Requirements for milestone v5.0. Each maps to exactly one roadmap phase.
 
 ### Project Git MCP Server
 
-- [ ] **PGIT-01**: The repository contains a Python stdio MCP server, built on the already pinned `mcp` SDK with no new dependencies, with read-only tools: current branch, working tree status, diff (working tree, staged, or against a ref), list of tracked files, and recent commits.
-- [ ] **PGIT-02**: Each tool runs one fixed `git` command without a shell, only inside the configured repository root; arguments that would leave the root or inject options are rejected with a clear error, every call has a timeout, and long output is truncated with an explicit marker.
+- [x] **PGIT-01**: The repository contains a Python stdio MCP server, built on the already pinned `mcp` SDK with no new dependencies, with read-only tools: current branch, working tree status, diff (working tree, staged, or against a ref), list of tracked files, and recent commits.
+- [x] **PGIT-02**: Each tool runs one fixed `git` command without a shell, only inside the configured repository root; arguments that would leave the root or inject options are rejected with a clear error, every call has a timeout, and long output is truncated with an explicit marker.
 - [ ] **PGIT-03**: The user can add the server through the existing "MCP серверы" form in Settings, and its tools become callable in a chat turn; the documentation gives the exact form values.
 - [ ] **PGIT-04**: Asked which branch the project is on, the assistant calls the server and answers with the branch that is checked out in the working copy at that moment.
 
@@ -90,8 +90,8 @@ Deferred to later days of Week 7. Tracked but not in the current roadmap.
 | KBUP-04 | Phase 21 | Complete |
 | KBUP-05 | Phase 21 | Complete |
 | KBUP-06 | Phase 21 | Complete |
-| PGIT-01 | Phase 22 | Pending |
-| PGIT-02 | Phase 22 | Pending |
+| PGIT-01 | Phase 22 | Complete |
+| PGIT-02 | Phase 22 | Complete |
 | PGIT-03 | Phase 22 | Pending |
 | PGIT-04 | Phase 22 | Pending |
 | GHUB-01 | Phase 22 | Pending |
