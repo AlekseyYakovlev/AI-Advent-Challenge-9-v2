@@ -17,8 +17,8 @@ Requirements for milestone v5.0. Each maps to exactly one roadmap phase.
 
 - [ ] **KBUP-01**: In the knowledge base form the user can choose a whole folder; supported files (`.pdf`, `.txt`, `.md`) are taken recursively and unsupported files are skipped, with the number of skipped files shown before the upload starts.
 - [ ] **KBUP-02**: The user can build one pending list from several selections (single files and folders in any order), see every entry, and remove an entry before the upload starts.
-- [ ] **KBUP-03**: A file chosen through a folder keeps its relative path (for example `docs/API_SPEC.md`) as the source name in the knowledge base file list, in search results and in answer sources; two files with the same base name in different folders are stored as two separate sources.
-- [ ] **KBUP-04**: One upload accepts more files than the previous limit of 10 (the new limit is a named constant shown in the form); exceeding the file-count or total-size limit is rejected with a clear message and nothing is stored.
+- [x] **KBUP-03**: A file chosen through a folder keeps its relative path (for example `docs/API_SPEC.md`) as the source name in the knowledge base file list, in search results and in answer sources; two files with the same base name in different folders are stored as two separate sources.
+- [x] **KBUP-04**: One upload accepts more files than the previous limit of 10 (the new limit is a named constant shown in the form); exceeding the file-count or total-size limit is rejected with a clear message and nothing is stored.
 - [ ] **KBUP-05**: The user can add files and folders to an existing ready knowledge base; only the added files are indexed, with the base's own chunking and embedding settings, and the fragments indexed earlier stay searchable during and after the addition.
 - [ ] **KBUP-06**: Adding a file whose source name already exists in the knowledge base replaces that file's fragments with the new content, so an updated document does not produce duplicate fragments.
 
@@ -86,8 +86,8 @@ Deferred to later days of Week 7. Tracked but not in the current roadmap.
 | DOC-01 | Phase 21 | Pending |
 | KBUP-01 | Phase 21 | Pending |
 | KBUP-02 | Phase 21 | Pending |
-| KBUP-03 | Phase 21 | Pending |
-| KBUP-04 | Phase 21 | Pending |
+| KBUP-03 | Phase 21 | Complete |
+| KBUP-04 | Phase 21 | Complete |
 | KBUP-05 | Phase 21 | Pending |
 | KBUP-06 | Phase 21 | Pending |
 | PGIT-01 | Phase 22 | Pending |
