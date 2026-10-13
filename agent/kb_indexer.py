@@ -3,12 +3,13 @@
 import asyncio
 import contextlib
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import numpy as np
-from sqlalchemy import delete, update
+from sqlalchemy import delete, func, update
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -20,18 +21,23 @@ from agent.embeddings import (
 )
 from agent.events import hub
 from agent.kb_chunking import ChunkDraft, chunk_fixed, chunk_structural
-from agent.kb_limits import EMBED_BATCH_SIZE, PROGRESS_THROTTLE_SECONDS
+from agent.kb_limits import EMBED_BATCH_SIZE, PHASE_ADDING, PROGRESS_THROTTLE_SECONDS
 from agent.kb_loaders import MSG_EMPTY, KbLoadError, load_document
 from agent.kb_schemas import kb_deleted_frame, kb_progress_frame
-from agent.state import cleanup_kb_caches, kb_jobs
+from agent.state import cleanup_kb_caches, kb_index_cache, kb_jobs
 from shared.database import async_session_factory
 from shared.kb_storage import (
     build_index,
     index_path,
+    patch_index,
+    promote_index,
     remove_index_file,
     remove_kb_dir,
+    remove_tree,
+    staging_root,
     uploads_dir,
     write_index_bytes,
+    write_index_pending,
 )
 from shared.logger import get_logger
 from shared.models import (
@@ -48,12 +54,20 @@ MSG_INTERRUPTED_RESTART = "Индексация прервана перезап�
 MSG_INTERRUPTED = "Индексация прервана."
 MSG_UNEXPECTED = "Не удалось проиндексировать базу знаний. Подробности в журнале агента."
 
+MSG_ADD_UNEXPECTED = "Не удалось добавить файлы. Подробности в журнале агента."
+MSG_ADD_INTERRUPTED = "Добавление файлов прервано."
+MSG_ADD_INTERRUPTED_RESTART = (
+    "Добавление файлов прервано перезапуском агента. Повторите добавление."
+)
+MSG_ADD_DIM_MISMATCH = "Модель эмбеддингов вернула векторы другой размерности, чем у базы."
+
 PHASE_LOADING_MODEL = "loading_model"
 PHASE_PARSING = "parsing"
 PHASE_EMBEDDING = "embedding"
 
 CHUNK_INSERT_SLICE = 500
 DELETE_JOB_TIMEOUT_SECONDS = 10.0
+ADD_COMMIT_WARN_SECONDS: float = 2.0
 
 _semaphore: asyncio.Semaphore | None = None
 
@@ -303,6 +317,355 @@ async def _fail(kb_id: int, user_id: int, message: str) -> None:
         logger.error("kb_fail_record_failed", kb_id=kb_id, error=type(exc).__name__)
 
 
+class KbAddError(Exception):
+    """An addition cannot be completed; carries a user-facing message."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
+
+
+@dataclass(frozen=True)
+class AddItem:
+    """One staged file of an addition and the existing documents it supersedes."""
+
+    source: str
+    stored_name: str
+    sha256: str
+    size_bytes: int
+    replaces: tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class _CommitResult:
+    """Outcome of the finalising transaction of an addition."""
+
+    superseded_names: list[str]
+    commit_seconds: float
+
+
+def spawn_add_job(
+    kb_id: int, user_id: int, staging: Path, items: list[AddItem], unchanged: int
+) -> None:
+    """Start run_add_job in the background, keeping a strong reference until it ends."""
+    task = asyncio.create_task(
+        run_add_job(kb_id, user_id, staging, items, unchanged), name=f"kb-add-{kb_id}"
+    )
+    kb_jobs[kb_id] = task
+
+    def _forget(done: asyncio.Task[None]) -> None:
+        if kb_jobs.get(kb_id) is done:
+            kb_jobs.pop(kb_id, None)
+
+    task.add_done_callback(_forget)
+
+
+def _move_staged(staging: Path, target: Path, names: list[str], moved: list[Path]) -> None:
+    """Move staged files into the uploads directory, recording each for cleanup (worker thread)."""
+    target.mkdir(parents=True, exist_ok=True)
+    for name in names:
+        destination = target / name
+        (staging / name).replace(destination)
+        moved.append(destination)
+
+
+def _unlink_files(paths: list[Path]) -> None:
+    """Delete files, ignoring missing ones (worker thread)."""
+    for path in paths:
+        path.unlink(missing_ok=True)
+
+
+async def _commit_addition(
+    kb_id: int,
+    user_id: int,
+    items: list[AddItem],
+    drafts_by_item: list[list[ChunkDraft]],
+    page_counts: list[int | None],
+    vectors: list[list[float]],
+) -> _CommitResult:
+    """Apply an addition in one transaction and swap the patched index in atomically."""
+    path = index_path(user_id, kb_id)
+    replaced_ids = [doc_id for item in items for doc_id in item.replaces]
+    matrix = np.asarray(vectors, dtype="float32")
+    async with async_session_factory() as session:
+        started = time.perf_counter()
+        pending: Path | None = None
+        try:
+            # Inserts come first so every new chunk id exceeds every existing id
+            # (SQLite reuses rowids after deletes).
+            docs: list[KbDocument] = []
+            for item, page_count in zip(items, page_counts):
+                doc = KbDocument(
+                    kb_id=kb_id,
+                    filename=item.source,
+                    sha256=item.sha256,
+                    size_bytes=item.size_bytes,
+                    page_count=page_count,
+                    stored_name=item.stored_name,
+                )
+                session.add(doc)
+                docs.append(doc)
+            await session.flush()
+            new_ids: list[int] = []
+            for doc, drafts in zip(docs, drafts_by_item):
+                rows = [
+                    KbChunk(
+                        kb_id=kb_id,
+                        document_id=doc.id,
+                        chunk_index=i,
+                        chunk_id=f"{doc.id}-{i}",
+                        text=draft.text,
+                        section=draft.section,
+                        source=doc.filename,
+                        title=Path(doc.filename).stem,
+                        page_start=draft.page_start,
+                        char_start=draft.char_start,
+                        char_end=draft.char_end,
+                    )
+                    for i, draft in enumerate(drafts)
+                ]
+                for start in range(0, len(rows), CHUNK_INSERT_SLICE):
+                    batch = rows[start : start + CHUNK_INSERT_SLICE]
+                    session.add_all(batch)
+                    await session.flush()
+                    new_ids.extend(row.id for row in batch)
+            old_chunk_ids: list[int] = []
+            superseded: list[str] = []
+            if replaced_ids:
+                old_chunk_ids = list(
+                    (
+                        await session.exec(
+                            select(KbChunk.id).where(
+                                KbChunk.kb_id == kb_id, KbChunk.document_id.in_(replaced_ids)
+                            )
+                        )
+                    ).all()
+                )
+                superseded = list(
+                    (
+                        await session.exec(
+                            select(KbDocument.stored_name).where(
+                                KbDocument.kb_id == kb_id, KbDocument.id.in_(replaced_ids)
+                            )
+                        )
+                    ).all()
+                )
+                await session.exec(
+                    delete(KbChunk).where(
+                        KbChunk.kb_id == kb_id, KbChunk.document_id.in_(replaced_ids)
+                    )
+                )
+                await session.exec(
+                    delete(KbDocument).where(
+                        KbDocument.kb_id == kb_id, KbDocument.id.in_(replaced_ids)
+                    )
+                )
+            file_count = (
+                await session.exec(
+                    select(func.count()).select_from(KbDocument).where(KbDocument.kb_id == kb_id)
+                )
+            ).one()
+            chunk_count = (
+                await session.exec(
+                    select(func.count()).select_from(KbChunk).where(KbChunk.kb_id == kb_id)
+                )
+            ).one()
+            index = await asyncio.to_thread(patch_index, path, old_chunk_ids, matrix, new_ids)
+            if int(index.ntotal) != chunk_count:
+                raise RuntimeError("index size does not match chunk count")
+            pending = await asyncio.to_thread(write_index_pending, path, index)
+            kb = await session.get(KnowledgeBase, kb_id)
+            if kb is None:
+                raise RuntimeError("knowledge base disappeared during addition")
+            kb.file_count = file_count
+            kb.chunk_count = chunk_count
+            kb.done_chunks = chunk_count
+            kb.total_chunks = chunk_count
+            kb.phase = None
+            kb.error = None
+            kb.updated_at = datetime.now(timezone.utc)
+            session.add(kb)
+            await session.commit()
+            # No await between the commit and the swap: a cold index load must
+            # never see the new counts next to the old file.
+            promote_index(pending, path)
+            kb_index_cache[kb_id] = index
+            elapsed = time.perf_counter() - started
+        except Exception:
+            await session.rollback()
+            if pending is not None:
+                pending.unlink(missing_ok=True)
+            raise
+    if elapsed > ADD_COMMIT_WARN_SECONDS:
+        logger.warning(
+            "kb_add_commit_slow",
+            kb_id=kb_id,
+            user_id=user_id,
+            commit_seconds=round(elapsed, 3),
+            chunk_count=chunk_count,
+        )
+    return _CommitResult(superseded_names=superseded, commit_seconds=elapsed)
+
+
+async def _finish_addition(
+    kb_id: int,
+    user_id: int,
+    staging: Path,
+    items: list[AddItem],
+    unchanged: int,
+    result: _CommitResult,
+    started: float,
+) -> None:
+    """Clean up after a committed addition and announce the summary; never raises."""
+    try:
+        stale = [uploads_dir(user_id, kb_id) / name for name in result.superseded_names]
+        await asyncio.to_thread(_unlink_files, stale)
+        await asyncio.to_thread(remove_tree, staging)
+        summary = {
+            "added": sum(1 for item in items if not item.replaces),
+            "replaced": sum(1 for item in items if item.replaces),
+            "unchanged": unchanged,
+        }
+        async with async_session_factory() as session:
+            kb = await session.get(KnowledgeBase, kb_id)
+            if kb is None:
+                return
+            hub.publish(user_id, kb_progress_frame(kb, add_summary=summary))
+            chunk_count = kb.chunk_count
+        logger.info(
+            "kb_add_ready",
+            kb_id=kb_id,
+            user_id=user_id,
+            added=summary["added"],
+            replaced=summary["replaced"],
+            unchanged=unchanged,
+            chunk_count=chunk_count,
+            seconds=round(time.monotonic() - started, 2),
+            commit_seconds=round(result.commit_seconds, 3),
+        )
+    except Exception as exc:
+        logger.error("kb_add_finish_failed", kb_id=kb_id, error=type(exc).__name__)
+
+
+async def _finish_without_new_files(
+    kb_id: int, user_id: int, staging: Path, kb: KnowledgeBase, unchanged: int
+) -> None:
+    """Complete an addition whose files were all unchanged: nothing to embed or store."""
+    await _update_kb(
+        kb_id,
+        publish=False,
+        phase=None,
+        error=None,
+        done_chunks=kb.chunk_count,
+        total_chunks=kb.chunk_count,
+    )
+    await asyncio.to_thread(remove_tree, staging)
+    async with async_session_factory() as session:
+        row = await session.get(KnowledgeBase, kb_id)
+        if row is not None:
+            summary = {"added": 0, "replaced": 0, "unchanged": unchanged}
+            hub.publish(user_id, kb_progress_frame(row, add_summary=summary))
+    logger.info(
+        "kb_add_ready", kb_id=kb_id, user_id=user_id, added=0, replaced=0, unchanged=unchanged
+    )
+
+
+async def _settle(task: asyncio.Task[_CommitResult]) -> _CommitResult | None:
+    """Wait for the finalising task to end; None when it failed."""
+    try:
+        return await task
+    except Exception:
+        return None
+
+
+async def run_add_job(
+    kb_id: int, user_id: int, staging: Path, items: list[AddItem], unchanged: int
+) -> None:
+    """Add files to a ready knowledge base; any failure leaves the base exactly as it was."""
+    started = time.monotonic()
+    async with async_session_factory() as session:
+        kb = await session.get(KnowledgeBase, kb_id)
+        if kb is None:
+            await asyncio.to_thread(remove_tree, staging)
+            return
+        session.expunge(kb)
+    logger.info("kb_add_started", kb_id=kb_id, user_id=user_id, files=len(items))
+    if not items:
+        await _finish_without_new_files(kb_id, user_id, staging, kb, unchanged)
+        return
+    moved: list[Path] = []
+    commit_task: asyncio.Task[_CommitResult] | None = None
+    try:
+        async with _get_semaphore():
+            await ensure_embedding_model(kb.embedding_model)
+            drafts_by_item: list[list[ChunkDraft]] = []
+            page_counts: list[int | None] = []
+            for item in items:
+                drafts, page_count = await asyncio.to_thread(
+                    _chunk_document, kb, staging / item.stored_name, item.source
+                )
+                drafts_by_item.append(drafts)
+                page_counts.append(page_count)
+            texts = [draft.text for drafts in drafts_by_item for draft in drafts]
+            await _update_kb(kb_id, phase=PHASE_ADDING, total_chunks=len(texts), done_chunks=0)
+            vectors = await _embed_all(kb_id, kb.embedding_model, [(0, text) for text in texts])
+            if any(len(vector) != kb.dim for vector in vectors):
+                raise KbAddError(MSG_ADD_DIM_MISMATCH)
+            await asyncio.to_thread(
+                _move_staged,
+                staging,
+                uploads_dir(user_id, kb_id),
+                [item.stored_name for item in items],
+                moved,
+            )
+            commit_task = asyncio.create_task(
+                _commit_addition(kb_id, user_id, items, drafts_by_item, page_counts, vectors)
+            )
+            result = await asyncio.shield(commit_task)
+        await _finish_addition(kb_id, user_id, staging, items, unchanged, result, started)
+    except (KbLoadError, EmbeddingError, KbAddError) as exc:
+        logger.error("kb_add_failed", kb_id=kb_id, user_id=user_id, error=type(exc).__name__)
+        await _fail_add(kb_id, user_id, exc.message, staging, moved)
+    except asyncio.CancelledError:
+        settled = await _settle(commit_task) if commit_task is not None else None
+        if settled is not None:
+            await _finish_addition(kb_id, user_id, staging, items, unchanged, settled, started)
+        else:
+            await _fail_add(kb_id, user_id, MSG_ADD_INTERRUPTED, staging, moved)
+        raise
+    except Exception as exc:
+        logger.error("kb_add_failed", kb_id=kb_id, user_id=user_id, error=type(exc).__name__)
+        await _fail_add(kb_id, user_id, MSG_ADD_UNEXPECTED, staging, moved)
+
+
+async def _fail_add(
+    kb_id: int, user_id: int, message: str, staging: Path, moved: list[Path]
+) -> None:
+    """An addition failed; the base stays ready and untouched, only the error is recorded."""
+    try:
+        await asyncio.to_thread(_unlink_files, moved)
+        await asyncio.to_thread(remove_tree, staging)
+        async with async_session_factory() as session:
+            kb = await session.get(KnowledgeBase, kb_id)
+            if kb is None:
+                return
+            try:
+                kb.phase = None
+                kb.error = message
+                kb.done_chunks = kb.chunk_count
+                kb.total_chunks = kb.chunk_count
+                kb.updated_at = datetime.now(timezone.utc)
+                session.add(kb)
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+            await session.refresh(kb)
+            hub.publish(user_id, kb_progress_frame(kb))
+    except Exception as exc:
+        logger.error("kb_add_fail_record_failed", kb_id=kb_id, error=type(exc).__name__)
+
+
 async def delete_kb(session: AsyncSession, kb: KnowledgeBase) -> None:
     """Cancel the KB's job, then remove its rows, files and caches and tell the owner."""
     kb_id, user_id = kb.id, kb.user_id
@@ -327,8 +690,19 @@ async def delete_kb(session: AsyncSession, kb: KnowledgeBase) -> None:
     logger.info("kb_deleted", kb_id=kb_id, user_id=user_id)
 
 
+def _sweep_orphan_uploads(user_id: int, kb_id: int, keep: set[str]) -> None:
+    """Remove the staging root and uploaded files no document refers to (worker thread)."""
+    remove_tree(staging_root(user_id, kb_id))
+    target = uploads_dir(user_id, kb_id)
+    if not target.is_dir():
+        return
+    for entry in target.iterdir():
+        if entry.is_file() and entry.name not in keep:
+            entry.unlink(missing_ok=True)
+
+
 async def recover_orphaned_kb_jobs() -> int:
-    """Fail knowledge bases left queued/indexing by a dead process."""
+    """Fail knowledge bases left queued/indexing by a dead process and clear stale additions."""
     active = [KbStatus.QUEUED, KbStatus.INDEXING]
     async with async_session_factory() as session:
         try:
@@ -356,13 +730,47 @@ async def recover_orphaned_kb_jobs() -> int:
                         chunk_count=0,
                     )
                 )
+            adding = list(
+                (
+                    await session.exec(
+                        select(KnowledgeBase.id, KnowledgeBase.user_id).where(
+                            KnowledgeBase.status == KbStatus.READY,
+                            KnowledgeBase.phase.is_not(None),
+                        )
+                    )
+                ).all()
+            )
+            keep: dict[int, set[str]] = {}
+            adding_ids = [row[0] for row in adding]
+            if adding_ids:
+                await session.exec(
+                    update(KnowledgeBase)
+                    .where(KnowledgeBase.id.in_(adding_ids))
+                    .values(
+                        phase=None,
+                        error=MSG_ADD_INTERRUPTED_RESTART,
+                        done_chunks=KnowledgeBase.chunk_count,
+                        total_chunks=KnowledgeBase.chunk_count,
+                    )
+                )
+                for kb_id, stored in (
+                    await session.exec(
+                        select(KbDocument.kb_id, KbDocument.stored_name).where(
+                            KbDocument.kb_id.in_(adding_ids)
+                        )
+                    )
+                ).all():
+                    keep.setdefault(kb_id, set()).add(stored)
             await session.commit()
         except Exception:
             await session.rollback()
             raise
     for kb_id, user_id in rows:
         await asyncio.to_thread(remove_index_file, user_id, kb_id)
+    for kb_id, user_id in adding:
+        await asyncio.to_thread(_sweep_orphan_uploads, user_id, kb_id, keep.get(kb_id, set()))
     logger.info("kb_recovered_orphans", count=len(rows))
+    logger.info("kb_recovered_additions", count=len(adding))
     return len(rows)
 
 
