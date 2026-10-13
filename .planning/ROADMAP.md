@@ -252,7 +252,7 @@ Plans:
 ### Phase 24: Automated PR code review (Day 32)
 
 **Goal:** A pipeline (for example a GitHub Action) runs on every Pull Request: the assistant receives the PR diff and the changed files, uses RAG over the project documentation and code, and returns a review text with potential bugs, architectural problems and recommendations
-**Requirements**: TBD
+**Requirements**: REV-01, REV-02, REV-03, REV-04, REV-05, REV-06, REV-07, REV-08
 **Depends on:** Phase 21, Phase 22 (project docs knowledge base and the GitHub MCP server); independent of Phase 23
 **Plans:** 14 plans
 
