@@ -385,6 +385,230 @@ def compose_truncated_diff(
     return header + (kept + "\n" if kept else "") + marker
 
 
+def _last_line(text: str, fallback: str) -> str:
+    """Return the last non-empty line of text, or the fallback."""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    return lines[-1] if lines else fallback
+
+
+def _git_error(result: GitResult, name: str) -> ToolInputError:
+    """Build the tool error for a failed git command from its last stderr line."""
+    return ToolInputError(
+        f"git {name} failed: {_last_line(result.stderr, f'exit code {result.returncode}')}"
+    )
+
+
+def _plural(count: int, singular: str, plural: str) -> str:
+    """Return '1 file' or 'N files' style text."""
+    return f"1 {singular}" if count == 1 else f"{count} {plural}"
+
+
+def _normalise_path(path: str | None) -> str | None:
+    """Return the root-relative path, or None when no path was given."""
+    if not path:
+        return None
+    return resolve_inside_root(get_config().root, path)
+
+
+async def _normalise_ref(ref: str | None) -> str | None:
+    """Return a hash (or hash range) for a ref, or None when no ref was given."""
+    if not ref:
+        return None
+    return await resolve_ref_or_range(ref)
+
+
+@server.tool(structured_output=False)
+async def git_current_branch() -> str:
+    """LOCAL working copy (not the GitHub remote): report the branch that is checked out now.
+
+    Takes no parameters. The answer is read at the moment of the call, so it follows a
+    `git checkout` made after the server started. Output is short and never truncated.
+    """
+    named = await run_git(["symbolic-ref", "--short", "-q", "HEAD"])
+    if named.returncode == 0 and named.text.strip():
+        label = f"Branch: {named.text.strip()}"
+    else:
+        short = await run_git(["rev-parse", "--short", "HEAD"])
+        if short.returncode != 0 or not short.text.strip():
+            if "unknown revision" in short.stderr or "ambiguous argument" in short.stderr:
+                return "Branch: unknown (no commits yet)"
+            raise _git_error(short, "rev-parse")
+        label = f"Detached HEAD at {short.text.strip()}"
+    has_commit = await run_git(["rev-parse", "--verify", "-q", "HEAD"])
+    return label + (" (no commits yet)" if has_commit.returncode != 0 else "")
+
+
+@server.tool(structured_output=False)
+async def git_status() -> str:
+    """LOCAL working copy (not the GitHub remote): list changed and untracked files.
+
+    Takes no parameters. The first line is a summary (for example "3 changed files" or
+    "Working tree clean"); the body is `git status --porcelain=v1 --branch`: a `## branch`
+    line, then one `XY path` line per file, where X is the index state, Y is the working tree
+    state and `??` marks an untracked file. Long output is truncated with a marker.
+    """
+    result = await run_git(
+        ["status", "--porcelain=v1", "--branch", "--untracked-files=normal"]
+    )
+    if result.returncode != 0:
+        raise _git_error(result, "status")
+    changed = [line for line in result.text.splitlines() if line and not line.startswith("##")]
+    summary = "Working tree clean" if not changed else _plural(
+        len(changed), "changed file", "changed files"
+    )
+    return fit_text(
+        summary,
+        result.text.rstrip("\n"),
+        get_config().max_chars,
+        lower_bound=result.capped,
+        advice='Use git_diff or git_tracked_files with "path" to look at one folder.',
+    )
+
+
+@server.tool(structured_output=False)
+async def git_diff(
+    staged: bool = False, ref: str | None = None, path: str | None = None
+) -> str:
+    """LOCAL working copy (not the GitHub remote): show a diff of tracked files.
+
+    Parameters: `staged` (bool) shows what is staged for commit; `ref` is a branch, tag, commit
+    hash or range; `path` limits the diff to a file or folder relative to the repository root.
+    Without arguments it shows unstaged changes; `ref="HEAD"` shows all uncommitted changes;
+    `ref="main...HEAD"` shows what a branch adds. Untracked files appear only in git_status.
+    The first line is a summary. A diff that does not fit is truncated with a marker, after a
+    per-file stat; call again with a narrower `path` to see the rest.
+    """
+    cfg = get_config()
+    rel = _normalise_path(path)
+    if staged and ref and ".." in ref:
+        raise ToolInputError(
+            "staged cannot be combined with a ref range; use a single ref or drop staged"
+        )
+    resolved = await _normalise_ref(ref)
+    selectors: list[str] = []
+    if staged:
+        selectors.append("--cached")
+    if resolved:
+        selectors.append(resolved)
+    if rel is not None:
+        selectors += ["--", rel]
+    flags = ["--no-color", "--no-ext-diff", "--no-textconv"]
+    result = await run_git(["diff", *flags, *selectors])
+    if result.returncode != 0:
+        raise _git_error(result, "diff")
+    patch = result.text
+    if not patch.strip():
+        return "No differences"
+    files = sum(1 for line in patch.splitlines() if line.startswith("diff --git "))
+    summary = _plural(files, "changed file", "changed files")
+    if len(summary) + 1 + len(patch) <= cfg.max_chars and not result.capped:
+        return summary + "\n" + patch.rstrip("\n")
+    stat_result = await run_git(["diff", "--stat=120,80", *flags, *selectors])
+    stat = stat_result.text.rstrip("\n") if stat_result.returncode == 0 else ""
+    if stat:
+        summary = _last_line(stat, summary)
+    return compose_truncated_diff(summary, stat, patch, cfg.max_chars, lower_bound=result.capped)
+
+
+def _folder_table(paths: list[str], budget: int) -> str:
+    """Count files per top-level folder and keep as many table lines as the budget allows."""
+    counts: dict[str, int] = {}
+    for item in paths:
+        top = item.split("/", 1)[0] + "/" if "/" in item else "(root)"
+        counts[top] = counts.get(top, 0) + 1
+    lines = [f"{name} {count}" for name, count in sorted(counts.items())]
+    header = "Files per top-level folder:"
+    kept: list[str] = []
+    used = len(header)
+    for index, line in enumerate(lines):
+        hidden_line = f"... {len(lines) - index} more folders not shown"
+        if used + 1 + len(line) + 1 + len(hidden_line) > budget and len(lines) - index > 1:
+            kept.append(hidden_line)
+            break
+        if used + 1 + len(line) > budget:
+            kept.append(f"... {len(lines) - index} more folders not shown")
+            break
+        kept.append(line)
+        used += 1 + len(line)
+    return "\n".join([header, *kept])
+
+
+@server.tool(structured_output=False)
+async def git_tracked_files(path: str | None = None) -> str:
+    """LOCAL working copy (not the GitHub remote): list files tracked by git.
+
+    Parameter: `path` (optional) is a file or folder relative to the repository root; without
+    it the whole repository is listed. The first line is a summary with the file count. A long
+    list is truncated with a marker and a per-folder count table; call again with `path`
+    to list one folder.
+    """
+    max_chars = get_config().max_chars
+    rel = _normalise_path(path)
+    result = await run_git(["ls-files", "--", rel] if rel is not None else ["ls-files"])
+    if result.returncode != 0:
+        raise _git_error(result, "ls-files")
+    paths = [line for line in result.text.split("\n") if line]
+    if not paths:
+        return f"No tracked files under {rel}" if rel is not None else "No tracked files"
+    summary = _plural(len(paths), "tracked file", "tracked files")
+    if rel is not None:
+        summary += f" under {rel}"
+    body = "\n".join(paths)
+    if len(summary) + 1 + len(body) <= max_chars:
+        return summary + "\n" + body
+    table = _folder_table(paths, max_chars // 3)
+    marker_len = len(truncation_marker(len(paths), len(paths), unit="files"))
+    head = summary + "\n" + table + "\n"
+    budget = max_chars - len(head) - marker_len - 1
+    shown: list[str] = []
+    used = 0
+    for item in paths:
+        if used + len(item) + 1 > budget:
+            break
+        shown.append(item)
+        used += len(item) + 1
+    marker = truncation_marker(len(shown), len(paths), unit="files")
+    return head + ("\n".join(shown) + "\n" if shown else "") + marker
+
+
+@server.tool(structured_output=False)
+async def git_recent_commits(
+    count: int = 10, path: str | None = None, ref: str | None = None
+) -> str:
+    """LOCAL working copy (not the GitHub remote): list the most recent commits.
+
+    Parameters: `count` is how many commits to show (default 10, at most 50); `path` limits
+    the history to a file or folder relative to the repository root; `ref` is a branch, tag or
+    commit hash to start from (default HEAD). The first line is a summary; each following line
+    is tab-separated: short hash, date, author, subject. Long output is truncated with a marker.
+    """
+    max_chars = get_config().max_chars
+    limited = count > 50
+    count = max(1, min(count, 50))
+    rel = _normalise_path(path)
+    resolved = await _normalise_ref(ref)
+    argv = [
+        "log", "-n", str(count), "--no-color", "--no-show-signature", "--date=short",
+        "--format=%h%x09%ad%x09%an%x09%s",
+    ]  # fmt: skip
+    if resolved:
+        argv.append(resolved)
+    if rel is not None:
+        argv += ["--", rel]
+    result = await run_git(argv)
+    if result.returncode != 0:
+        if "does not have any commits yet" in result.stderr:
+            return "No commits yet"
+        raise _git_error(result, "log")
+    lines = [line for line in result.text.split("\n") if line]
+    if not lines:
+        return "No commits found"
+    summary = _plural(len(lines), "commit", "commits")
+    if limited:
+        summary += " (count limited to 50)"
+    return fit_text(summary, "\n".join(lines), max_chars, lower_bound=result.capped)
+
+
 def check_work_tree(git: str, root: str, timeout: float) -> None:
     """Stop the server unless root is inside a git working tree; never runs git init."""
     try:
