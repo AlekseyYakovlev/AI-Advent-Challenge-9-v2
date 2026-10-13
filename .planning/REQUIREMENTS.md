@@ -36,11 +36,11 @@ Requirements for milestone v5.0. Each maps to exactly one roadmap phase.
 
 ### Help Command
 
-- [ ] **HELP-01**: The user can mark one of their knowledge bases as the project documentation base, see which one is marked, and change or clear the mark.
+- [x] **HELP-01**: The user can mark one of their knowledge bases as the project documentation base, see which one is marked, and change or clear the mark.
 - [ ] **HELP-02**: A message that starts with `/help` followed by a question is answered from the project documentation base with sources, whatever the chat's own RAG settings are, and those settings are left unchanged.
 - [ ] **HELP-03**: During a `/help` turn the project git tools are available to the model, and a tool call made in that turn is visible in the chat like any other tool call.
-- [ ] **HELP-04**: `/help` with no question shows a short usage text without calling the model.
-- [ ] **HELP-05**: When no project documentation base is marked, or the marked base is not ready, `/help` with a question answers with a clear instruction on what to do and makes no model call.
+- [x] **HELP-04**: `/help` with no question shows a short usage text without calling the model.
+- [x] **HELP-05**: When no project documentation base is marked, or the marked base is not ready, `/help` with a question answers with a clear instruction on what to do and makes no model call.
 - [ ] **HELP-06**: `/help` works through the plain HTTP chat endpoint with an API key, with the same behaviour as in the browser; the JSON reply carries the answer, the sources and the tool calls.
 - [ ] **HELP-07**: The `/help` question and its answer are stored in the chat tree as ordinary messages and survive a page reload with their sources.
 
@@ -96,11 +96,11 @@ Deferred to later days of Week 7. Tracked but not in the current roadmap.
 | PGIT-04 | Phase 22 | Complete |
 | GHUB-01 | Phase 22 | Complete |
 | GHUB-02 | Phase 22 | Complete |
-| HELP-01 | Phase 23 | Pending |
+| HELP-01 | Phase 23 | Complete |
 | HELP-02 | Phase 23 | Pending |
 | HELP-03 | Phase 23 | Pending |
-| HELP-04 | Phase 23 | Pending |
-| HELP-05 | Phase 23 | Pending |
+| HELP-04 | Phase 23 | Complete |
+| HELP-05 | Phase 23 | Complete |
 | HELP-06 | Phase 23 | Pending |
 | HELP-07 | Phase 23 | Pending |
 | VER-07 | Phase 23 | Pending |
