@@ -822,6 +822,190 @@ async def _complete_gated_turn(
         active_streams.pop(chat_id, None)
 
 
+@dataclass
+class _TurnMiddle:
+    """What the stream and the tool rounds of one turn produced."""
+
+    assistant_text: str
+    pending_tool_calls: list[dict[str, Any]]
+    tool_trace: str | None
+    memory_writes: list[dict[str, Any]]
+    task_writes: list[dict[str, Any]]
+    tool_results: list[dict[str, Any]]
+
+
+async def _run_turn_middle(
+    websocket: WebSocket,
+    session: AsyncSession,
+    chat: Chat,
+    chat_id: int,
+    payload: MessagePayload,
+    llm_messages: list[dict[str, Any]],
+    tool_schemas: list[dict[str, Any]] | None,
+    toolset: McpToolset,
+    temperature: float,
+    max_tokens: int,
+    client: LLMClient,
+    provider_row: Any,
+    user_msg_id: int,
+    user_parent_id: int | None,
+    *,
+    allowed_tools: frozenset[str] | None = None,
+    user_text: str | None = None,
+) -> _TurnMiddle | None:
+    """Stream the first answer, retry an action claim once and run the tool rounds; None when the turn failed."""
+    turn_user_text = user_text if user_text is not None else payload.content
+    assistant_text = ""
+    pending_tool_calls: list[dict[str, Any]] = []
+    stream_task = asyncio.current_task()
+    active_streams[chat_id] = stream_task
+
+    try:
+        if tool_schemas:
+            reply_filter = _ReplyFilter()
+            async for event in client.stream_chat(
+                llm_messages,
+                payload.model,
+                temperature,
+                max_tokens,
+                tools=tool_schemas,
+            ):
+                if event["type"] == "content":
+                    assistant_text += await _emit_filtered(
+                        websocket, reply_filter, event["content"],
+                    )
+                elif event["type"] == "tool_calls":
+                    pending_tool_calls = event["tool_calls"]
+            assistant_text += await _flush_filtered(websocket, reply_filter)
+            if not pending_tool_calls:
+                pending_tool_calls = _recover_text_calls(
+                    reply_filter, tool_schemas, chat_id,
+                )
+        else:
+            trace_filter = TraceLeakFilter()
+            async for token in client.stream_chat(
+                llm_messages,
+                payload.model,
+                temperature,
+                max_tokens,
+            ):
+                assistant_text += await _emit_filtered(websocket, trace_filter, token)
+            assistant_text += await _flush_filtered(websocket, trace_filter)
+    except Exception as exc:
+        logger.error(
+            "llm_stream_failed",
+            chat_id=chat_id,
+            error=str(exc),
+            error_type=type(exc).__name__,
+        )
+        await websocket.send_json(_llm_error_frame(exc, provider_row))
+        await _discard_user_message(session, chat_id, user_msg_id, user_parent_id)
+        return None
+    finally:
+        active_streams.pop(chat_id, None)
+
+    echo_text = assistant_text
+    claim = bool(tool_schemas) and looks_like_action_claim(assistant_text)
+    announce = bool(tool_schemas) and looks_like_action_announcement(assistant_text)
+    if tool_schemas and not pending_tool_calls and (claim or announce):
+        # One bounded retry: never re-checked, so a stubborn model cannot loop.
+        logger.info(
+            "action_claim_without_tool" if claim else "action_announce_without_tool",
+            chat_id=chat_id,
+        )
+        llm_messages.append({"role": "assistant", "content": assistant_text})
+        llm_messages.append(
+            {
+                "role": "user",
+                "content": ACTION_CLAIM_REMINDER if claim else ACTION_ANNOUNCE_REMINDER,
+            },
+        )
+        retry_text, pending_tool_calls = await _stream_action_claim_retry(
+            websocket,
+            client,
+            llm_messages,
+            payload,
+            temperature,
+            max_tokens,
+            tool_schemas,
+            chat_id,
+        )
+        if retry_text:
+            assistant_text += "\n\n" + retry_text
+        if pending_tool_calls:
+            echo_text = retry_text
+
+    memory_writes: list[dict[str, Any]] = []
+    task_writes: list[dict[str, Any]] = []
+    tool_trace: str | None = None
+    tool_results: list[dict[str, Any]] = []
+    if pending_tool_calls:
+        turn = _ToolTurn(
+            websocket=websocket,
+            session=session,
+            chat=chat,
+            chat_id=chat_id,
+            payload=payload,
+            llm_messages=llm_messages,
+            tool_schemas=tool_schemas,
+            toolset=toolset,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            client=client,
+            provider=provider_row,
+            user_text=turn_user_text,
+            allowed_tools=allowed_tools,
+        )
+        rounds = await _run_tool_rounds(turn, pending_tool_calls, echo_text)
+        llm_failed = rounds.error is not None
+        if rounds.error is not None and not rounds.results:
+            exc = rounds.error
+            logger.error(
+                "llm_stream_failed",
+                chat_id=chat_id,
+                error=str(rounds.error),
+                error_type=type(exc).__name__,
+            )
+            await websocket.send_json(_llm_error_frame(exc, turn.provider))
+            await _discard_user_message(session, chat_id, user_msg_id, user_parent_id)
+            return None
+
+        assistant_text += rounds.text
+        tool_results = rounds.results
+        tool_trace = serialize_tool_trace(rounds.results)
+        memory_writes = _collect_memory_writes(rounds.results)
+        task_writes = _collect_task_writes(rounds.results)
+        await _send_tool_error_frames(websocket, rounds.results)
+        # After an LLM failure another call would only wait out a second timeout.
+        reprompt_text = (
+            ""
+            if llm_failed
+            else await _reprompt_rejected_transitions(
+                turn,
+                _collect_rejected_transitions(rounds.results),
+            )
+        )
+        assistant_text += reprompt_text
+        if not (rounds.text + reprompt_text).strip():
+            assistant_text += await _send_fallback_summary(
+                websocket, rounds.results, turn_user_text, assistant_text, chat_id,
+            )
+        if rounds.error is not None:
+            assistant_text += await _send_llm_failure_note(
+                websocket, turn, rounds.error, turn_user_text,
+            )
+        pending_tool_calls = rounds.calls
+
+    return _TurnMiddle(
+        assistant_text=assistant_text,
+        pending_tool_calls=pending_tool_calls,
+        tool_trace=tool_trace,
+        memory_writes=memory_writes,
+        task_writes=task_writes,
+        tool_results=tool_results,
+    )
+
+
 async def _run_chat_turn(
     websocket: WebSocket,
     chat_id: int,
@@ -935,143 +1119,18 @@ async def _run_chat_turn(
             )
             return
 
-        assistant_text = ""
-        pending_tool_calls: list[dict[str, Any]] = []
-        stream_task = asyncio.current_task()
-        active_streams[chat_id] = stream_task
-
-        try:
-            if tool_schemas:
-                reply_filter = _ReplyFilter()
-                async for event in client.stream_chat(
-                    llm_messages,
-                    payload.model,
-                    temperature,
-                    max_tokens,
-                    tools=tool_schemas,
-                ):
-                    if event["type"] == "content":
-                        assistant_text += await _emit_filtered(
-                            websocket, reply_filter, event["content"],
-                        )
-                    elif event["type"] == "tool_calls":
-                        pending_tool_calls = event["tool_calls"]
-                assistant_text += await _flush_filtered(websocket, reply_filter)
-                if not pending_tool_calls:
-                    pending_tool_calls = _recover_text_calls(
-                        reply_filter, tool_schemas, chat_id,
-                    )
-            else:
-                trace_filter = TraceLeakFilter()
-                async for token in client.stream_chat(
-                    llm_messages,
-                    payload.model,
-                    temperature,
-                    max_tokens,
-                ):
-                    assistant_text += await _emit_filtered(websocket, trace_filter, token)
-                assistant_text += await _flush_filtered(websocket, trace_filter)
-        except Exception as exc:
-            logger.error(
-                "llm_stream_failed",
-                chat_id=chat_id,
-                error=str(exc),
-                error_type=type(exc).__name__,
-            )
-            await websocket.send_json(_llm_error_frame(exc, provider_row))
-            await _discard_user_message(session, chat_id, user_msg_id, user_parent_id)
+        middle = await _run_turn_middle(
+            websocket, session, chat, chat_id, payload, llm_messages, tool_schemas,
+            toolset, temperature, max_tokens, client, provider_row, user_msg_id,
+            user_parent_id,
+        )
+        if middle is None:
             return
-        finally:
-            active_streams.pop(chat_id, None)
-
-        echo_text = assistant_text
-        claim = bool(tool_schemas) and looks_like_action_claim(assistant_text)
-        announce = bool(tool_schemas) and looks_like_action_announcement(assistant_text)
-        if tool_schemas and not pending_tool_calls and (claim or announce):
-            # One bounded retry: never re-checked, so a stubborn model cannot loop.
-            logger.info(
-                "action_claim_without_tool" if claim else "action_announce_without_tool",
-                chat_id=chat_id,
-            )
-            llm_messages.append({"role": "assistant", "content": assistant_text})
-            llm_messages.append(
-                {
-                    "role": "user",
-                    "content": ACTION_CLAIM_REMINDER if claim else ACTION_ANNOUNCE_REMINDER,
-                },
-            )
-            retry_text, pending_tool_calls = await _stream_action_claim_retry(
-                websocket,
-                client,
-                llm_messages,
-                payload,
-                temperature,
-                max_tokens,
-                tool_schemas,
-                chat_id,
-            )
-            if retry_text:
-                assistant_text += "\n\n" + retry_text
-            if pending_tool_calls:
-                echo_text = retry_text
-
-        memory_writes: list[dict[str, Any]] = []
-        task_writes: list[dict[str, Any]] = []
-        tool_trace: str | None = None
-        if pending_tool_calls:
-            turn = _ToolTurn(
-                websocket=websocket,
-                session=session,
-                chat=chat,
-                chat_id=chat_id,
-                payload=payload,
-                llm_messages=llm_messages,
-                tool_schemas=tool_schemas,
-                toolset=toolset,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                client=client,
-                provider=provider_row,
-                user_text=payload.content,
-            )
-            rounds = await _run_tool_rounds(turn, pending_tool_calls, echo_text)
-            llm_failed = rounds.error is not None
-            if rounds.error is not None and not rounds.results:
-                exc = rounds.error
-                logger.error(
-                    "llm_stream_failed",
-                    chat_id=chat_id,
-                    error=str(rounds.error),
-                    error_type=type(exc).__name__,
-                )
-                await websocket.send_json(_llm_error_frame(exc, turn.provider))
-                await _discard_user_message(session, chat_id, user_msg_id, user_parent_id)
-                return
-
-            assistant_text += rounds.text
-            tool_trace = serialize_tool_trace(rounds.results)
-            memory_writes = _collect_memory_writes(rounds.results)
-            task_writes = _collect_task_writes(rounds.results)
-            await _send_tool_error_frames(websocket, rounds.results)
-            # After an LLM failure another call would only wait out a second timeout.
-            reprompt_text = (
-                ""
-                if llm_failed
-                else await _reprompt_rejected_transitions(
-                    turn,
-                    _collect_rejected_transitions(rounds.results),
-                )
-            )
-            assistant_text += reprompt_text
-            if not (rounds.text + reprompt_text).strip():
-                assistant_text += await _send_fallback_summary(
-                    websocket, rounds.results, payload.content, assistant_text, chat_id,
-                )
-            if rounds.error is not None:
-                assistant_text += await _send_llm_failure_note(
-                    websocket, turn, rounds.error, payload.content,
-                )
-            pending_tool_calls = rounds.calls
+        assistant_text = middle.assistant_text
+        pending_tool_calls = middle.pending_tool_calls
+        tool_trace = middle.tool_trace
+        memory_writes = middle.memory_writes
+        task_writes = middle.task_writes
 
         active_invariants = await invariants.resolve_active_invariants(session, chat_id)
         flagged: dict[str, Any] | None = None
