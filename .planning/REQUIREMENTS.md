@@ -47,7 +47,7 @@ Requirements for milestone v5.0. Each maps to exactly one roadmap phase.
 ### Verification and Report
 
 - [x] **VER-07**: pytest covers folder and accumulated upload, addition to an existing base, replacement of an updated file, the git MCP server (tools, root confinement, bad arguments), and `/help` over WebSocket and HTTP; `docs/TESTING_GUIDE.md` has matching sections.
-- [ ] **VER-08**: An isolated-copy end-to-end script (ports 18000/18001, scratch database) uploads a folder through the real UI, connects the git MCP server and runs `/help` in the browser and over HTTP.
+- [x] **VER-08**: An isolated-copy end-to-end script (ports 18000/18001, scratch database) uploads a folder through the real UI, connects the git MCP server and runs `/help` in the browser and over HTTP.
 - [x] **VER-09**: `docs/API_SPEC.md`, `docs/ARCHITECTURE.md` and `docs/USER_GUIDE.md` describe the new upload options, the git MCP server, the GitHub server setup and the `/help` command as built.
 - [x] **VER-10**: `Day31_report.md` records a run of 8-10 control questions about the project through `/help` on a real model, with the answer, the sources, the tool calls and a verdict for each question, including the questions that failed.
 
@@ -104,7 +104,7 @@ Deferred to later days of Week 7. Tracked but not in the current roadmap.
 | HELP-06 | Phase 23 | Complete |
 | HELP-07 | Phase 23 | Complete |
 | VER-07 | Phase 23 | Complete |
-| VER-08 | Phase 23 | Pending |
+| VER-08 | Phase 23 | Complete |
 | VER-09 | Phase 23 | Complete |
 | VER-10 | Phase 23 | Complete |
 
