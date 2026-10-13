@@ -13,6 +13,7 @@ import argparse
 import asyncio
 import contextlib
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -30,6 +31,8 @@ HARD_CAP_BYTES: int = 4 * 1024 * 1024
 STDERR_KEEP_BYTES: int = 65536
 MAX_REF_LENGTH: int = 255
 READ_CHUNK_BYTES: int = 65536
+NARROW_PATH_ADVICE: str = 'Call again with a narrower "path" (a file or folder) to see the rest.'
+_COMMIT_ID = re.compile(r"[0-9a-f]{40}([0-9a-f]{24})?")
 
 
 class ToolInputError(ValueError):
@@ -229,6 +232,157 @@ async def run_git(args: list[str]) -> GitResult:
         timeout=cfg.timeout,
         label="git " + args[0],
     )
+
+
+def resolve_inside_root(root_real: str, raw: str) -> str:
+    """Validate a user path and return it relative to the root with '/' separators."""
+    if raw == "":
+        raise ToolInputError("path must not be empty; omit it to cover the whole repository")
+    if raw.startswith("-"):
+        raise ToolInputError(
+            'path must not start with "-"; use a relative path such as agent/ws.py'
+        )
+    if any(ch in raw for ch in "\x00\r\n"):
+        raise ToolInputError("path contains control characters")
+    drive, rest = os.path.splitdrive(raw)
+    unc = drive.startswith(("\\\\", "//"))
+    if ":" in rest or (drive and not unc and rest[:1] not in ("\\", "/")):
+        raise ToolInputError(
+            "drive-relative paths and ':' are not allowed; use a relative path such as agent/ws.py"
+        )
+    outside = ToolInputError(
+        "path must stay inside the repository root; use a relative path such as agent/ws.py"
+    )
+    try:
+        target = os.path.realpath(os.path.join(root_real, raw))
+        common = os.path.commonpath([os.path.normcase(root_real), os.path.normcase(target)])
+        if common != os.path.normcase(root_real):
+            raise outside
+        relative = os.path.relpath(target, root_real)
+    except (ValueError, OSError):
+        raise outside from None
+    return "." if relative == "." else relative.replace(os.sep, "/")
+
+
+def check_ref_syntax(raw: str) -> None:
+    """Reject refs that could be read as options or contain unsafe characters."""
+    if raw.startswith("-"):
+        raise ToolInputError(
+            'ref must not start with "-"; use a branch, tag, commit hash or HEAD~N'
+        )
+    if (
+        raw == ""
+        or len(raw) > MAX_REF_LENGTH
+        or "\\" in raw
+        or any(ch.isspace() or ord(ch) < 32 or ord(ch) == 127 for ch in raw)
+    ):
+        raise ToolInputError(
+            "ref contains characters that are not allowed; use a branch, tag, commit hash or HEAD~N"
+        )
+
+
+async def resolve_ref(raw: str) -> str:
+    """Resolve a user ref to a full commit hash using git itself."""
+    check_ref_syntax(raw)
+    result = await run_git(
+        ["rev-parse", "--verify", "--quiet", "--end-of-options", raw + "^{commit}"]
+    )
+    commit = result.text.strip()
+    if result.returncode != 0 or not _COMMIT_ID.fullmatch(commit):
+        raise ToolInputError(
+            f"unknown ref '{raw}'; use a branch, tag, short commit hash or HEAD~N"
+        )
+    return commit
+
+
+async def resolve_ref_or_range(raw: str) -> str:
+    """Resolve one ref, or both sides of an A..B / A...B range, to commit hashes."""
+    for separator in ("...", ".."):
+        if separator in raw:
+            left, _, right = raw.partition(separator)
+            if not left or not right:
+                raise ToolInputError("range must have a ref on both sides, for example main...HEAD")
+            return await resolve_ref(left) + separator + await resolve_ref(right)
+    return await resolve_ref(raw)
+
+
+def truncation_marker(
+    shown: int,
+    total: int,
+    *,
+    lower_bound: bool = False,
+    unit: str = "characters",
+    advice: str = NARROW_PATH_ADVICE,
+) -> str:
+    """Build the marker that tells the caller how much was shown and how to narrow the call."""
+    of = "of more than" if lower_bound else "of"
+    return f"[output truncated: showing {shown:,} {of} {total:,} {unit}. {advice}]"
+
+
+def _cut_at_line(text: str, budget: int) -> str:
+    """Return at most budget characters of text, ending at a line boundary when possible."""
+    if budget <= 0:
+        return ""
+    if len(text) <= budget:
+        return text
+    cut = text[:budget]
+    newline = cut.rfind("\n")
+    return cut[:newline] if newline > 0 else cut
+
+
+def fit_text(
+    summary: str,
+    body: str,
+    max_chars: int,
+    *,
+    lower_bound: bool = False,
+    advice: str = NARROW_PATH_ADVICE,
+) -> str:
+    """Join summary and body within max_chars, adding a truncation marker when cut."""
+    summary = summary[: max_chars // 2]
+    if not body:
+        return summary
+    full = summary + "\n" + body
+    if len(full) <= max_chars and not lower_bound:
+        return full
+    total = len(body)
+    reserve = len(truncation_marker(total, total, lower_bound=lower_bound, advice=advice))
+    budget = max_chars - len(summary) - 1 - 1 - reserve
+    kept = _cut_at_line(body, budget)
+    marker = truncation_marker(len(kept), total, lower_bound=lower_bound, advice=advice)
+    return summary + "\n" + (kept + "\n" if kept else "") + marker
+
+
+def _shrink_stat(stat: str, budget: int) -> str:
+    """Keep whole file lines of a diff stat, then a 'more files' line and the totals line."""
+    if len(stat) <= budget:
+        return stat
+    lines = stat.splitlines()
+    if len(lines) < 2:
+        return stat[:budget]
+    files, totals = lines[:-1], lines[-1]
+    for keep in range(len(files), -1, -1):
+        hidden = len(files) - keep
+        block = "\n".join(files[:keep] + [f"... {hidden} more files not shown", totals])
+        if len(block) <= budget or keep == 0:
+            return block
+    return totals
+
+
+def compose_truncated_diff(
+    summary: str, stat: str, patch: str, max_chars: int, *, lower_bound: bool = False
+) -> str:
+    """Compose summary, per-file stat, patch text and a marker within max_chars."""
+    summary = summary[: max_chars // 2]
+    stat_block = _shrink_stat(stat, min(len(stat), max_chars // 4))
+    header = "\n".join([summary] + ([stat_block] if stat_block else [])) + "\n\n"
+    if len(header) + len(patch) <= max_chars and not lower_bound:
+        return header + patch
+    total = len(patch)
+    reserve = len(truncation_marker(total, total, lower_bound=lower_bound)) + 1
+    kept = _cut_at_line(patch, max_chars - len(header) - reserve)
+    marker = truncation_marker(len(kept), total, lower_bound=lower_bound)
+    return header + (kept + "\n" if kept else "") + marker
 
 
 def check_work_tree(git: str, root: str, timeout: float) -> None:
