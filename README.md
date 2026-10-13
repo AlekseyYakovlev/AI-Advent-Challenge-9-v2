@@ -80,6 +80,10 @@ Settings are read from the `.env` file. Restart `python run.py` after changing t
 | `MCP_TOOL_CALL_TIMEOUT` | 30.0 | Timeout in seconds for one MCP tool call. |
 | `KB_STORAGE_DIR` | empty | Knowledge-base storage folder; empty means a folder named after the database file with the suffix `_kb` next to it. |
 
+## Knowledge base from the project docs
+
+The README and the `docs/` folder can be loaded into one knowledge base from the Knowledge base panel of the app: choose `README.md`, then choose the `docs` folder, and create the base. Sources keep their relative paths, for example `docs/API_SPEC.md`, so same-named files in different folders stay separate. When a document changes, choose the folder again with the add-files button of the ready base: changed files replace their earlier fragments and unchanged ones are skipped. See `docs/USER_GUIDE.md` for the steps.
+
 ## Tests
 
 Run the whole suite:

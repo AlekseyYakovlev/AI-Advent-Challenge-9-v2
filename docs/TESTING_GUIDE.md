@@ -281,13 +281,29 @@ Title tests must create chats titled `New Chat` and classify mocked LLM requests
 - `test_kb_scoping.py`: authentication and per-user isolation (404 for foreign ids).
 - `test_kb_real_pdfs.py`: real ФЗ-196 and КоАП РФ PDFs from `C:\Projects\RAG`; skipped when the files are absent. Pins the unique article counts (КоАП 907, ФЗ-196 34), asserts both strategies keep every chunk within 2000 characters and that the pipeline finishes in under 30 s.
 
+### Folder upload and addition (Day 31)
+
+- `test_kb_migration.py`: the start-up migration drops the sha256 unique constraint, chunks survive the table rebuild, it is idempotent and leaves no foreign key violations.
+- `test_kb_add_job.py`: the add job indexes only new files; the base stays `ready` and byte-identical after a failed addition; replacement by source name; summary frame; orphan recovery of an interrupted addition.
+- `test_kb_add_api.py`: `POST /api/v1/kb/{kb_id}/files` statuses (202, 404, 409, 413, 422), classification by name and SHA-256, claim exclusivity, limits leave nothing behind (no rows, staging removed).
+- `test_kb_folder_ui.py`: source guard of the create form: folder input, pending list, taken/skipped report, limits read from the server, upload under source names.
+- `test_kb_add_ui.py`: source guard of the add modal and the card states (adding progress, summary, failure line).
+- `test_readme.py`: README sections, directories and the absence of secrets.
+- `test_docs_kb_upload.py`: the documents carry no stale upload rule, list the new routes and messages, and state the limit number equal to `MAX_FILES`.
+- New cases were added to `test_kb_api.py` (relative-path names, identical content under two names, limits), `test_kb_models.py`, `test_kb_storage.py` (staging, patched index swap), `test_kb_lifecycle.py` and `test_kb_scoping.py` (the add route for foreign bases).
+
+### scripts/e2e_kb_folder_playwright.py (browser UAT, not part of pytest)
+- Runs the same isolated copy as `e2e_kb_playwright.py` (UI :18000 / Agent :18001, scratch database and storage); never touches :8000/:8001 and stops only processes it started. Exit 0 all passed, 1 a check failed, 2 nothing ran because the isolated ports are busy, 3 part A passed and part B was skipped because LM Studio or the embedding model is unavailable, 4 Playwright missing.
+- Part A (no LM Studio): the limits hint equals `GET /api/v1/kb/limits`; file and folder choice give one pending list with `docs/...` names and the taken/skipped report; choosing the folder again adds nothing; removal and re-adding; the multipart request carries `filename="docs/a/README.md"`; a folder over the limit turns the header red and disables submit.
+- Part B (LM Studio and the nomic embedding model): the base created from the list stores both `docs/a/README.md` and `docs/b/README.md`; test search finds the marker; adding the changed folder gives `Добавлено: 1, заменено: 1, без изменений: 4` while the card stays `готово`; the old marker is no longer found.
+
 ### scripts/e2e_kb_playwright.py (browser UAT, not part of pytest)
 - Runs a temporary copy of the app at UI :18000 / Agent :18001 with a scratch database and KB storage
   against the real LM Studio and both real PDFs; never touches :8000/:8001 and stops only processes it
   started. Exit 0 all passed, 1 a check failed, 2 blocked (ports busy, LM Studio, embeddings model or
   PDFs missing), 4 Playwright missing. Takes about 20-30 minutes.
 - Scenarios: empty panel, embeddings model hidden from the chat picker, embedding check (giga rejected,
-  nomic dim 768), inline validation, both PDFs with both strategies, live progress with `/health` polling,
+  nomic dim 768), inline validation (choosing the same file twice keeps one list entry), both PDFs with both strategies, live progress with `/health` polling,
   test search cards, scan PDF and giga failures, Agent killed mid-job (restart message), delete during
   and after indexing (directory removed), second-user isolation.
 

@@ -446,14 +446,27 @@ index), `agent/embeddings.py` (LM Studio `/v1/embeddings` client, model guard, b
 
 **Tables.** `KnowledgeBase` (owner, name, status, strategy, chunk settings, embedding model, dim,
 file/chunk counts, live progress `done_chunks`/`total_chunks`/`phase`), `KbDocument` (one row per
-uploaded file, unique on `(kb_id, sha256)`) and `KbChunk` (text, section breadcrumb, source, page,
+source file; its identity is the source name `filename`, which may be a relative path such as
+`docs/API_SPEC.md`; there is no unique constraint, only the non-unique index
+`ix_kbdocument_kb_filename` on `(kb_id, filename)`, uniqueness of a source name is kept in code, and
+`sha256` is used only to detect an unchanged file on addition) and `KbChunk` (text, section breadcrumb, source, page,
 offsets). `KbChunk.id` is the FAISS vector id, so a search hit maps back to its row without a lookup
 table. Rows cascade on KB or user delete.
+
+The old `UNIQUE (kb_id, sha256)` constraint is removed by the start-up migration
+`migrate_kbdocument_drop_sha_unique`, which rebuilds `kbdocument` (copy, drop, rename, recreate
+indexes) and is idempotent. It runs on an AUTOCOMMIT connection with `PRAGMA foreign_keys=OFF`,
+because SQLite cannot change a table constraint in place and dropping the table with foreign keys on
+would cascade into `kbchunk` and destroy the chunks; it checks `PRAGMA foreign_key_check` afterwards
+and switches foreign keys back on.
 
 **Storage layout.** `<DB_PATH stem>_kb/<user_id>/<kb_id>/{uploads/, index.faiss}`, or under
 `KB_STORAGE_DIR` when set. The index is an `IndexIDMap2` over L2-normalised vectors
 (inner product = cosine similarity). FAISS file I/O goes through byte buffers so non-ASCII Windows
-paths work.
+paths work. Stored files are named `uuid4().hex + extension`, never after the source name, so a
+relative-path source name cannot reach the file system. Each request first writes its files to
+`uploads/_staging/<uuid>/`; on success they are moved into `uploads/`, on any failure the staging
+directory is removed.
 
 **Chunking.** `fixed`: windows of `chunk_size` with `chunk_overlap`. `structural`: splits legal text
 at `Раздел`/`Глава`/`Статья` headings (article numbers with `-N` suffixes are distinct), Markdown at
@@ -468,8 +481,25 @@ frames per second on `/ws/events`). CPU-bound and FAISS work runs in `asyncio.to
 readable message, no partial index and no chunk rows. Deleting a KB cancels its job, removes rows and
 the directory, and emits `kb_deleted`.
 
+**Addition to a ready base.** `POST /api/v1/kb/{kb_id}/files` classifies each uploaded file by source
+name and SHA-256 as added, replaced or unchanged, then claims the base with a conditional `UPDATE`
+(`status = ready` and `phase IS NULL` to `phase = adding`); the affected row count is the only
+admission check, so two concurrent requests cannot both start. The job (`run_add_job`) chunks and
+embeds only the added and replaced files with the base's own strategy and model, and embedding
+finishes before anything is written. One short transaction then inserts the new document and chunk
+rows first and deletes the replaced ones afterwards (SQLite reuses rowids after deletes, so new chunk
+ids must exceed all existing ones). The FAISS index is patched on a copy read from disk (remove the
+replaced ids, add the new vectors), written to a pending file and swapped in with `os.replace` after
+the commit; the in-memory index cache is swapped at the same moment. The base stays `ready` and
+searchable throughout. The failure path is non-destructive: any error or cancellation removes the
+staging directory, clears `phase`, stores the message in `KnowledgeBase.error` and leaves rows, files
+and index exactly as before; the next addition clears the message. The summary
+(`add_summary`: added, replaced, unchanged) is sent once in the last `kb_progress` frame.
+
 **Orphan recovery.** At Agent startup, KBs left `queued`/`indexing` by a crash or restart are marked
-`failed` with a restart message; the user deletes and recreates them.
+`failed` with a restart message; the user deletes and recreates them. A `ready` base left with a
+`phase` (an addition interrupted by the restart) keeps its data: `phase` is cleared and `error` gets
+a restart message asking the user to repeat the addition.
 
 **Embedding model guard (D-24).** LM Studio's `/v1/embeddings` ignores the `model` field and answers
 with whatever embedding model is loaded, so naming an `llm`-type model would silently return vectors

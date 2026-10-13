@@ -435,7 +435,9 @@ All routes require the session cookie; a knowledge base owned by another user an
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/v1/kb` | List the caller's knowledge bases, newest first (`KbOut[]`) |
+| GET | `/api/v1/kb/limits` | Upload limits read from `agent/kb_limits.py` (see "Limits") |
 | POST | `/api/v1/kb` | Create from `multipart/form-data`; answers `202` with `KbOut` and indexes in the background |
+| POST | `/api/v1/kb/{kb_id}/files` | Add files to a ready knowledge base from `multipart/form-data`; answers `202` with `KbOut` and indexes only the added files in the background |
 | GET | `/api/v1/kb/{kb_id}` | One knowledge base (`KbOut`) |
 | DELETE | `/api/v1/kb/{kb_id}` | Cancel a running job, delete rows and the storage directory; `204` |
 | POST | `/api/v1/kb/{kb_id}/search` | Test search: body `{"query": str, "top_k": 1..20 = 5}`; `{"results": [...]}` |
@@ -448,14 +450,53 @@ All routes require the session cookie; a knowledge base owned by another user an
 `chunk_overlap` (default 150, less than the size and at most half of it; both ignored for the
 `structural` strategy except as the upper bound), `embedding_model` (required) and one or more `files`.
 
-Caps (`agent/kb_limits.py`): up to 10 files, 50 MB per file, 100 MB in total, extensions `.pdf`, `.txt`,
-`.md` only. Files are SHA-256 de-duplicated per knowledge base. Validation runs on the server before
-anything is kept; any violation answers `422` (`413` for a declared request above the cap) and leaves
-no rows or files behind. Messages: `Введите название базы знаний.`, `Выберите хотя бы один файл.`,
-`Можно загрузить не больше 10 файлов.`, `Файл {name}: поддерживаются только PDF, TXT и MD.`,
-`Файл {name} больше 50 МБ.`, `Общий размер файлов больше 100 МБ.`, `Файл {name} пустой.`,
-`Файл {name} уже добавлен.`, `Размер чанка должен быть не меньше 100`,
-`Размер чанка не должен превышать 2000`, `Перекрытие должно быть меньше размера чанка и не больше его половины`.
+The `filename` of each `files` part is the source name. It may be a relative path with forward
+slashes (`docs/API_SPEC.md`), which is what the browser sends for a folder. The server normalises it
+before use: Unicode NFC, `\` becomes `/`, control characters are removed, empty, `.`, `..` and drive
+segments are dropped, and the result may be at most `MAX_SOURCE_NAME_CHARS` (300) characters.
+
+Caps (`agent/kb_limits.py`): up to `MAX_FILES` = 200 files per request, 50 MB per file, 100 MB in
+total, extensions `.pdf`, `.txt`, `.md` only. A source name may occur once per request; identical
+content under different source names is accepted, and SHA-256 is used only to detect an unchanged
+file on addition. Validation runs on the server before anything is kept; any violation answers `422`
+(`413` for a declared request above the cap) and leaves no rows or files behind. Messages:
+`Введите название базы знаний.`, `Выберите хотя бы один файл.`,
+`Можно загрузить не больше 200 файлов за одну загрузку.`,
+`Файл {name}: поддерживаются только PDF, TXT и MD.`, `Файл {name} больше 50 МБ.`,
+`Общий размер файлов больше 100 МБ.`, `Имя файла {name} длиннее 300 символов.`,
+`Файл {name} пустой.`, `Файл {name} уже добавлен.` (the same source name twice in one request),
+`Размер чанка должен быть не меньше 100`, `Размер чанка не должен превышать 2000`,
+`Перекрытие должно быть меньше размера чанка и не больше его половины`.
+
+### Limits
+
+`GET /api/v1/kb/limits` (session cookie only) lets the page read the caps instead of hard-coding them:
+
+```json
+{
+  "max_files": 200, "max_file_bytes": 52428800, "max_total_bytes": 104857600,
+  "max_source_name_chars": 300, "extensions": [".md", ".pdf", ".txt"]
+}
+```
+
+### Add files to a ready knowledge base
+
+`POST /api/v1/kb/{kb_id}/files` takes `multipart/form-data` with one or more `files` parts and nothing
+else: the base keeps its own strategy, chunk size, overlap and embedding model. The same source-name
+rules and caps as on creation apply to the request (the caps count the request, not the whole base).
+
+Each file is classified by source name and SHA-256 against the documents already in the base:
+`added` (no document has this source name), `unchanged` (same name, same SHA-256: skipped, nothing is
+recomputed) or `replaced` (same name, different content: the old document and its fragments are
+superseded). Files of the base that are not in the request are never removed. Only added and replaced
+files are chunked and embedded.
+
+Status codes: `202` with `KbOut` (`status: "ready"`, `phase: "adding"`); `404` the base is missing or
+belongs to another user; `409` with `Добавлять файлы можно только в готовую базу знаний.` when the base
+is not `ready`, or with `Идёт добавление файлов. Дождитесь его окончания.` when an addition is already
+running; `413` a declared request above the cap; `422` any upload rule violation. A rejected or failed
+addition leaves the base exactly as it was: same documents, same index, still `ready` and searchable.
+The result of a successful addition arrives in the last `kb_progress` frame as `add_summary`.
 
 ### KbOut
 
@@ -471,6 +512,10 @@ no rows or files behind. Messages: `Введите название базы з�
 
 `status` is `queued`, `indexing`, `ready` or `failed`; `phase` is `loading_model`, `parsing` or
 `embedding` while indexing. `error` is a readable Russian message when `failed`.
+
+While files are being added to a ready base, `status` stays `ready` and `phase` is `adding` (with
+`done` and `total` counting the new fragments), so search keeps working. On a `ready` base `error`
+holds the message of the last failed addition until the next addition starts.
 
 ### Search result item
 
@@ -491,12 +536,15 @@ The guard (D-24) therefore rejects non-embedding models with a message containin
 
 ```json
 { "type": "kb_progress", "kb": { "...": "KbOut" } }
+{ "type": "kb_progress", "kb": { "...": "KbOut" }, "add_summary": { "added": 1, "replaced": 1, "unchanged": 4 } }
 { "type": "kb_deleted", "kb_id": 3 }
 ```
 
 - `kb_progress`: status or progress changed (throttled to about two frames per second while indexing).
   A job cancelled by a delete may publish a final `failed` frame (`Индексация прервана.`) just before
   `kb_deleted`.
+- `add_summary`: present once, in the last frame of a successful addition; counts the files that were
+  added, replaced and left unchanged.
 - `kb_deleted`: the knowledge base was removed. Frames go only to the owner's sockets.
 - After an Agent restart, jobs left in `queued` or `indexing` become `failed` with
   `Индексация прервана перезапуском агента. Удалите базу и создайте её заново.`
