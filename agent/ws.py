@@ -21,7 +21,7 @@ from agent.context_engine import (
     serialize_tool_trace,
 )
 from agent.dependencies import get_current_user_ws
-from agent import invariants, limits, tasks
+from agent import help_command, invariants, limits, tasks
 from agent.llm_client import LLMClient, count_tokens
 from agent.mcp_tools import McpToolset, build_mcp_toolset
 from agent.rag import MODE_RAG
@@ -1006,6 +1006,93 @@ async def _run_turn_middle(
     )
 
 
+async def _run_help_turn(
+    websocket: WebSocket,
+    session: AsyncSession,
+    chat: Chat,
+    chat_id: int,
+    payload: MessagePayload,
+    question: str,
+    client: LLMClient,
+    provider_row: Any,
+) -> None:
+    """Run a /help turn: documentation search with the user's /help settings, chosen tools, no chat history."""
+    user_id: int = chat.user_id
+    config = await help_command.load_help_config(session, user_id)
+    kb = await help_command.load_help_kb(session, user_id, config)
+    if kb is None:
+        await websocket.send_json(
+            help_command.notice_frame(
+                help_command.NOTICE_NO_BASE, help_command.HELP_NO_BASE_TEXT,
+            ),
+        )
+        return
+
+    user_msg = await _persist_user_message(session, chat, payload.content)
+    user_msg_id: int = user_msg.id
+    user_parent_id: int | None = user_msg.parent_id
+
+    effective = await get_effective_settings(session, chat_id)
+    temperature = effective.temperature
+    max_tokens = effective.max_tokens
+
+    tools = await help_command.build_help_tools(session, user_id, config)
+    tool_schemas = tools.schemas or None
+    llm_messages = help_command.build_help_messages(
+        question, bool(tool_schemas), datetime.now(timezone.utc).astimezone(),
+    )
+    schema_tokens = (
+        count_tokens(json.dumps(tool_schemas, ensure_ascii=False)) if tool_schemas else 0
+    )
+    rag_turn: RagTurn = await help_command.prepare_help_turn(
+        session, chat, kb, config, question, llm_messages,
+        effective.context_length, max_tokens, schema_tokens,
+        client=client, model=payload.model, warnings=tools.warnings,
+    )
+
+    middle = await _run_turn_middle(
+        websocket, session, chat, chat_id, payload, llm_messages, tool_schemas,
+        tools.toolset, temperature, max_tokens, client, provider_row, user_msg_id,
+        user_parent_id, allowed_tools=tools.allowed_tools, user_text=question,
+    )
+    if middle is None:
+        return
+
+    assistant_text, rag_turn = await asyncio.to_thread(
+        help_command.finalize_help_turn,
+        rag_turn, question, middle.assistant_text, middle.tool_results,
+    )
+    # A /help turn changes nothing besides its two messages: no side jobs run here.
+    assistant_msg = await _persist_assistant_message(
+        session,
+        chat,
+        user_msg_id,
+        assistant_text,
+        tool_trace=middle.tool_trace,
+        rag_sources=rag_turn.sources_json,
+    )
+    stats = await compute_chat_stats(session, chat_id, payload.model)
+    logger.info(
+        "help_turn_done",
+        chat_id=chat_id,
+        message_id=assistant_msg.id,
+        sources=len(rag_turn.payload.get("sources") or []),
+        tool_calls=len(middle.tool_results),
+        warnings=len(tools.warnings),
+    )
+    await websocket.send_json(
+        {
+            "type": "done",
+            "message_id": assistant_msg.id,
+            "stats": stats,
+            "memory_writes": middle.memory_writes,
+            "task_writes": middle.task_writes,
+            "invariant_conflict": None,
+            "rag": rag_turn.done_payload,
+        },
+    )
+
+
 async def _run_chat_turn(
     websocket: WebSocket,
     chat_id: int,
@@ -1022,6 +1109,13 @@ async def _run_chat_turn(
             )
             return
 
+        question = help_command.parse_help(payload.content)
+        if question is not None:
+            notice = await help_command.resolve_help_notice(session, chat.user_id, question)
+            if notice is not None:
+                await websocket.send_json(notice)
+                return
+
         try:
             client, provider_row = await resolve_client(chat.user_id, payload.provider_id)
         except ProviderUnavailableError as exc:
@@ -1032,6 +1126,12 @@ async def _run_chat_turn(
             )
             await websocket.send_json(
                 {"type": "error", "code": "PROVIDER_UNAVAILABLE", "detail": exc.message},
+            )
+            return
+
+        if question is not None:
+            await _run_help_turn(
+                websocket, session, chat, chat_id, payload, question, client, provider_row,
             )
             return
 
@@ -1315,6 +1415,23 @@ async def broadcast_model_event(model_id: str, event_type: str) -> None:
             active_connections.discard(connection)
 
 
+async def _reject_rate_limited(websocket: WebSocket, chat_id: int) -> bool:
+    """Take a rate slot; send the RATE_LIMITED frame and return True when the chat is over the limit."""
+    retry_after = limits.check_message_rate(chat_id)
+    if retry_after is None:
+        return False
+    logger.warning("rate_limited", chat_id=chat_id, channel="ws", retry_after=retry_after)
+    await websocket.send_json(
+        {
+            "type": "error",
+            "code": limits.CODE_RATE_LIMITED,
+            "detail": limits.MSG_RATE_LIMITED,
+            "retry_after": retry_after,
+        },
+    )
+    return True
+
+
 async def ws_chat(websocket: WebSocket, chat_id: int) -> None:
     """Handle streaming chat over WebSocket with security guards."""
     if not _validate_origin(websocket):
@@ -1346,31 +1463,29 @@ async def ws_chat(websocket: WebSocket, chat_id: int) -> None:
                 await websocket.close(code=1000, reason="Idle timeout")
                 break
 
-            retry_after = limits.check_message_rate(chat_id)
-            if retry_after is not None:
-                logger.warning(
-                    "rate_limited", chat_id=chat_id, channel="ws", retry_after=retry_after
-                )
-                await websocket.send_json(
-                    {
-                        "type": "error",
-                        "code": limits.CODE_RATE_LIMITED,
-                        "detail": limits.MSG_RATE_LIMITED,
-                        "retry_after": retry_after,
-                    },
-                )
-                continue
-
-            try:
-                payload = MessagePayload.model_validate(raw)
-            except ValidationError as exc:
-                await websocket.send_json(
-                    {
-                        "type": "error",
-                        "detail": exc.errors(),
-                    },
-                )
-                continue
+            if help_command.is_help_command(raw):
+                try:
+                    payload = MessagePayload.model_validate(raw)
+                except ValidationError as exc:
+                    await websocket.send_json({"type": "error", "detail": exc.errors()})
+                    continue
+                async with async_session_factory() as db:
+                    notice = await help_command.resolve_help_notice(
+                        db, user.id, help_command.parse_help(payload.content) or "",
+                    )
+                if notice is not None:
+                    await websocket.send_json(notice)
+                    continue
+                if await _reject_rate_limited(websocket, chat_id):
+                    continue
+            else:
+                if await _reject_rate_limited(websocket, chat_id):
+                    continue
+                try:
+                    payload = MessagePayload.model_validate(raw)
+                except ValidationError as exc:
+                    await websocket.send_json({"type": "error", "detail": exc.errors()})
+                    continue
 
             await _handle_chat_message(websocket, chat_id, payload)
     except WebSocketDisconnect:
