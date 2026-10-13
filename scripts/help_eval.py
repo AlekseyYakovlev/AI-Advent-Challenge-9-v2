@@ -5,6 +5,8 @@ Usage:
     python scripts/help_eval.py measure [--allow-draft]
     python scripts/help_eval.py spike [--ids ID,ID,ID]
     python scripts/help_eval.py run [--models local,deepseek]
+    python scripts/help_eval.py judge [--model deepseek-flash]
+    python scripts/help_eval.py summary
 
 The driver copies the working tree to a scratch directory, repoints the copy to UI :18000 /
 Agent :18001, starts it with a scratch database, uploads README.md and docs/*.md of this
@@ -22,6 +24,8 @@ Commands:
     measure  index the base, search every question, write eval_out/day31/threshold.json
     spike    try the combined quotes-plus-tools prompt on three questions per model
     run      send the control questions to every available model, save raw bodies and answers
+    judge    grade the saved answers with the DeepSeek judge (prompts of rag_judge.py)
+    summary  compute the automatic checks and write summary.md from the saved files
 
 A step that cannot run (LM Studio down, a model not loaded, no or refused DeepSeek key) is
 recorded as `not run` with the reason; it is never recorded as passed.
@@ -86,6 +90,11 @@ GIT_EXPECTED_FROM: frozenset[str] = frozenset({"git_branch", "git_log", "git_sta
 CLEAN_TREE_TEXT: str = "рабочая копия чистая"
 SPIKE_CATEGORIES: tuple[str, ...] = ("docs", "git", "mixed")
 NOT_RUN: str = "not run"
+REFUSAL_RE: re.Pattern[str] = re.compile(r"не знаю|не нашёл|не нашел|нет информации|нет данных", re.IGNORECASE)
+ANSWER_CUT: int = 1200
+JUDGE_ERROR_CUT: int = 200
+JUDGE_ERROR: str = "judge_error"
+CORRECT_VERDICT: str = "верно"
 
 
 def report(message: str) -> None:
@@ -384,6 +393,138 @@ def deepseek_env_name(app_db: Path) -> str:
     finally:
         conn.close()
     return str(row[0]) if row and row[0] else DEEPSEEK_ENV_NAME
+
+
+# ---------------------------------------------------------------------------------------------
+# Judge and summary (pure parts)
+# ---------------------------------------------------------------------------------------------
+
+
+def automatic_checks(record: dict[str, Any], item: dict[str, Any]) -> dict[str, bool]:
+    """Checks that need no model: expected source returned, expected tool called, answer refuses."""
+    expected_source = str(item.get("expected_source") or "none")
+    expected_tool = str(item.get("expected_tool") or "none")
+    wanted = [part.strip() for part in re.split(r"[,;]", expected_source) if part.strip()]
+    if expected_source == "none":
+        source_ok = True
+    else:
+        source_ok = any(
+            str(found).endswith(name) for found in record.get("sources") or [] for name in wanted
+        )
+    if expected_tool == "none":
+        tool_ok = True
+    else:
+        tool_ok = any(
+            bool(call.get("ok")) and str(call.get("name") or "").endswith(expected_tool)
+            for call in record.get("tool_calls") or []
+        )
+    refused = bool(REFUSAL_RE.search(str(record.get("answer") or "")))
+    return {"source_ok": source_ok, "tool_ok": tool_ok, "refused": refused}
+
+
+def judge_row(reply: str | None) -> tuple[str, str]:
+    """Verdict and reason of one judge reply; an unparsable reply becomes `judge_error`."""
+    verdict, reason = rag_judge.parse_judge_reply(reply)
+    if verdict is None:
+        return JUDGE_ERROR, str(reply or "")[:JUDGE_ERROR_CUT]
+    return verdict, reason
+
+
+def _cut(text: str, limit: int = ANSWER_CUT) -> str:
+    """Text cut to `limit` characters with a visible marker."""
+    return text if len(text) <= limit else text[:limit] + " [... обрезано, полный текст в raw/]"
+
+
+def _mark(value: bool) -> str:
+    """Russian yes/no label."""
+    return "да" if value else "нет"
+
+
+def _render_record(record: dict[str, Any], item: dict[str, Any], judge_note: str | None) -> str:
+    """Markdown lines of one answer of one model."""
+    checks = automatic_checks(record, item)
+    calls = ", ".join(
+        f"{c.get('name')} ({'ok' if c.get('ok') else 'fail'})" for c in record.get("tool_calls") or []
+    ) or "нет"
+    lines: list[str] = []
+    if record.get("error"):
+        lines.append(f"- Ошибка запроса: {record['error']} (статус {record.get('status')})")
+    answer = str(record.get("answer") or "").strip() or "(пустой ответ)"
+    lines.append("- Ответ:")
+    lines.extend(f"  > {row}" for row in _cut(answer).splitlines())
+    lines.append(f"- Источники: {', '.join(record.get('sources') or []) or 'нет'}")
+    lines.append(f"- Вызовы инструментов: {calls}")
+    lines.append(
+        f"- Автопроверки: источник совпал: {_mark(checks['source_ok'])}; нужный инструмент вызван: "
+        f"{_mark(checks['tool_ok'])}; отказ: {_mark(checks['refused'])}"
+    )
+    if judge_note is not None:
+        lines.append(f"- Судья: {judge_note}")
+    elif record.get("judge_verdict"):
+        lines.append(f"- Судья: {record['judge_verdict']}. {record.get('judge_reason') or ''}".rstrip())
+    else:
+        lines.append("- Судья: нет вердикта")
+    return "\n".join(lines)
+
+
+def render_summary(
+    meta: dict[str, Any],
+    items: list[dict[str, Any]],
+    answers_by_model: dict[str, list[dict[str, Any]]],
+    judge_meta: dict[str, Any] | None = None,
+) -> str:
+    """Markdown summary: one section per question with every model, and a totals table."""
+    models: dict[str, Any] = meta.get("models") or {}
+    judge_off = judge_meta is None or judge_meta.get("status") == NOT_RUN
+    judge_note: str | None = None
+    if judge_off:
+        reason = (judge_meta or {}).get("reason", "judge_meta.json отсутствует")
+        judge_note = f"судья не запускался: {reason}"
+    out: list[str] = ["# Контрольный прогон /help (Day 31)", ""]
+    for key, info in models.items():
+        state = (
+            f"запускалась, модель {info.get('model')}"
+            if info.get("status") == "run"
+            else f"не запускалось: {info.get('reason')}"
+        )
+        out.append(f"- {key}: {state}")
+    out.append("")
+    by_id = {str(i["id"]): i for i in items}
+    for item in items:
+        out += [
+            f"## {item['id']} ({item['category']})", "",
+            f"Вопрос: {item['question']}",
+            f"Ожидаемый источник: {item['expected_source']}; ожидаемый инструмент: {item['expected_tool']}", "",
+        ]
+        for key, info in models.items():
+            out.append(f"### {key}")
+            if info.get("status") != "run":
+                out += [f"не запускалось: {info.get('reason')}", ""]
+                continue
+            record = next((r for r in answers_by_model.get(key, []) if r["id"] == item["id"]), None)
+            out += ["нет записи об ответе" if record is None else _render_record(record, item, judge_note), ""]
+    out += [
+        "## Итоги", "",
+        "| Модель | Верно по судье | Источник совпал | Инструмент вызван | Отказ на вопросе вне базы |",
+        "|---|---|---|---|---|",
+    ]
+    for key, info in models.items():
+        if info.get("status") != "run":
+            out.append(f"| {key} | не запускалось | не запускалось | не запускалось | не запускалось |")
+            continue
+        records = answers_by_model.get(key, [])
+        checks = [automatic_checks(r, by_id[r["id"]]) for r in records]
+        if judge_off:
+            correct = "судья не запускался"
+        else:
+            correct = f"{sum(1 for r in records if r.get('judge_verdict') == CORRECT_VERDICT)}/{len(records)}"
+        outside = [c for r, c in zip(records, checks) if by_id[r["id"]]["category"] == "out_of_corpus"]
+        out.append(
+            f"| {key} | {correct} | {sum(c['source_ok'] for c in checks)}/{len(records)} | "
+            f"{sum(c['tool_ok'] for c in checks)}/{len(records)} | "
+            f"{sum(c['refused'] for c in outside)}/{len(outside)} |"
+        )
+    return "\n".join(out) + "\n"
 
 
 # ---------------------------------------------------------------------------------------------
@@ -922,6 +1063,109 @@ def _write_run_meta(
     }, [])
 
 
+def _load_meta(out: Path, fixture: Path) -> dict[str, Any] | None:
+    """run_meta.json, or None with a message when it is missing or the fixture changed."""
+    path = out / "run_meta.json"
+    if not path.exists():
+        report("run_meta.json is missing; run the control run first")
+        return None
+    meta: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+    current = dialog._fixture_hashes(fixture)
+    if meta.get("sha256_lf") and meta["sha256_lf"] != current["sha256_lf"]:
+        report(f"fixture changed since the run: run_meta {meta['sha256_lf']}, now {current['sha256_lf']}")
+        return None
+    return meta
+
+
+def _load_answers(out: Path, meta: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    """Saved answer records of every model that ran."""
+    found: dict[str, list[dict[str, Any]]] = {}
+    for key, info in (meta.get("models") or {}).items():
+        path = out / f"answers_{key}.json"
+        if info.get("status") == "run" and path.exists():
+            found[key] = json.loads(path.read_text(encoding="utf-8"))
+    return found
+
+
+async def _pick_judge_model(key: str, model: str) -> tuple[str, int, str]:
+    """Check access for the judge model; fall back to a served DeepSeek model when it is not served."""
+    code, message = await rag_judge.check_access(DEEPSEEK_BASE_URL, key, model)
+    marker = "available: "
+    if code != 0 and marker in message:
+        listed = re.findall(r"'([^']+)'", message.split(marker, 1)[1])
+        picked = pick_deepseek_model(listed)
+        if picked and picked != model:
+            report(f"judge model {model} is not served, using {picked}")
+            model = picked
+            code, message = await rag_judge.check_access(DEEPSEEK_BASE_URL, key, model)
+    return model, code, message
+
+
+async def judge_command(args: argparse.Namespace) -> int:
+    """Grade every saved answer with the DeepSeek judge and write judge_meta.json."""
+    meta = _load_meta(args.out, args.fixture)
+    if meta is None:
+        return EXIT_PREFLIGHT
+    items = {str(i["id"]): i for i in load_control_set(args.fixture, require_frozen=True)}
+    answers = _load_answers(args.out, meta)
+    name = deepseek_env_name(REPO_ROOT / "app.db")
+    key = read_env_value(REPO_ROOT / ".env", name)
+
+    def not_run(reason: str) -> int:
+        save_json(args.out / "judge_meta.json", {"status": NOT_RUN, "reason": reason, "date": _now()}, [key or ""])
+        report(f"JUDGE: {NOT_RUN} ({reason})")
+        return EXIT_PREFLIGHT
+
+    if not key:
+        return not_run(f"{name} is not set in .env")
+    model, code, message = await _pick_judge_model(key, args.model)
+    if code != 0:
+        return not_run(scrub(message, [key]))
+    from agent.llm_client import LLMClient
+
+    client = LLMClient(DEEPSEEK_BASE_URL, key)
+    counts: dict[str, dict[str, int]] = {}
+    for model_key, records in answers.items():
+        counts[model_key] = {}
+        for record in records:
+            category = str(items[record["id"]]["category"])
+            messages = rag_judge.build_judge_messages(
+                record["question"], record.get("expected_answer") or "", str(record.get("answer") or ""), category
+            )
+            try:
+                result = await client.complete_chat_detailed(
+                    messages, model, temperature=rag_judge.JUDGE_TEMPERATURE,
+                    max_tokens=rag_judge.JUDGE_MAX_TOKENS,
+                )
+                verdict, reason = judge_row(result.content)
+            except (httpx.HTTPError, asyncio.TimeoutError, ValueError, KeyError, TypeError) as exc:
+                verdict, reason = JUDGE_ERROR, f"запрос не удался: {type(exc).__name__}"
+            record["judge_verdict"], record["judge_reason"] = verdict, scrub(reason, [key])
+            counts[model_key][verdict] = counts[model_key].get(verdict, 0) + 1
+            report(f"judge {model_key} {record['id']}: {verdict}")
+        save_json(args.out / f"answers_{model_key}.json", records, [key])
+    save_json(args.out / "judge_meta.json", {
+        "status": "run", "judge_model": model, "date": _now(), "counts": counts,
+        "same_provider": "deepseek" in answers,
+        "note": "On the DeepSeek run the judge and the answering model are the same provider.",
+    }, [key])
+    return EXIT_OK
+
+
+def summary_command(args: argparse.Namespace) -> int:
+    """Write summary.md from the saved answers, run_meta.json and judge_meta.json."""
+    meta = _load_meta(args.out, args.fixture)
+    if meta is None:
+        return EXIT_PREFLIGHT
+    items = load_control_set(args.fixture, require_frozen=True)
+    judge_path = args.out / "judge_meta.json"
+    judge_meta = json.loads(judge_path.read_text(encoding="utf-8")) if judge_path.exists() else None
+    text = render_summary(meta, items, _load_answers(args.out, meta), judge_meta)
+    (args.out / "summary.md").write_text(text, encoding="utf-8")
+    report(f"summary written: {args.out / 'summary.md'}")
+    return EXIT_OK
+
+
 async def check_command(caps: Capabilities) -> int:
     """Print what can run; exit 2 when nothing can."""
     print_capabilities(caps)
@@ -941,11 +1185,18 @@ def build_parser() -> argparse.ArgumentParser:
     spike.add_argument("--ids", default=None, help="comma list of question ids")
     run = sub.add_parser("run", help="run the control questions")
     run.add_argument("--models", default=",".join(MODEL_KEYS), help="comma list: local,deepseek")
+    judge = sub.add_parser("judge", help="grade saved answers with the DeepSeek judge")
+    judge.add_argument("--model", default=PREFERRED_DEEPSEEK_MODEL, help="judge model id")
+    sub.add_parser("summary", help="write summary.md from saved files")
     return parser
 
 
 async def amain(args: argparse.Namespace, scratch: Path) -> int:
     """Run the chosen command after preflight."""
+    if args.command == "summary":
+        return summary_command(args)
+    if args.command == "judge":
+        return await judge_command(args)
     caps = await preflight()
     if args.command == "check":
         return await check_command(caps)

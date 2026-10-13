@@ -244,3 +244,83 @@ def test_real_control_set_is_frozen_and_valid() -> None:
     assert data["status"] == "frozen" and data["frozen_at"]
     assert help_eval.validate_control_set(data) == []
     assert len(help_eval.load_control_set(REAL_FIXTURE, require_frozen=True)) == 10
+
+
+def _meta(local: str = "run") -> dict[str, Any]:
+    """A run_meta with one model that ran and one that did not."""
+    return {
+        "models": {
+            "local": {"status": local, "model": "m", "reason": "LM Studio down"},
+            "deepseek": {"status": "not run", "reason": "key rejected"},
+        }
+    }
+
+
+def test_automatic_checks_source_and_tool() -> None:
+    """Source and tool checks use suffix matching and require a successful tool call."""
+    item = _item(1, "git", expected_source="docs/API_SPEC.md")
+    record = {
+        "sources": ["docs/API_SPEC.md"],
+        "tool_calls": [{"name": "local-git__git_current_branch", "ok": True}],
+        "answer": "Ветка Day31",
+    }
+    checks = help_eval.automatic_checks(record, item)
+    assert checks == {"source_ok": True, "tool_ok": True, "refused": False}
+    failed = {**record, "tool_calls": [{"name": "git_current_branch", "ok": False}], "sources": []}
+    checks = help_eval.automatic_checks(failed, item)
+    assert checks["source_ok"] is False and checks["tool_ok"] is False
+
+
+def test_automatic_checks_none_expectations_and_refusal() -> None:
+    """`none` expectations always pass; the refusal marker is detected."""
+    item = _item(9, "out_of_corpus", expected_source="none", expected_tool="none")
+    checks = help_eval.automatic_checks({"answer": "Я не знаю этого.", "sources": [], "tool_calls": []}, item)
+    assert checks == {"source_ok": True, "tool_ok": True, "refused": True}
+
+
+def test_judge_row_maps_reply_and_errors() -> None:
+    """A parsable reply gives its verdict; an unparsable one gives judge_error with cut text."""
+    verdict, reason = help_eval.judge_row("Вердикт: верно\nПричина: совпадает")
+    assert verdict == "верно" and "совпадает" in reason
+    verdict, reason = help_eval.judge_row("x" * 500)
+    assert verdict == "judge_error" and len(reason) == 200
+    assert help_eval.judge_row(None) == ("judge_error", "")
+
+
+def test_render_summary_has_every_id_and_not_run_notes() -> None:
+    """Every question appears, a failed request shows its error, not-run and no-judge are explicit."""
+    items = _control_set()["questions"]
+    records = [
+        {"id": i["id"], "answer": None, "sources": [], "tool_calls": [], "error": "HTTP 500: boom", "status": 500}
+        for i in items
+    ]
+    text = help_eval.render_summary(_meta(), items, {"local": records}, None)
+    for item in items:
+        assert item["id"] in text
+    assert "HTTP 500: boom" in text
+    assert "не запускалось: key rejected" in text
+    assert "судья не запускался" in text
+
+
+def test_render_summary_cuts_long_answers_and_counts_judge() -> None:
+    """A long answer is cut with a marker; totals count the judge verdicts."""
+    items = _control_set()["questions"]
+    records = [
+        {"id": i["id"], "answer": "а" * 3000, "sources": [], "tool_calls": [], "error": None,
+         "judge_verdict": "верно", "judge_reason": "ок"}
+        for i in items
+    ]
+    text = help_eval.render_summary(_meta(), items, {"local": records}, {"status": "run"})
+    assert "обрезано" in text
+    assert f"| local | {len(items)}/{len(items)} |" in text
+
+
+def test_load_meta_refuses_a_changed_fixture(tmp_path: Path) -> None:
+    """A fixture whose hash differs from run_meta.json stops judge and summary."""
+    fixture = tmp_path / "f.json"
+    fixture.write_text("{}", encoding="utf-8")
+    (tmp_path / "run_meta.json").write_text(json.dumps({"sha256_lf": "0" * 64}), encoding="utf-8")
+    assert help_eval._load_meta(tmp_path, fixture) is None
+    hashes = help_eval.dialog._fixture_hashes(fixture)
+    (tmp_path / "run_meta.json").write_text(json.dumps(hashes), encoding="utf-8")
+    assert help_eval._load_meta(tmp_path, fixture) is not None
