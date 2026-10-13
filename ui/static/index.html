@@ -605,6 +605,49 @@
         </div>
     </div>
 
+    <!-- Knowledge base add files modal -->
+    <div id="kb-add-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+        role="dialog" aria-modal="true" aria-labelledby="kb-add-title">
+        <div class="bg-slate-900 border border-slate-700 rounded-xl shadow-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto">
+            <div class="flex items-center justify-between px-5 py-4 border-b border-slate-700">
+                <h2 id="kb-add-title" class="text-lg font-semibold">Добавить файлы</h2>
+                <button type="button" id="btn-close-kb-add" aria-label="Закрыть"
+                    class="text-slate-400 hover:text-white text-xl leading-none">&times;</button>
+            </div>
+            <form id="kb-add-form" class="p-5 space-y-4" novalidate>
+                <div>
+                    <span class="block text-sm text-slate-400 mb-1">Файлы (PDF, TXT, MD)</span>
+                    <div class="grid grid-cols-2 gap-2">
+                        <label for="kb-add-files"
+                            class="block cursor-pointer rounded-lg border border-dashed border-slate-700 px-3 py-3 text-center text-sm text-slate-300 hover:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-500 transition">
+                            Выбрать файлы
+                            <input type="file" id="kb-add-files" multiple accept=".pdf,.txt,.md" class="sr-only">
+                        </label>
+                        <label for="kb-add-folder"
+                            class="block cursor-pointer rounded-lg border border-dashed border-slate-700 px-3 py-3 text-center text-sm text-slate-300 hover:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-500 transition">
+                            Выбрать папку
+                            <input type="file" id="kb-add-folder" webkitdirectory class="sr-only">
+                        </label>
+                    </div>
+                    <p id="kb-add-limits-hint" class="mt-2 text-xs text-slate-500"></p>
+                    <p id="kb-add-folder-report" class="mt-1 text-xs text-slate-300" role="status"></p>
+                    <div id="kb-add-file-list-header" class="hidden mt-2 flex items-center justify-between gap-2 text-xs text-slate-400">
+                        <span id="kb-add-file-count"></span>
+                        <button type="button" id="btn-kb-add-clear-list" class="hidden text-slate-400 hover:text-white">Очистить список</button>
+                    </div>
+                    <ul id="kb-add-file-list" class="mt-2 space-y-1 text-xs text-slate-300 max-h-48 overflow-y-auto"></ul>
+                    <p id="kb-add-file-list-empty" class="hidden mt-1 text-xs text-slate-500">Список пуст. Выберите файлы или папку.</p>
+                </div>
+                <p id="kb-add-params" class="text-xs text-slate-500"></p>
+                <p id="kb-add-error" class="text-xs text-red-400" role="alert"></p>
+                <div class="flex justify-end gap-2 pt-2">
+                    <button type="submit" id="btn-kb-add-submit"
+                        class="rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2 text-sm font-semibold transition">Добавить в базу</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <!-- Knowledge base search modal -->
     <div id="kb-search-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/60"
         role="dialog" aria-modal="true" aria-labelledby="kb-search-title">

@@ -4033,6 +4033,7 @@ function bindEvents() {
 
 state.lastKbs = null;
 state.kbExpanded = new Set();
+state.kbAddSummary = new Map();
 state.kbConfirmDelete = new Map();
 state.kbLimits = null;
 state.kbModalOpener = null;
@@ -4229,6 +4230,7 @@ function closeKbModal(modalId) {
     if (!modal || modal.classList.contains('hidden')) return;
     modal.classList.add('hidden');
     if (modalId === 'kb-search-modal') state.kbSearchId = null;
+    if (modalId === 'kb-add-modal') state.kbAddTargetId = null;
     const opener = state.kbModalOpener;
     state.kbModalOpener = null;
     if (opener && opener.isConnected) opener.focus();
@@ -4424,6 +4426,86 @@ state.kbPending = createKbPending({
     empty: 'kb-file-list-empty',
     submit: 'btn-kb-submit',
 }, { disableWhenEmpty: false });
+
+state.kbAddTargetId = null;
+state.kbAddPending = createKbPending({
+    files: 'kb-add-files',
+    folder: 'kb-add-folder',
+    hint: 'kb-add-limits-hint',
+    report: 'kb-add-folder-report',
+    header: 'kb-add-file-list-header',
+    count: 'kb-add-file-count',
+    clear: 'btn-kb-add-clear-list',
+    list: 'kb-add-file-list',
+    empty: 'kb-add-file-list-empty',
+    submit: 'btn-kb-add-submit',
+}, { disableWhenEmpty: true });
+
+function openKbAddModal(kb, opener) {
+    state.kbAddTargetId = kb.id;
+    state.kbAddPending.reset();
+    $('kb-add-error').textContent = '';
+    $('kb-add-title').textContent = `Добавить файлы в «${kb.name}»`;
+    const strategy = kb.strategy === 'structural' ? 'структурная' : 'фиксированная длина';
+    const model = String(kb.embedding_model || '').split('/').pop();
+    $('kb-add-params').textContent = `Файлы будут проиндексированы с параметрами этой базы: ${strategy}, ${model}.`;
+    state.kbModalOpener = opener || null;
+    $('kb-add-modal').classList.remove('hidden');
+    $('kb-add-files').focus();
+    loadKbLimits().then(() => state.kbAddPending.render());
+}
+
+async function submitKbAdd(event) {
+    event.preventDefault();
+    const errorEl = $('kb-add-error');
+    errorEl.textContent = '';
+    const kbId = state.kbAddTargetId;
+    if (kbId === null || kbId === undefined) return;
+    if (!state.kbAddPending.entries.length) {
+        errorEl.textContent = 'Выберите хотя бы один файл.';
+        return;
+    }
+    const limitMessage = state.kbAddPending.limitError();
+    if (limitMessage) {
+        errorEl.textContent = limitMessage;
+        return;
+    }
+    const formData = new FormData();
+    state.kbAddPending.entries.forEach((entry) => formData.append('files', entry.file, entry.source));
+
+    const btn = $('btn-kb-add-submit');
+    btn.disabled = true;
+    btn.textContent = 'Добавляю…';
+    try {
+        const resp = await fetch(`${AGENT_BASE}/api/v1/kb/${kbId}/files`, {
+            method: 'POST',
+            body: formData,
+            credentials: 'include',
+        });
+        if (resp.status === 401) {
+            window.location.href = '/static/login.html?expired=1';
+            return;
+        }
+        const body = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+            const detail = body.detail;
+            errorEl.textContent = typeof detail === 'string' && detail
+                ? detail
+                : 'Не удалось выполнить запрос. Проверьте соединение и попробуйте снова.';
+            return;
+        }
+        state.kbAddSummary.delete(kbId);
+        upsertKb(body);
+        renderKbPanel();
+        state.kbAddPending.reset();
+        closeKbModal('kb-add-modal');
+    } catch (err) {
+        errorEl.textContent = 'Не удалось выполнить запрос. Проверьте соединение и попробуйте снова.';
+    } finally {
+        btn.textContent = 'Добавить в базу';
+        state.kbAddPending.render();
+    }
+}
 
 function applyKbStrategyVisibility() {
     const structural = $('kb-strategy').value === 'structural';
@@ -5353,7 +5435,10 @@ function bindKbUi() {
     $('btn-kb-new').addEventListener('click', (e) => openKbCreateModal(e.currentTarget));
     $('btn-close-kb-create').addEventListener('click', () => closeKbModal('kb-create-modal'));
     $('btn-close-kb-search').addEventListener('click', () => closeKbModal('kb-search-modal'));
+    $('btn-close-kb-add').addEventListener('click', () => closeKbModal('kb-add-modal'));
+    $('kb-add-form').addEventListener('submit', submitKbAdd);
     bindKbPending(state.kbPending);
+    bindKbPending(state.kbAddPending);
     $('kb-strategy').addEventListener('change', applyKbStrategyVisibility);
     $('kb-show-all-models').addEventListener('change', () => renderKbEmbeddingSelect($('kb-embedding-model').value));
     $('btn-kb-embed-check').addEventListener('click', checkKbEmbedding);
