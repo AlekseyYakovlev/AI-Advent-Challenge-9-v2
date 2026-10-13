@@ -187,7 +187,7 @@ async def wait_for_app(client: httpx.AsyncClient) -> bool:
 
 
 def make_fixtures(scratch: Path) -> dict[str, Path]:
-    """Create the scan PDF and two files with identical content under different names."""
+    """Create the scan PDF and three small text files with identical content."""
     import pymupdf
 
     fixtures: dict[str, Path] = {}
@@ -462,15 +462,16 @@ async def scenarios(
     await page.fill("#kb-chunk-size", "1000")
     await page.fill("#kb-chunk-overlap", "600")
     e_overlap = await modal_error(page)
-    await page.set_input_files("#kb-files", [str(fx["dup_a.txt"]), str(fx["dup_b.txt"])])
     await page.fill("#kb-chunk-overlap", "150")
-    e_dup = await modal_error(page)
+    # D-07: the same file chosen twice (two separate selections) is listed once.
+    await page.set_input_files("#kb-files", [str(fx["dup_a.txt"])])
+    await page.set_input_files("#kb-files", [str(fx["dup_a.txt"])])
     still_open = await page.locator("#kb-create-modal").is_visible()
     listed = await page.locator("#kb-file-list > li").count()
-    report("4 inline validation keeps the modal open",
+    report("4 inline validation keeps the modal open; the same file chosen twice is listed once",
            "не меньше 100" in e_small and "не должен превышать 2000" in e_large
-           and "Перекрытие" in e_overlap and "уже добавлен" in e_dup and still_open and listed >= 2,
-           f"{e_small!r} | {e_large!r} | {e_overlap!r} | {e_dup!r} | files listed={listed}")
+           and "Перекрытие" in e_overlap and still_open and listed == 2,
+           f"{e_small!r} | {e_large!r} | {e_overlap!r} | files listed={listed}")
     await close_modal(page)
 
     # 5 / 6
