@@ -233,6 +233,39 @@ and update also reject a body that is not `application/json` with 415. A request
 outside MCP are not covered by this dependency and still rely on `SameSite=Lax` cookies plus CORS.
 An origin check does not stop script running inside the app's own origin (XSS).
 
+### Bundled MCP servers
+
+**Project git server:** `mcp_servers/project_git.py` is a separate stdio process started by the
+Agent through the existing MCP client; it is not part of `agent/` or `ui/`. It registers five
+read-only tools: `git_current_branch`, `git_status`, `git_diff`, `git_tracked_files` and
+`git_recent_commits`. It imports only the standard library, `mcp` and `psutil` and never `shared.*`,
+because `shared/logger.py` writes JSON to stdout and stdout is the protocol channel; its
+diagnostics go to stderr.
+
+**Safety of the git calls:**
+- Fixed argument lists through `asyncio.create_subprocess_exec`, no shell.
+- Root confinement by real path: a path outside `--root` is refused.
+- A ref is resolved to a commit hash with `git rev-parse --verify --end-of-options` before use.
+- Every command runs with `--literal-pathspecs`, `--no-ext-diff`, `--no-textconv` and
+  `core.fsmonitor=false`; inherited `GIT_*` variables are removed and `GIT_OPTIONAL_LOCKS=0` is set.
+
+**Limits:** the server cuts output at 18000 characters (`--max-chars`) and stops a git command after
+10 seconds (`--timeout`), while the app allows `MCP_TOOL_RESULT_MAX_CHARS` 20000 and
+`MCP_TOOL_CALL_TIMEOUT` 30 seconds, so the server's own marker or error reaches the model first. The
+process tree is killed on timeout because the Git for Windows launcher starts a child git.
+
+**Start-up failures:** a missing root, git not in PATH or a folder that is not a repository end the
+process with the reason as the last stderr line; the user sees `PROCESS_EXITED` with the stderr tail.
+The server never runs `git init`.
+
+**GitHub server:** the external `github-mcp-server` binary is started with
+`stdio --read-only --toolsets=repos,pull_requests`. The token lives in the environment variable
+`GITHUB_PERSONAL_ACCESS_TOKEN`, stored per user and masked by `agent/mcp_config.py`.
+
+**Known risks:** read-only behaviour on the GitHub side rests on the `--read-only` flag alone; the
+token itself has write rights. Text returned by git (diffs, commit subjects) reaches the model as
+tool output and may carry instructions; the git tools being read-only limits the effect.
+
 ## Scheduler
 
 The Agent runs user-defined jobs in the background: a prompt executed once, every N seconds, or on

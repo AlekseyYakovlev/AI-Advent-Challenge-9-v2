@@ -609,3 +609,39 @@ Every file in the table exists in `tests/`; `test_docs_day30.py` fails when a fi
 
 ### Live run from a second machine (manual)
 Automation cannot prove reachability from another machine, so the live run is manual. Follow "Checking the service from another machine" in `docs/USER_GUIDE.md`: LAN mode on, a low demo limit, an API key, then `python3 verify_service.py --url http://<lan-ip>:8001 --n 6` on the other machine. The result files go to `eval_out/day30/` and are summarised in `Day30_report.md`.
+
+## Project MCP servers (Day 31)
+
+### test_mcp_project_git_core.py
+- command line parsing: defaults, explicit values, rejected values
+- the git environment drops inherited `GIT_*` variables; the base argument list is fixed
+- command runner: CRLF normalised, stderr kept apart, output capped, process tree killed on timeout
+- start-up failures: missing root, git not installed, folder that is not a repository
+- the module source is clean of forbidden calls
+- path gate: accepted variants, traversal, Windows escapes, leading dash, colon forms, control characters, links leaving the root
+- ref syntax and resolution (`HEAD`, branch, ranges, unknown refs, option-shaped refs never start git)
+- output fitting: unchanged when it fits, marker with exact numbers, lower bound, truncated diff composition
+
+### test_mcp_project_git.py
+- exactly five tools, the description says the working copy is local
+- each tool on a temporary repository: branch (main, checkout, detached, no commits), status (dirty, clean, Cyrillic names, empty repository), diff (unstaged, staged, against HEAD, path, range, truncation, at most two commands), tracked files (all, counts, path, glob not expanded, truncation table), recent commits (default, count clamp, ref, path, no history)
+- bad arguments and option smuggling are refused without starting git
+- over real stdio: live branch, path outside the root, dash ref, unknown ref, wrong argument type, truncated diff, root from the working directory, `GIT_DIR` ignored
+- start-up failures end with `PROCESS_EXITED`
+- chat dispatch of `mcp__local-git__git_current_branch`; a long listing stays below the app cap
+
+### test_mcp_real_github.py
+- the read-only toolset through the app connect: read tools present, write tools absent
+- a real read call (`list_branches`) succeeds, which a handshake alone cannot prove for a bad token
+- the token value is never returned by the API; only `env_keys` is
+- the two real-binary tests are skipped unless `github-mcp-server.exe` exists (path overridable with `GITHUB_MCP_SERVER_EXE`) and `GITHUB_PERSONAL_ACCESS_TOKEN` is set in the environment of the pytest process; a skipped test is not a passed check
+
+### test_docs_mcp_servers.py
+- the user guide section exists before `## Tips`, names every registered tool and gives the form values for both servers
+- documented limits equal the module constants and the app settings; `go install` is not documented
+- the architecture, API and testing documents contain the new subsections
+- no token-shaped string in `docs/`, `mcp_servers/`, `scripts/`, the MCP tests and the phase directory
+
+### scripts/e2e_mcp_git_playwright.py (browser UAT, not part of pytest)
+- Starts an isolated copy of the app at UI :18000 / Agent :18001 with a real LM Studio model and a temporary repository with branches `alpha` and `beta`. It never touches :8000/:8001.
+- Exit 0 all checks passed, 1 a check failed, 2 blocked (recorded as "not run"), 4 Playwright missing.

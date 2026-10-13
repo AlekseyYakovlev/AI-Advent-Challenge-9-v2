@@ -1122,6 +1122,41 @@ Four settings bound abuse of the service: a per-chat message limit, a cap on con
 
 No route returns the limit values and the UI does not show them. They are set in `.env` (see `.env.example`), described in the user guide and written to the Agent log as `limits_in_force` at start. For allowed origins the CORS response carries `Access-Control-Expose-Headers: Retry-After`, so a browser client can read the header.
 
+## Project MCP servers (Day 31)
+
+Example: project servers. Two `POST /api/v1/mcp/servers` bodies for the bundled git server and the
+official GitHub server.
+
+```json
+{
+  "name": "local-git",
+  "command": "python",
+  "args": ["C:\Projects\AiAdventAgentV2\mcp_servers\project_git.py", "--root=C:\Projects\AiAdventAgentV2"],
+  "env": {},
+  "cwd": "C:\Projects\AiAdventAgentV2",
+  "enabled": true
+}
+```
+
+```json
+{
+  "name": "github",
+  "command": "C:\Users\Aleksey\go\bin\github-mcp-server.exe",
+  "args": ["stdio", "--read-only", "--toolsets=repos,pull_requests"],
+  "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": "<token>"},
+  "enabled": true
+}
+```
+
+The response lists the variable names only:
+
+```json
+{"name": "github", "env_keys": ["GITHUB_PERSONAL_ACCESS_TOKEN"], "enabled": true}
+```
+
+Env values are never returned by any route. Updating a server with the value `•••` keeps the stored
+value. The tools are exposed to the model as `mcp__local-git__<tool>` and `mcp__github__<tool>`.
+
 ## Environment Settings
 
 | Variable | Default | Meaning |
