@@ -1,0 +1,36 @@
+# Automated review of Pull Requests.
+# The job runs on a self-hosted runner on the owner's machine and asks the local
+# app for a review over HTTP. The safe runner configuration is described in
+# docs/USER_GUIDE.md. The check is advisory: it is not required for merging.
+name: PR review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: pr-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  review:
+    if: github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, windows, pr-review]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Request and publish the review
+        run: python scripts/pr_review_ci.py
+        env:
+          APP_URL: ${{ vars.PR_REVIEW_APP_URL }}
+          API_KEY: ${{ secrets.PR_REVIEW_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
