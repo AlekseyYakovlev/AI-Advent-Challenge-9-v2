@@ -236,3 +236,11 @@ def test_pick_spike_ids_defaults_to_first_of_each_category() -> None:
     assert help_eval.pick_spike_ids(items, "q1,q2") == ["q1", "q2"]
     with pytest.raises(ValueError):
         help_eval.pick_spike_ids(items, "nope")
+
+
+def test_real_control_set_is_frozen_and_valid() -> None:
+    """The committed control set is frozen with a date and passes the shape check."""
+    data = json.loads(REAL_FIXTURE.read_text(encoding="utf-8"))
+    assert data["status"] == "frozen" and data["frozen_at"]
+    assert help_eval.validate_control_set(data) == []
+    assert len(help_eval.load_control_set(REAL_FIXTURE, require_frozen=True)) == 10

@@ -1,0 +1,133 @@
+{
+  "version": 1,
+  "status": "frozen",
+  "frozen_at": "2026-10-13T18:30:24Z",
+  "corpus": "README.md + docs/*.md of this repository",
+  "questions": [
+    {
+      "id": "doc-run",
+      "category": "docs",
+      "question": "Как запустить приложение?",
+      "expected_source": "README.md or docs/USER_GUIDE.md",
+      "expected_tool": "none",
+      "key_facts": [
+        "Установить зависимости командой pip install -r requirements.txt.",
+        "Скопировать .env.example в .env и поправить нужные значения.",
+        "Запустить приложение командой python run.py.",
+        "Открыть интерфейс по адресу http://localhost:8000; процесс UI сам запускает процесс Agent на порту 8001.",
+        "При первом запуске с пустой базой создаётся аккаунт admin со сгенерированным паролем, который один раз выводится в терминал."
+      ]
+    },
+    {
+      "id": "doc-env",
+      "category": "docs",
+      "question": "Какие переменные окружения нужны в файле .env?",
+      "expected_source": "README.md",
+      "expected_tool": "none",
+      "key_facts": [
+        "Настройки читаются из файла .env; после изменения нужно перезапустить python run.py.",
+        "UI_PORT (по умолчанию 8000) и AGENT_PORT (по умолчанию 8001) задают порты серверов.",
+        "DB_PATH (по умолчанию app.db) задаёт путь к файлу SQLite.",
+        "DEEPSEEK_API_KEY задаёт ключ облачного бэкенда DeepSeek.",
+        "LM_STUDIO_BASE_URL (по умолчанию http://localhost:1234) задаёт адрес локального LM Studio.",
+        "Есть также BIND_HOST, LLM_TIMEOUT, RATE_LIMIT_MESSAGES_PER_MINUTE, LOGIN_MAX_FAILED_ATTEMPTS, LOGIN_LOCKOUT_SECONDS, MAX_CONCURRENT_GENERATIONS, MCP_AUTO_CONNECT, MCP_TOOL_CALL_TIMEOUT и KB_STORAGE_DIR."
+      ]
+    },
+    {
+      "id": "doc-arch",
+      "category": "docs",
+      "question": "Из каких процессов состоит приложение и как они общаются между собой?",
+      "expected_source": "docs/ARCHITECTURE.md or README.md",
+      "expected_tool": "none",
+      "key_facts": [
+        "Приложение состоит из двух процессов Python: сервера UI на порту 8000 и сервера Agent на порту 8001.",
+        "UI отдаёт статический фронтенд и запускает Agent как подпроцесс через asyncio.create_subprocess_exec.",
+        "UI проверяет Agent запросом GET /health каждые 3 секунды и перезапускает его, если он остановился.",
+        "Оба сервера слушают один адрес BIND_HOST (по умолчанию 127.0.0.1)."
+      ]
+    },
+    {
+      "id": "doc-api",
+      "category": "docs",
+      "question": "Каким HTTP-запросом отправить сообщение в чат и как при этом авторизоваться?",
+      "expected_source": "docs/API_SPEC.md",
+      "expected_tool": "none",
+      "key_facts": [
+        "Запрос: POST /api/v1/chats/{chat_id}/messages на порт Agent (AGENT_PORT, по умолчанию 8001), а не на порт UI.",
+        "Авторизация: заголовок Authorization: Bearer <ключ API>; ключ создаётся в Настройках, раздел «API ключи».",
+        "В теле JSON указываются content (текст сообщения) и model (идентификатор загруженной модели); необязательный kb_id выбирает базу знаний.",
+        "Ответ приходит одним JSON-телом: текст ответа content, статистика токенов, вызовы инструментов и данные RAG."
+      ]
+    },
+    {
+      "id": "doc-tests",
+      "category": "docs",
+      "question": "Как запустить тесты проекта?",
+      "expected_source": "README.md or docs/TESTING_GUIDE.md",
+      "expected_tool": "none",
+      "key_facts": [
+        "Весь набор тестов запускается командой pytest tests/ -v.",
+        "Тесты используют отдельную базу данных test_app.db.",
+        "Браузерные скрипты scripts/e2e_*_playwright.py работают на изолированной копии приложения на портах 18000 и 18001."
+      ]
+    },
+    {
+      "id": "git-branch",
+      "category": "git",
+      "question": "На какой ветке сейчас находится проект?",
+      "expected_source": "none",
+      "expected_tool": "git_current_branch",
+      "expected_from": "git_branch",
+      "key_facts": [
+        "Ответ должен назвать текущую ветку git; эталон берётся из git во время запуска."
+      ]
+    },
+    {
+      "id": "git-commits",
+      "category": "git",
+      "question": "Какие три последних коммита в проекте?",
+      "expected_source": "none",
+      "expected_tool": "git_recent_commits",
+      "expected_from": "git_log",
+      "key_facts": [
+        "Ответ должен перечислить заголовки трёх последних коммитов; эталон берётся из git во время запуска."
+      ]
+    },
+    {
+      "id": "mixed-status",
+      "category": "mixed",
+      "question": "Какие файлы изменены в рабочей копии и к какой части архитектуры они относятся?",
+      "expected_source": "README.md or docs/ARCHITECTURE.md",
+      "expected_tool": "git_status",
+      "expected_from": "git_status",
+      "key_facts": [
+        "Список изменённых файлов берётся из git status; эталон строится во время запуска.",
+        "Каталог agent/ — процесс Agent: REST API, WebSocket-чат, клиенты LLM, память, задачи, планировщик, клиент MCP и конвейер RAG.",
+        "Каталог ui/ — процесс UI: статический фронтенд ui/static/ и надзор за подпроцессом Agent.",
+        "Каталог shared/ — код обоих процессов: конфигурация, база данных, модели, логирование.",
+        "Каталоги scripts/, tests/ и docs/ — скрипты, тесты и документация."
+      ]
+    },
+    {
+      "id": "mixed-docs-files",
+      "category": "mixed",
+      "question": "Какие файлы документации в каталоге docs отслеживаются в git и что описывает API_SPEC.md?",
+      "expected_source": "docs/API_SPEC.md",
+      "expected_tool": "git_tracked_files",
+      "key_facts": [
+        "В git отслеживаются docs/API_SPEC.md, docs/ARCHITECTURE.md, docs/TESTING_GUIDE.md и docs/USER_GUIDE.md.",
+        "docs/API_SPEC.md — спецификация API: REST и WebSocket Agent-сервера (порт 8001), список маршрутов и форматы ответов."
+      ]
+    },
+    {
+      "id": "outside",
+      "category": "out_of_corpus",
+      "question": "Какая погода будет завтра в Париже?",
+      "expected_source": "none",
+      "expected_tool": "none",
+      "key_facts": [
+        "Модель говорит, что не знает ответа или что вопрос не относится к проекту; погоду она не выдумывает."
+      ]
+    }
+  ]
+}
