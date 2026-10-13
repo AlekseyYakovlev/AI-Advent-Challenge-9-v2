@@ -254,10 +254,49 @@ Plans:
 **Goal:** A pipeline (for example a GitHub Action) runs on every Pull Request: the assistant receives the PR diff and the changed files, uses RAG over the project documentation and code, and returns a review text with potential bugs, architectural problems and recommendations
 **Requirements**: TBD
 **Depends on:** Phase 21, Phase 22 (project docs knowledge base and the GitHub MCP server); independent of Phase 23
-**Plans:** 0 plans
+**Plans:** 14 plans
 
 Plans:
-- [ ] TBD (run /gsd-plan-phase 24 to break down)
+**Wave 1**
+
+- [ ] 24-01-PLAN.md — Day32 branch cut-point decision; register REV-01..REV-08
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 24-02-PLAN.md — ReviewConfig / ReviewCodeIndex tables and the pure code chunker
+- [ ] 24-03-PLAN.md — Live GitHub MCP check and the in-code PR reader (no 20 000-char cut)
+- [ ] 24-04-PLAN.md — GitHub Actions workflow and the thin caller script
+- [ ] 24-11-PLAN.md — DeepSeek judge and report table renderer
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 24-05-PLAN.md — Git-based incremental code indexer over the base branch
+- [ ] 24-06-PLAN.md — Review core: budget, split, per-base retrieval, model calls, merge
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 24-07-PLAN.md — Review route, settings routes and router wiring
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [ ] 24-08-PLAN.md — «Ревью Pull Request» Settings section (UI-SPEC S1)
+- [ ] 24-10-PLAN.md — Frozen control set of test PRs and the control-run script
+
+**Wave 6** *(blocked on Wave 5 completion)*
+
+- [ ] 24-09-PLAN.md — Docs: API spec, architecture, user guide with safe runner config, testing guide
+
+**Wave 7** *(blocked on Wave 6 completion)*
+
+- [ ] 24-12-PLAN.md — Runner security decision, manual setup, push Day32, real smoke PR
+
+**Wave 8** *(blocked on Wave 7 completion)*
+
+- [ ] 24-13-PLAN.md — Control run on the local model and on DeepSeek
+
+**Wave 9** *(blocked on Wave 8 completion)*
+
+- [ ] 24-14-PLAN.md — Judge both runs, Day32_report.md, close test PRs
 
 ---
 *Roadmap created: 2026-09-19*
