@@ -11,7 +11,7 @@ Requirements for milestone v5.0. Each maps to exactly one roadmap phase.
 
 ### Project Documentation
 
-- [ ] **DOC-01**: The repository has a `README.md` at its root that describes what the app is, the directory structure, how to install and run it, the main settings in `.env`, and links to the documents in `docs/`.
+- [x] **DOC-01**: The repository has a `README.md` at its root that describes what the app is, the directory structure, how to install and run it, the main settings in `.env`, and links to the documents in `docs/`.
 
 ### Knowledge Base Upload
 
@@ -83,7 +83,7 @@ Deferred to later days of Week 7. Tracked but not in the current roadmap.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| DOC-01 | Phase 21 | Pending |
+| DOC-01 | Phase 21 | Complete |
 | KBUP-01 | Phase 21 | Pending |
 | KBUP-02 | Phase 21 | Pending |
 | KBUP-03 | Phase 21 | Complete |

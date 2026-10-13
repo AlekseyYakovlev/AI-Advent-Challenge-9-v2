@@ -33,7 +33,7 @@ Plans:
 **Wave 1**
 
 - [x] 21-01-PLAN.md — Source-name identity: drop the sha unique constraint with a chunk-preserving migration, server-side relative-path source names, MAX_FILES = 200, GET /api/v1/kb/limits
-- [ ] 21-02-PLAN.md — README.md at the repository root with a guard test
+- [x] 21-02-PLAN.md — README.md at the repository root with a guard test
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -161,7 +161,7 @@ Full details: [milestones/v4.0-ROADMAP.md](milestones/v4.0-ROADMAP.md)
 | 18. LAN exposure (Day 30) | v4.0 | 7/7 | Complete    | 2026-10-12 |
 | 19. API keys and HTTP chat (Day 30) | v4.0 | 6/6 | Complete    | 2026-10-12 |
 | 20. Limits, verification script and report (Day 30) | v4.0 | 8/8 | Complete    | 2026-10-12 |
-| 21. Project docs in RAG (Day 31) | v5.0 | 1/7 | In Progress|  |
+| 21. Project docs in RAG (Day 31) | v5.0 | 2/7 | In Progress|  |
 | 22. Project MCP servers (Day 31) | v5.0 | 0/0 | Not started | - |
 | 23. /help command, verification and report (Day 31) | v5.0 | 0/0 | Not started | - |
 
