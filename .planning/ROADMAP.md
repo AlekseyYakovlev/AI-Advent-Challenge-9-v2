@@ -124,7 +124,7 @@ Plans:
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
-- [ ] 23-06-PLAN.md — /help in API_SPEC, ARCHITECTURE, USER_GUIDE, TESTING_GUIDE and the documentation guard test
+- [x] 23-06-PLAN.md — /help in API_SPEC, ARCHITECTURE, USER_GUIDE, TESTING_GUIDE and the documentation guard test
 - [ ] 23-07-PLAN.md — Isolated-copy end-to-end script (folder upload, git server, /help in browser and over HTTP) and its recorded run
 
 **Wave 6** *(blocked on Wave 5 completion)*
@@ -211,7 +211,7 @@ Full details: [milestones/v4.0-ROADMAP.md](milestones/v4.0-ROADMAP.md)
 | 20. Limits, verification script and report (Day 30) | v4.0 | 8/8 | Complete    | 2026-10-12 |
 | 21. Project docs in RAG (Day 31) | v5.0 | 7/7 | Complete   | 2026-10-13 |
 | 22. Project MCP servers (Day 31) | v5.0 | 6/6 | Complete   | 2026-10-13 |
-| 23. /help command, verification and report (Day 31) | v5.0 | 5/8 | In Progress|  |
+| 23. /help command, verification and report (Day 31) | v5.0 | 6/8 | In Progress|  |
 
 ## Backlog
 
