@@ -159,7 +159,7 @@ HTTP service replies (D-14, D-16) are JSON, not UI; field names are planner disc
 ## Interaction & State Rules
 
 1. `/help` is recognised on the server; the client never special-cases the command text, only renders the frames/payload it receives.
-2. A real `/help` exchange is two stored messages and renders from stored data after reload identically to live (label, tool cards, sources, quotes, warning).
+2. A real `/help` exchange is two stored messages. After a reload the label, the sources, the quotes and the warning render from stored data identically to live; tool-call cards are live-only, as for every chat, and are not restored after a reload (D-15).
 3. Service notices are client-only and transient; reloading or switching chats removes them.
 4. The mark and `/help` settings are per user and independent of the current chat; changing them never touches the chat RAG panel (`#rag-search-popover`, mode, KB select) and the chat RAG panel never reflects them.
 5. Disabled/empty rules: base select is disabled when no ready base exists; candidate count `min` follows Top-K; threshold empty means calibrated value of the marked base's embedding model (note `(калибр.)`), and `(нет калибровки)` when no base is marked.
@@ -179,6 +179,7 @@ HTTP service replies (D-14, D-16) are JSON, not UI; field names are planner disc
 - A6. «Детали поиска» is shown under a `/help` answer whenever the search ran, with the existing block unchanged.
 - A7. Search-settings labels are copied from the existing chat popover; the section has no strict toggle and no history-turns field.
 - A8. The service notice also keeps the typed `/help` line out of the stored history; both disappear on reload.
+- A9. Tool-call cards under a `/help` answer follow the existing chat behaviour: shown live, not restored from the message tree after a reload. Restoring them is outside this phase. (Amended on 2026-10-13 during plan revision: the earlier wording of rule 2 listed tool cards among what survives a reload, which contradicted D-15 and the code.)
 
 ---
 
