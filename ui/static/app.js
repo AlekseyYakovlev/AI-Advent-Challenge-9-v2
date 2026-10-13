@@ -4512,6 +4512,51 @@ function openKbAddModal(kb, opener) {
     $('kb-add-modal').classList.remove('hidden');
     $('kb-add-files').focus();
     loadKbLimits().then(() => state.kbAddPending.render());
+    loadKbAddExistingFiles(kb.id);
+}
+
+async function loadKbAddExistingFiles(kbId) {
+    const listEl = $('kb-add-existing-list');
+    const countEl = $('kb-add-existing-count');
+    const statusEl = $('kb-add-existing-status');
+    listEl.replaceChildren();
+    countEl.textContent = '';
+    statusEl.textContent = 'Загрузка списка файлов…';
+    let files;
+    try {
+        const resp = await fetch(`${AGENT_BASE}/api/v1/kb/${kbId}/files`, { credentials: 'include' });
+        if (state.kbAddTargetId !== kbId) return;
+        if (resp.status === 401) {
+            window.location.href = '/static/login.html?expired=1';
+            return;
+        }
+        if (!resp.ok) throw new Error(`status ${resp.status}`);
+        files = await resp.json();
+    } catch (err) {
+        if (state.kbAddTargetId !== kbId) return;
+        statusEl.textContent = 'Не удалось загрузить список файлов.';
+        return;
+    }
+    if (state.kbAddTargetId !== kbId) return;
+    if (!Array.isArray(files) || !files.length) {
+        statusEl.textContent = 'В базе пока нет файлов.';
+        return;
+    }
+    statusEl.textContent = '';
+    countEl.textContent = `(${files.length})`;
+    files.forEach((file) => {
+        const li = document.createElement('li');
+        li.className = 'flex justify-between gap-2';
+        const name = document.createElement('span');
+        name.className = 'truncate';
+        name.textContent = file.filename;
+        name.title = file.filename;
+        const size = document.createElement('span');
+        size.className = 'shrink-0 text-slate-500';
+        size.textContent = formatKbFileSize(file.size_bytes);
+        li.append(name, size);
+        listEl.appendChild(li);
+    });
 }
 
 async function submitKbAdd(event) {

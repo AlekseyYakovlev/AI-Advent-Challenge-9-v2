@@ -24,6 +24,10 @@ ADD_MODAL_IDS: list[str] = [
     "kb-add-params",
     "kb-add-error",
     "btn-kb-add-submit",
+    "kb-add-existing",
+    "kb-add-existing-count",
+    "kb-add-existing-list",
+    "kb-add-existing-status",
 ]
 
 
@@ -164,6 +168,47 @@ def test_add_modal_close_button_is_bound() -> None:
     src: str = _app_js_source()
     assert "$('btn-close-kb-add').addEventListener('click'" in src
     assert "$('kb-add-modal').addEventListener" not in src
+
+
+def test_existing_files_section_precedes_pickers() -> None:
+    """The already-added files section sits inside the modal before the file pickers."""
+    modal: str = _add_modal()
+    for element_id in ("kb-add-existing-count", "kb-add-existing-list", "kb-add-existing-status"):
+        assert f'id="{element_id}"' in modal
+    assert modal.index('id="kb-add-existing"') < modal.index('id="kb-add-files"')
+
+
+def test_open_modal_loads_existing_files() -> None:
+    """Opening the modal triggers the existing-files fetch for that base."""
+    assert "loadKbAddExistingFiles(kb.id)" in _function_source(_app_js_source(), "openKbAddModal")
+
+
+def test_existing_files_loader_source() -> None:
+    """The loader is owner-cookie based, drops stale responses and never writes HTML."""
+    body: str = _function_source(_app_js_source(), "loadKbAddExistingFiles")
+    for text in (
+        "/api/v1/kb/${kbId}/files",
+        "credentials: 'include'",
+        "state.kbAddTargetId !== kbId",
+        "formatKbFileSize",
+        "textContent",
+        "expired=1",
+    ):
+        assert text in body
+    assert "innerHTML" not in body
+    assert not check_js_balance(body)
+
+
+def test_existing_files_copy() -> None:
+    """The Russian status lines are present."""
+    src: str = _app_js_source()
+    assert "Уже в базе" in _index_html()
+    for text in (
+        "В базе пока нет файлов.",
+        "Загрузка списка файлов…",
+        "Не удалось загрузить список файлов.",
+    ):
+        assert text in src
 
 
 def test_app_js_still_balanced() -> None:

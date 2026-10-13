@@ -615,6 +615,11 @@
                     class="text-slate-400 hover:text-white text-xl leading-none">&times;</button>
             </div>
             <form id="kb-add-form" class="p-5 space-y-4" novalidate>
+                <div id="kb-add-existing">
+                    <span class="block text-sm text-slate-400 mb-1">Уже в базе <span id="kb-add-existing-count"></span></span>
+                    <ul id="kb-add-existing-list" class="space-y-1 text-xs text-slate-300 max-h-40 overflow-y-auto"></ul>
+                    <p id="kb-add-existing-status" class="text-xs text-slate-500" role="status"></p>
+                </div>
                 <div>
                     <span class="block text-sm text-slate-400 mb-1">Файлы (PDF, TXT, MD)</span>
                     <div class="grid grid-cols-2 gap-2">
