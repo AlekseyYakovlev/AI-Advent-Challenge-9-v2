@@ -174,6 +174,12 @@ def assistant_rows(page: Any) -> Any:
 
 async def select_chat_model(page: Any) -> None:
     """Select the chosen chat model in the header picker and wait for it to apply."""
+    # The picker is filled asynchronously by loadModels(); a new chat can exist before it finishes.
+    await page.wait_for_function(
+        "id => Array.from(document.querySelectorAll('#model-select option'))"
+        ".some(o => o.textContent.includes(id))",
+        arg=chat_model["id"], timeout=60000,
+    )
     value = await page.evaluate(
         "id => Array.from(document.querySelectorAll('#model-select option'))"
         ".find(o => o.textContent.includes(id)).value",
