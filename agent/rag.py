@@ -187,7 +187,9 @@ def _neutralize(text: str) -> str:
     return _DELIMITER_RUN.sub("==", text)
 
 
-def render_rag_block(chunks: list[dict[str, Any]], *, strict: bool = False) -> str:
+def render_rag_block(
+    chunks: list[dict[str, Any]], *, strict: bool = False, instruction: str | None = None
+) -> str:
     """Render numbered fragments between delimiters, followed by the instruction."""
     lines: list[str] = [BLOCK_OPEN]
     for index, chunk in enumerate(chunks, 1):
@@ -196,18 +198,25 @@ def render_rag_block(chunks: list[dict[str, Any]], *, strict: bool = False) -> s
         lines.append(_neutralize(f"[{index}] {source} — {label}"))
         lines.append(_neutralize(chunk["text"]))
     lines.append(BLOCK_CLOSE)
-    lines.append(STRICT_INSTRUCTION if strict else RAG_INSTRUCTION)
+    if instruction is not None:
+        lines.append(instruction)
+    else:
+        lines.append(STRICT_INSTRUCTION if strict else RAG_INSTRUCTION)
     return "\n".join(lines)
 
 
 def build_rag_block(
-    chunks: list[dict[str, Any]], budget: int, *, strict: bool = False
+    chunks: list[dict[str, Any]],
+    budget: int,
+    *,
+    strict: bool = False,
+    instruction: str | None = None,
 ) -> tuple[str | None, list[dict[str, Any]], int]:
     """Keep the best-scoring chunk prefix that fits the budget; return block, kept, dropped."""
     kept: list[dict[str, Any]] = []
     block: str | None = None
     for chunk in chunks:
-        candidate = render_rag_block([*kept, chunk], strict=strict)
+        candidate = render_rag_block([*kept, chunk], strict=strict, instruction=instruction)
         if count_tokens(candidate) * CYRILLIC_SAFETY > budget:
             break
         kept.append(chunk)
