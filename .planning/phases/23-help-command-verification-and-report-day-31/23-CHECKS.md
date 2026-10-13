@@ -103,4 +103,13 @@ Tool-call cards are live-only for every chat, not only for `/help`. They were as
 
 ## Test suite
 
-Status: pending (recorded by Plan 23-08)
+Command: `python -m pytest tests/ -q -p no:cacheprovider` (2026-10-13, branch Day31, after the control run; run twice, the second run only to list skip reasons with `-rs`).
+
+Summary line as printed: `3150 passed, 13 skipped, 32 warnings in 577.31s (0:09:37)`. Exit code 0; no failed tests. (The earlier Plan 23-05 run had one timing failure, `tests/test_kb_api.py::test_create_happy_path`; it did not recur.)
+
+Skipped tests (13) are skipped for an environment reason and are not passed checks:
+- `tests/test_kb_real_pdfs.py` (10 tests): real PDF files are not available.
+- `tests/test_live_deepseek_title.py` (1): live paid DeepSeek call; needs `RUN_LIVE_DEEPSEEK=1`.
+- `tests/test_mcp_real_github.py` (2): `github-mcp-server.exe` or `GITHUB_PERSONAL_ACCESS_TOKEN` is missing.
+
+Status: passed
