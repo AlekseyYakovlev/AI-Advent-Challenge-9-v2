@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v5.0
 milestone_name: "Week 7: Pipeline"
 status: executing
-last_updated: "2026-10-13T01:00:09.622Z"
+last_updated: "2026-10-13T07:36:05.096Z"
 last_activity: 2026-10-12 -- Phase 21 execution started
 progress:
   total_phases: 6
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 13
-  completed_plans: 6
-  percent: 0
+  completed_plans: 7
+  percent: 17
 ---
 
 # Project State
@@ -56,6 +56,7 @@ No phases executed yet — metrics will populate after Phase 1 completes.
 - [Phase 21]: [Phase 21-03] Addition signalled by status=ready + phase=adding; failure keeps base ready with error message
 - [Phase 21-05]: KB form limits and extension filter come only from /api/v1/kb/limits; one createKbPending controller serves both modals
 - [Phase 21]: [Phase 21-04]: Add admission is a conditional UPDATE (ready AND phase IS NULL) checked by rowcount
+- [Phase ?]: [Phase 21-07]: Multipart file names verified from browser-encoded FormData (Playwright cannot read File-part bodies); part B blocked, exit 3
 
 ### Roadmap Evolution
 
@@ -111,6 +112,7 @@ None.
 | Phase 21 P03 | 20min | 3 tasks | 8 files |
 | Phase 21 P05 | 10min | 2 tasks | 3 files |
 | Phase 21 P04 | 25m | 2 tasks | 3 files |
+| Phase 21 P07 | 45min | 2 tasks | 8 files |
 
 ## Deferred Items
 
@@ -140,7 +142,7 @@ Items acknowledged and deferred at milestone close on 2026-10-12:
 
 ## Session Continuity
 
-**Last session:** 2026-10-13T01:00:09.616Z
+**Last session:** 2026-10-13T07:36:01.152Z
 **Next action:** Phase 21 is planned (7 plans, 5 waves). Run `/bm:execute-phase 21` on branch Day31.
 
 ---
