@@ -325,6 +325,10 @@ class KbAddError(Exception):
         self.message = message
 
 
+class _PostCommitError(Exception):
+    """The addition was committed to the database but the index swap failed."""
+
+
 @dataclass(frozen=True)
 class AddItem:
     """One staged file of an addition and the existing documents it supersedes."""
@@ -390,6 +394,7 @@ async def _commit_addition(
     async with async_session_factory() as session:
         started = time.perf_counter()
         pending: Path | None = None
+        committed = False
         try:
             # Inserts come first so every new chunk id exceeds every existing id
             # (SQLite reuses rowids after deletes).
@@ -486,12 +491,18 @@ async def _commit_addition(
             kb.updated_at = datetime.now(timezone.utc)
             session.add(kb)
             await session.commit()
+            committed = True
             # No await between the commit and the swap: a cold index load must
             # never see the new counts next to the old file.
             promote_index(pending, path)
             kb_index_cache[kb_id] = index
             elapsed = time.perf_counter() - started
-        except Exception:
+        except Exception as exc:
+            if committed:
+                # The rows are durable and reference the moved files, so the
+                # caller must not delete them; the pending index is kept for repair.
+                kb_index_cache.pop(kb_id, None)
+                raise _PostCommitError(type(exc).__name__) from exc
             await session.rollback()
             if pending is not None:
                 pending.unlink(missing_ok=True)
@@ -578,6 +589,13 @@ async def _settle(task: asyncio.Task[_CommitResult]) -> _CommitResult | None:
         return None
 
 
+def _is_post_commit_failure(task: asyncio.Task[_CommitResult] | None) -> bool:
+    """True when the finalising task failed after its database commit."""
+    if task is None or not task.done() or task.cancelled():
+        return False
+    return isinstance(task.exception(), _PostCommitError)
+
+
 async def run_add_job(
     kb_id: int, user_id: int, staging: Path, items: list[AddItem], unchanged: int
 ) -> None:
@@ -630,6 +648,10 @@ async def run_add_job(
         failure = exc.message
     except asyncio.CancelledError:
         cancelled = True
+    except _PostCommitError as exc:
+        logger.error("kb_add_failed", kb_id=kb_id, user_id=user_id, error=str(exc))
+        failure = MSG_ADD_UNEXPECTED
+        moved = []  # committed documents reference these files
     except Exception as exc:
         logger.error("kb_add_failed", kb_id=kb_id, user_id=user_id, error=type(exc).__name__)
         failure = MSG_ADD_UNEXPECTED
@@ -640,6 +662,8 @@ async def run_add_job(
         if settled is not None:
             await _finish_addition(kb_id, user_id, staging, items, unchanged, settled, started)
         else:
+            if _is_post_commit_failure(commit_task):
+                moved = []
             await _fail_add(kb_id, user_id, MSG_ADD_INTERRUPTED, staging, moved)
         raise asyncio.CancelledError
     if failure is not None:
