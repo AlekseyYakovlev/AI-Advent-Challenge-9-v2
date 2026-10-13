@@ -254,7 +254,7 @@ Plans:
 **Goal:** A pipeline (for example a GitHub Action) runs on every Pull Request: the assistant receives the PR diff and the changed files, uses RAG over the project documentation and code, and returns a review text with potential bugs, architectural problems and recommendations
 **Requirements**: REV-01, REV-02, REV-03, REV-04, REV-05, REV-06, REV-07, REV-08
 **Depends on:** Phase 21, Phase 22 (project docs knowledge base and the GitHub MCP server); independent of Phase 23
-**Plans:** 1/14 plans executed
+**Plans:** 5/14 plans executed
 
 Plans:
 **Wave 1**
@@ -263,10 +263,10 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 24-02-PLAN.md — ReviewConfig / ReviewCodeIndex tables and the pure code chunker
-- [ ] 24-03-PLAN.md — Live GitHub MCP check and the in-code PR reader (no 20 000-char cut)
-- [ ] 24-04-PLAN.md — GitHub Actions workflow and the thin caller script
-- [ ] 24-11-PLAN.md — DeepSeek judge and report table renderer
+- [x] 24-02-PLAN.md — ReviewConfig / ReviewCodeIndex tables and the pure code chunker
+- [x] 24-03-PLAN.md — Live GitHub MCP check and the in-code PR reader (no 20 000-char cut)
+- [x] 24-04-PLAN.md — GitHub Actions workflow and the thin caller script
+- [x] 24-11-PLAN.md — DeepSeek judge and report table renderer
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
