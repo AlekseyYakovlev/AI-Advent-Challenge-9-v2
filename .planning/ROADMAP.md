@@ -13,6 +13,7 @@
 - [ ] **Phase 21: Project docs in RAG (Day 31)** - README plus folder upload, accumulated selections and addition to an existing knowledge base
 - [ ] **Phase 22: Project MCP servers (Day 31)** - Own read-only git MCP server and the official GitHub server connected read-only
 - [ ] **Phase 23: /help command, verification and report (Day 31)** - `/help` in the chat and over HTTP, tests, end-to-end script and `Day31_report.md`
+- [ ] **Phase 24: Automated PR code review (Day 32)** - Pipeline on every Pull Request: diff plus changed files, RAG over docs and code, review text
 
 ### Phase 21: Project docs in RAG (Day 31)
 
@@ -247,6 +248,16 @@ Plans:
 Plans:
 
 - [ ] TBD (promote with /bm:review-backlog when ready)
+
+### Phase 24: Automated PR code review (Day 32)
+
+**Goal:** A pipeline (for example a GitHub Action) runs on every Pull Request: the assistant receives the PR diff and the changed files, uses RAG over the project documentation and code, and returns a review text with potential bugs, architectural problems and recommendations
+**Requirements**: TBD
+**Depends on:** Phase 21, Phase 22 (project docs knowledge base and the GitHub MCP server); independent of Phase 23
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 24 to break down)
 
 ---
 *Roadmap created: 2026-09-19*
