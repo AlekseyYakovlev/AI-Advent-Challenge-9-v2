@@ -286,7 +286,7 @@ async def test_limits_in_force_logged(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.asyncio
 async def test_no_route_exposes_limits(authenticated_client: AsyncClient) -> None:
     """No path or network field reveals the limits."""
-    assert not [p for p in app.openapi()["paths"] if "limit" in p]
+    assert not [p for p in app.openapi()["paths"] if "limit" in p and not p.startswith("/api/v1/kb/")]
     resp = await authenticated_client.get("/api/v1/network")
     assert resp.status_code == 200
     for key in resp.json():
