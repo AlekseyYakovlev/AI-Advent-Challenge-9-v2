@@ -155,3 +155,4 @@ Items acknowledged and deferred at milestone close on 2026-10-12:
 ## Operator Next Steps
 
 - Plan Phase 21: /bm:plan-phase 21
+| 261013-kia | Add list of previously added files to the Добавить файлы modal | 2026-10-13 | 76b4b7e | [261013-kia-add-list-of-previously-added-files-to-th](./quick/261013-kia-add-list-of-previously-added-files-to-th/) |
