@@ -540,12 +540,26 @@
                 </div>
                 <div>
                     <span class="block text-sm text-slate-400 mb-1">Файлы (PDF, TXT, MD)</span>
-                    <label for="kb-files"
-                        class="block cursor-pointer rounded-lg border border-dashed border-slate-700 px-3 py-3 text-center text-sm text-slate-300 hover:border-indigo-500 transition">
-                        Выбрать файлы
-                        <input type="file" id="kb-files" multiple accept=".pdf,.txt,.md" class="sr-only">
-                    </label>
-                    <ul id="kb-file-list" class="mt-2 space-y-1 text-xs text-slate-300"></ul>
+                    <div class="grid grid-cols-2 gap-2">
+                        <label for="kb-files"
+                            class="block cursor-pointer rounded-lg border border-dashed border-slate-700 px-3 py-3 text-center text-sm text-slate-300 hover:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-500 transition">
+                            Выбрать файлы
+                            <input type="file" id="kb-files" multiple accept=".pdf,.txt,.md" class="sr-only">
+                        </label>
+                        <label for="kb-folder"
+                            class="block cursor-pointer rounded-lg border border-dashed border-slate-700 px-3 py-3 text-center text-sm text-slate-300 hover:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-500 transition">
+                            Выбрать папку
+                            <input type="file" id="kb-folder" webkitdirectory class="sr-only">
+                        </label>
+                    </div>
+                    <p id="kb-limits-hint" class="mt-2 text-xs text-slate-500"></p>
+                    <p id="kb-folder-report" class="mt-1 text-xs text-slate-300" role="status"></p>
+                    <div id="kb-file-list-header" class="hidden mt-2 flex items-center justify-between gap-2 text-xs text-slate-400">
+                        <span id="kb-file-count"></span>
+                        <button type="button" id="btn-kb-clear-list" class="hidden text-slate-400 hover:text-white">Очистить список</button>
+                    </div>
+                    <ul id="kb-file-list" class="mt-2 space-y-1 text-xs text-slate-300 max-h-48 overflow-y-auto"></ul>
+                    <p id="kb-file-list-empty" class="hidden mt-1 text-xs text-slate-500">Список пуст. Выберите файлы или папку.</p>
                 </div>
                 <div>
                     <label for="kb-strategy" class="block text-sm text-slate-400 mb-1">Стратегия разбиения</label>

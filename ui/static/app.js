@@ -4034,7 +4034,7 @@ function bindEvents() {
 state.lastKbs = null;
 state.kbExpanded = new Set();
 state.kbConfirmDelete = new Map();
-state.kbSelectedFiles = [];
+state.kbLimits = null;
 state.kbModalOpener = null;
 state.kbSearchId = null;
 state.kbEmbeddingModels = [];
@@ -4203,7 +4203,7 @@ function renderKbPanel() {
     if (!kbs.length) {
         const empty = mcpEl('div', 'text-center py-2');
         empty.appendChild(mcpEl('div', 'text-slate-300 font-semibold', 'Баз знаний пока нет'));
-        empty.appendChild(mcpEl('div', 'text-slate-500 mt-1', 'Нажмите «+ Новая база знаний», загрузите PDF, TXT или MD и запустите индексацию.'));
+        empty.appendChild(mcpEl('div', 'text-slate-500 mt-1', 'Нажмите «+ Новая база знаний», загрузите PDF, TXT или MD (можно целую папку) и запустите индексацию.'));
         list.appendChild(empty);
         return;
     }
@@ -4239,24 +4239,191 @@ function formatKbFileSize(bytes) {
     return `${Math.max(1, Math.round(bytes / 1024))} КБ`;
 }
 
-function renderKbFileList() {
-    const list = $('kb-file-list');
-    list.replaceChildren();
-    state.kbSelectedFiles.forEach((file, idx) => {
-        const li = mcpEl('li', 'flex items-center justify-between gap-2 rounded bg-slate-800 px-2 py-1');
-        const label = mcpEl('span', 'truncate', `${file.name} · ${formatKbFileSize(file.size)}`);
-        label.title = file.name;
-        const remove = mcpEl('button', 'text-slate-400 hover:text-white text-base leading-none', '×');
-        remove.type = 'button';
-        remove.setAttribute('aria-label', `Убрать файл ${file.name}`);
-        remove.addEventListener('click', () => {
-            state.kbSelectedFiles.splice(idx, 1);
-            renderKbFileList();
-        });
-        li.append(label, remove);
-        list.appendChild(li);
-    });
+async function loadKbLimits() {
+    if (state.kbLimits) return true;
+    try {
+        state.kbLimits = await apiFetch('/api/v1/kb/limits');
+        return true;
+    } catch (err) {
+        state.kbLimits = null;
+        return false;
+    }
 }
+
+function kbSourceName(file) {
+    return (file.webkitRelativePath || file.name).split('\\').join('/');
+}
+
+function kbHasAllowedExtension(name) {
+    const lower = name.toLowerCase();
+    const extensions = state.kbLimits ? state.kbLimits.extensions : [];
+    return extensions.some((ext) => lower.endsWith(ext));
+}
+
+function kbMegabytes(bytes) {
+    return Math.round(bytes / (1024 * 1024));
+}
+
+function createKbPending(ids, options) {
+    const pending = {
+        ids,
+        entries: [],
+        touched: false,
+        reset() {
+            pending.entries = [];
+            pending.touched = false;
+            pending.setReport('', 'mt-1 text-xs text-slate-300');
+            pending.render();
+        },
+        setReport(text, className) {
+            const report = $(ids.report);
+            report.className = className;
+            report.textContent = text;
+        },
+        addSelection(fileList, fromFolder) {
+            const all = Array.from(fileList);
+            if (!state.kbLimits) {
+                pending.setReport(
+                    'Не удалось загрузить ограничения загрузки. Закройте окно и откройте его снова.',
+                    'mt-1 text-xs text-red-400',
+                );
+                return;
+            }
+            const kept = all.filter((file) => kbHasAllowedExtension(file.name));
+            const skipped = all.length - kept.length;
+            const folder = all.length ? kbSourceName(all[0]).split('/')[0] : '';
+            let dupes = 0;
+            kept.forEach((file) => {
+                const source = kbSourceName(file);
+                if (pending.entries.some((entry) => entry.source === source)) {
+                    dupes += 1;
+                    return;
+                }
+                pending.entries.push({ source, file });
+            });
+            const forms = ['файл', 'файла', 'файлов'];
+            if (dupes > 0) {
+                pending.setReport(
+                    `Уже в списке: ${dupes} ${ruPlural(dupes, forms)} — повторно не добавлено.`,
+                    'mt-1 text-xs text-slate-400',
+                );
+            } else if (fromFolder && kept.length === 0) {
+                pending.setReport(`В папке «${folder}» нет файлов PDF, TXT или MD.`, 'mt-1 text-xs text-red-400');
+            } else if (fromFolder && skipped === 0) {
+                pending.setReport(
+                    `Из папки «${folder}» взято ${kept.length} ${ruPlural(kept.length, forms)}.`,
+                    'mt-1 text-xs text-slate-300',
+                );
+            } else if (fromFolder) {
+                pending.setReport(
+                    `Из папки «${folder}» взято ${kept.length} ${ruPlural(kept.length, forms)}, `
+                    + `пропущено ${skipped} ${ruPlural(skipped, forms)} неподдерживаемого типа.`,
+                    'mt-1 text-xs text-slate-300',
+                );
+            } else {
+                pending.setReport('', 'mt-1 text-xs text-slate-300');
+            }
+            pending.render();
+        },
+        removeAt(index) {
+            pending.entries.splice(index, 1);
+            pending.touched = true;
+            pending.render();
+        },
+        clear() {
+            pending.entries = [];
+            pending.touched = true;
+            pending.setReport('', 'mt-1 text-xs text-slate-300');
+            pending.render();
+        },
+        limitError() {
+            const limits = state.kbLimits;
+            if (!limits) return '';
+            if (pending.entries.length > limits.max_files) {
+                return `Слишком много файлов: ${pending.entries.length} из допустимых ${limits.max_files}. `
+                    + 'Уберите лишние из списка или разделите загрузку на несколько частей.';
+            }
+            const big = pending.entries.find((entry) => entry.file.size > limits.max_file_bytes);
+            if (big) {
+                return `Файл «${big.source}» больше ${kbMegabytes(limits.max_file_bytes)} МБ. Уберите его из списка.`;
+            }
+            const total = pending.entries.reduce((sum, entry) => sum + entry.file.size, 0);
+            if (total > limits.max_total_bytes) {
+                return `Общий размер ${(total / (1024 * 1024)).toFixed(1)} МБ превышает `
+                    + `${kbMegabytes(limits.max_total_bytes)} МБ. Уберите часть файлов или загрузите их по частям.`;
+            }
+            return '';
+        },
+        render() {
+            const limits = state.kbLimits;
+            let hint = 'Можно выбирать несколько раз — выбранное добавляется в общий список.';
+            if (limits) {
+                hint += ` До ${limits.max_files} файлов, до ${kbMegabytes(limits.max_file_bytes)} МБ на файл, `
+                    + `до ${kbMegabytes(limits.max_total_bytes)} МБ всего.`;
+            }
+            $(ids.hint).textContent = hint;
+
+            const list = $(ids.list);
+            list.replaceChildren();
+            pending.entries.forEach((entry, idx) => {
+                const li = mcpEl('li', 'flex items-center justify-between gap-2 rounded bg-slate-800 px-2 py-1');
+                const label = mcpEl('span', 'truncate', `${entry.source} · ${formatKbFileSize(entry.file.size)}`);
+                label.title = entry.source;
+                const remove = mcpEl('button', 'text-slate-400 hover:text-white text-base leading-none px-1', '×');
+                remove.type = 'button';
+                remove.setAttribute('aria-label', `Убрать файл ${entry.source}`);
+                remove.addEventListener('click', () => pending.removeAt(idx));
+                li.append(label, remove);
+                list.appendChild(li);
+            });
+
+            const header = $(ids.header);
+            const empty = pending.entries.length === 0;
+            const message = pending.limitError();
+            header.classList.toggle('hidden', empty);
+            header.classList.toggle('text-red-400', Boolean(message));
+            header.classList.toggle('text-slate-400', !message);
+            const total = pending.entries.reduce((sum, entry) => sum + entry.file.size, 0);
+            $(ids.count).textContent = message
+                || `В списке: ${pending.entries.length} ${ruPlural(pending.entries.length, ['файл', 'файла', 'файлов'])} · ${formatKbFileSize(total)}`;
+            $(ids.clear).classList.toggle('hidden', pending.entries.length < 2);
+            $(ids.empty).classList.toggle('hidden', !(empty && pending.touched));
+
+            const submit = $(ids.submit);
+            if (submit) {
+                submit.disabled = !limits || Boolean(message)
+                    || (Boolean(options.disableWhenEmpty) && empty);
+            }
+        },
+    };
+    return pending;
+}
+
+function bindKbPending(pending) {
+    const bindings = pending.ids;
+    $(bindings.files).addEventListener('change', (e) => {
+        pending.addSelection(e.target.files, false);
+        e.target.value = '';
+    });
+    $(bindings.folder).addEventListener('change', (e) => {
+        pending.addSelection(e.target.files, true);
+        e.target.value = '';
+    });
+    $(bindings.clear).addEventListener('click', () => pending.clear());
+}
+
+state.kbPending = createKbPending({
+    files: 'kb-files',
+    folder: 'kb-folder',
+    hint: 'kb-limits-hint',
+    report: 'kb-folder-report',
+    header: 'kb-file-list-header',
+    count: 'kb-file-count',
+    clear: 'btn-kb-clear-list',
+    list: 'kb-file-list',
+    empty: 'kb-file-list-empty',
+    submit: 'btn-kb-submit',
+}, { disableWhenEmpty: false });
 
 function applyKbStrategyVisibility() {
     const structural = $('kb-strategy').value === 'structural';
@@ -4314,11 +4481,11 @@ function openKbCreateModal(opener) {
     const result = $('kb-embed-check-result');
     result.textContent = '';
     result.className = 'text-xs';
-    state.kbSelectedFiles = [];
-    renderKbFileList();
+    state.kbPending.reset();
     applyKbStrategyVisibility();
     state.kbModalOpener = opener || null;
     $('kb-create-modal').classList.remove('hidden');
+    loadKbLimits().then(() => state.kbPending.render());
     $('kb-name').focus();
     populateKbEmbeddingSelect();
 }
@@ -4353,8 +4520,13 @@ async function submitKbCreate(event) {
         errorEl.textContent = 'Введите название базы знаний.';
         return;
     }
-    if (!state.kbSelectedFiles.length) {
+    if (!state.kbPending.entries.length) {
         errorEl.textContent = 'Выберите хотя бы один файл.';
+        return;
+    }
+    const limitMessage = state.kbPending.limitError();
+    if (limitMessage) {
+        errorEl.textContent = limitMessage;
         return;
     }
     const formData = new FormData();
@@ -4363,7 +4535,7 @@ async function submitKbCreate(event) {
     formData.append('chunk_size', $('kb-chunk-size').value);
     formData.append('chunk_overlap', $('kb-chunk-overlap').value);
     formData.append('embedding_model', $('kb-embedding-model').value);
-    state.kbSelectedFiles.forEach((file) => formData.append('files', file));
+    state.kbPending.entries.forEach((entry) => formData.append('files', entry.file, entry.source));
 
     const btn = $('btn-kb-submit');
     btn.disabled = true;
@@ -4390,12 +4562,13 @@ async function submitKbCreate(event) {
         renderKbPanel();
         const fold = document.querySelector('[data-fold-toggle="kb-panel-body"]');
         if (fold && $('kb-panel-body').classList.contains('hidden')) fold.click();
+        state.kbPending.reset();
         closeKbModal('kb-create-modal');
     } catch (err) {
         errorEl.textContent = 'Не удалось выполнить запрос. Проверьте соединение и попробуйте снова.';
     } finally {
-        btn.disabled = false;
         btn.textContent = 'Индексировать';
+        state.kbPending.render();
     }
 }
 
@@ -4417,7 +4590,9 @@ function buildKbResultCard(item) {
     const head = mcpEl('div', 'text-xs flex flex-wrap items-center gap-2 text-slate-400');
     head.appendChild(mcpEl('span', '', `#${item.rank}`));
     head.appendChild(mcpEl('span', 'text-slate-200', Number(item.score).toFixed(3)));
-    head.appendChild(mcpEl('span', '', item.source || ''));
+    const sourceEl = mcpEl('span', 'truncate max-w-full', item.source || '');
+    sourceEl.title = item.source || '';
+    head.appendChild(sourceEl);
     if (item.section) head.appendChild(mcpEl('span', 'truncate', item.section));
     head.appendChild(mcpEl('span', 'font-mono text-slate-500', String(item.chunk_id)));
     card.appendChild(head);
@@ -5178,14 +5353,7 @@ function bindKbUi() {
     $('btn-kb-new').addEventListener('click', (e) => openKbCreateModal(e.currentTarget));
     $('btn-close-kb-create').addEventListener('click', () => closeKbModal('kb-create-modal'));
     $('btn-close-kb-search').addEventListener('click', () => closeKbModal('kb-search-modal'));
-    $('kb-files').addEventListener('change', (e) => {
-        Array.from(e.target.files).forEach((file) => {
-            const dup = state.kbSelectedFiles.some((f) => f.name === file.name && f.size === file.size);
-            if (!dup) state.kbSelectedFiles.push(file);
-        });
-        e.target.value = '';
-        renderKbFileList();
-    });
+    bindKbPending(state.kbPending);
     $('kb-strategy').addEventListener('change', applyKbStrategyVisibility);
     $('kb-show-all-models').addEventListener('change', () => renderKbEmbeddingSelect($('kb-embedding-model').value));
     $('btn-kb-embed-check').addEventListener('click', checkKbEmbedding);
