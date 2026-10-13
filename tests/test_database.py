@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy import text
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlmodel import select
 
 from shared.database import (
@@ -19,7 +19,19 @@ from shared.database import (
     retry_on_locked_db,
 )
 from kb_helpers import seed_kb, seed_user
-from shared.models import Chat, ContextStrategy, KbChunk, KbDocument, Message, Settings, TokenUsage
+from shared.models import (
+    Chat,
+    ContextStrategy,
+    KbChunk,
+    KbDocument,
+    KnowledgeBase,
+    Message,
+    ReviewCodeIndex,
+    ReviewConfig,
+    Settings,
+    TokenUsage,
+    User,
+)
 
 
 @pytest.mark.asyncio
@@ -94,6 +106,8 @@ async def test_init_db_creates_all_tables() -> None:
         "kbchunk",
         "chatragconfig",
         "helpconfig",
+        "reviewconfig",
+        "reviewcodeindex",
         "chattaskmemory",
         "apikey",
     }
@@ -431,3 +445,76 @@ def test_task_memory_settings_defaults() -> None:
 
     assert settings.TASK_MEMORY_ENABLED is True
     assert settings.TASK_MEMORY_TIMEOUT == 30.0
+
+
+@pytest.mark.asyncio
+async def test_review_config_defaults() -> None:
+    """A ReviewConfig created with only user_id has empty optional settings."""
+    user_id = await seed_user()
+    async with async_session_factory() as session:
+        session.add(ReviewConfig(user_id=user_id))
+        await session.commit()
+        row = (await session.exec(select(ReviewConfig))).one()
+    assert row.repo_path is None
+    assert row.docs_kb_id is None
+    assert row.provider_id is None
+    assert row.model is None
+    assert row.github_server_id is None
+    assert row.context_length == 65536
+
+
+@pytest.mark.asyncio
+async def test_review_config_docs_kb_set_null_on_kb_delete() -> None:
+    """Deleting the referenced knowledge base clears docs_kb_id and keeps the row."""
+    user_id = await seed_user()
+    kb_id = await seed_kb(user_id)
+    async with async_session_factory() as session:
+        session.add(ReviewConfig(user_id=user_id, docs_kb_id=kb_id))
+        await session.commit()
+        kb = (await session.exec(select(KnowledgeBase).where(KnowledgeBase.id == kb_id))).one()
+        await session.delete(kb)
+        await session.commit()
+    async with async_session_factory() as session:
+        row = (await session.exec(select(ReviewConfig))).one()
+    assert row.docs_kb_id is None
+
+
+@pytest.mark.asyncio
+async def test_review_code_index_cascades_with_kb_and_is_unique() -> None:
+    """The index row follows its knowledge base and is unique per user, repo and ref."""
+    user_id = await seed_user()
+    kb_id = await seed_kb(user_id)
+    other_kb_id = await seed_kb(user_id)
+    async with async_session_factory() as session:
+        session.add(ReviewCodeIndex(user_id=user_id, repo_key="r", base_ref="main", kb_id=kb_id))
+        await session.commit()
+    async with async_session_factory() as session:
+        session.add(
+            ReviewCodeIndex(user_id=user_id, repo_key="r", base_ref="main", kb_id=other_kb_id)
+        )
+        with pytest.raises(IntegrityError):
+            await session.commit()
+        await session.rollback()
+    async with async_session_factory() as session:
+        kb = (await session.exec(select(KnowledgeBase).where(KnowledgeBase.id == kb_id))).one()
+        await session.delete(kb)
+        await session.commit()
+    async with async_session_factory() as session:
+        assert (await session.exec(select(ReviewCodeIndex))).all() == []
+
+
+@pytest.mark.asyncio
+async def test_review_rows_deleted_with_user() -> None:
+    """Deleting the user deletes its review settings and code index rows."""
+    user_id = await seed_user()
+    kb_id = await seed_kb(user_id)
+    async with async_session_factory() as session:
+        session.add(ReviewConfig(user_id=user_id))
+        session.add(ReviewCodeIndex(user_id=user_id, repo_key="r", base_ref="main", kb_id=kb_id))
+        await session.commit()
+        user = (await session.exec(select(User).where(User.id == user_id))).one()
+        await session.delete(user)
+        await session.commit()
+    async with async_session_factory() as session:
+        assert (await session.exec(select(ReviewConfig))).all() == []
+        assert (await session.exec(select(ReviewCodeIndex))).all() == []

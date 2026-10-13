@@ -812,6 +812,68 @@ class HelpConfig(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class ReviewConfig(SQLModel, table=True):
+    """Per-user settings of the automated Pull Request review."""
+
+    user_id: int = Field(
+        sa_column=Column(
+            Integer, ForeignKey("user.id", ondelete="CASCADE"), primary_key=True
+        )
+    )
+    repo_path: str | None = Field(default=None, max_length=1000)
+    # NULL means "fall back to HelpConfig.kb_id".
+    docs_kb_id: int | None = Field(
+        default=None,
+        sa_column=Column(
+            Integer, ForeignKey("knowledgebase.id", ondelete="SET NULL"), nullable=True
+        ),
+    )
+    # NULL means "the user's local LM Studio provider".
+    provider_id: int | None = Field(
+        default=None,
+        sa_column=Column(
+            Integer, ForeignKey("llmprovider.id", ondelete="SET NULL"), nullable=True
+        ),
+    )
+    # NULL means "the model currently loaded in LM Studio".
+    model: str | None = Field(default=None, max_length=200)
+    # NULL means "the enabled MCP server named github".
+    github_server_id: int | None = Field(
+        default=None,
+        sa_column=Column(
+            Integer, ForeignKey("mcpserverconfig.id", ondelete="SET NULL"), nullable=True
+        ),
+    )
+    context_length: int = Field(default=65536)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class ReviewCodeIndex(SQLModel, table=True):
+    """A code knowledge base built from one base branch of one repository."""
+
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "repo_key", "base_ref", name="uq_reviewcodeindex_user_repo_ref"
+        ),
+    )
+
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(
+        sa_column=Column(
+            Integer, ForeignKey("user.id", ondelete="CASCADE"), nullable=False, index=True
+        )
+    )
+    repo_key: str = Field(max_length=200)
+    base_ref: str = Field(max_length=255)
+    kb_id: int = Field(
+        sa_column=Column(
+            Integer, ForeignKey("knowledgebase.id", ondelete="CASCADE"), nullable=False
+        )
+    )
+    indexed_commit: str | None = Field(default=None, max_length=40)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
 class ChatTaskMemory(SQLModel, table=True):
     """One task-memory document per chat: goal, clarified points, constraints."""
 
