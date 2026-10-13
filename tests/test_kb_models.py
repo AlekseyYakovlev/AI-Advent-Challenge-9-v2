@@ -1,8 +1,6 @@
 """Knowledge-base table and cascade tests."""
 
-import pytest
 from sqlalchemy import func, select
-from sqlalchemy.exc import IntegrityError
 
 from shared.database import async_session_factory
 from shared.models import KbChunk, KbDocument, KbStrategy, KnowledgeBase, User
@@ -64,16 +62,17 @@ async def test_kb_cascade_delete() -> None:
             assert count == 0
 
 
-async def test_kb_document_unique_sha() -> None:
-    """The same file hash cannot be stored twice in one knowledge base."""
+async def test_kb_document_same_sha_allowed() -> None:
+    """Identity is the source name, so equal content under two names is stored twice."""
     kb_id = await _seed_kb()
+    names = ("docs/a/README.md", "docs/b/README.md")
     async with async_session_factory() as session:
-        for name in ("a.txt", "b.txt"):
+        for name in names:
             session.add(
                 KbDocument(
                     kb_id=kb_id, filename=name, sha256="b" * 64, size_bytes=1, stored_name=name
                 )
             )
-        with pytest.raises(IntegrityError):
-            await session.commit()
-        await session.rollback()
+        await session.commit()
+        rows = (await session.execute(select(KbDocument.filename))).scalars().all()
+    assert sorted(rows) == list(names)

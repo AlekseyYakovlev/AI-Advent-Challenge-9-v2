@@ -312,6 +312,62 @@ async def migrate_add_task_transition_rejection_columns(conn: Any) -> None:
             )
 
 
+async def migrate_kbdocument_drop_sha_unique() -> None:
+    """Rebuild kbdocument without UNIQUE(kb_id, sha256), keeping all rows (idempotent)."""
+    autocommit = engine.execution_options(isolation_level="AUTOCOMMIT")
+    async with autocommit.connect() as conn:
+        row = (
+            await conn.exec_driver_sql(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='kbdocument'",
+            )
+        ).fetchone()
+        if row is None or "uq_kbdocument_kb_sha256" not in (row[0] or ""):
+            return
+
+        logger.info("migrating_kbdocument_drop_sha_unique")
+        # Must be OFF before the rebuild: DROP TABLE would otherwise cascade into kbchunk.
+        await conn.exec_driver_sql("PRAGMA foreign_keys=OFF")
+        try:
+            await conn.exec_driver_sql("BEGIN")
+            try:
+                await conn.exec_driver_sql("DROP TABLE IF EXISTS kbdocument_new")
+                await conn.exec_driver_sql(
+                    "CREATE TABLE kbdocument_new ("
+                    "id INTEGER NOT NULL PRIMARY KEY, "
+                    "kb_id INTEGER NOT NULL REFERENCES knowledgebase (id) ON DELETE CASCADE, "
+                    "filename VARCHAR NOT NULL, "
+                    "sha256 VARCHAR(64) NOT NULL, "
+                    "size_bytes INTEGER NOT NULL, "
+                    "page_count INTEGER, "
+                    "stored_name VARCHAR NOT NULL)",
+                )
+                await conn.exec_driver_sql(
+                    "INSERT INTO kbdocument_new "
+                    "(id, kb_id, filename, sha256, size_bytes, page_count, stored_name) "
+                    "SELECT id, kb_id, filename, sha256, size_bytes, page_count, stored_name "
+                    "FROM kbdocument",
+                )
+                await conn.exec_driver_sql("DROP TABLE kbdocument")
+                await conn.exec_driver_sql("ALTER TABLE kbdocument_new RENAME TO kbdocument")
+                await conn.exec_driver_sql(
+                    "CREATE INDEX ix_kbdocument_kb_id ON kbdocument (kb_id)",
+                )
+                await conn.exec_driver_sql(
+                    "CREATE INDEX ix_kbdocument_kb_filename ON kbdocument (kb_id, filename)",
+                )
+                await conn.exec_driver_sql("COMMIT")
+            except Exception as exc:
+                await conn.exec_driver_sql("ROLLBACK")
+                logger.error("kbdocument_migration_failed", error=type(exc).__name__)
+                raise
+            violations = (await conn.exec_driver_sql("PRAGMA foreign_key_check")).fetchall()
+            if violations:
+                logger.error("kbdocument_migration_fk_check_failed", rows=len(violations))
+                raise RuntimeError("kbdocument migration left foreign key violations")
+        finally:
+            await conn.exec_driver_sql("PRAGMA foreign_keys=ON")
+
+
 async def ensure_bootstrap_admin() -> tuple[str, str] | None:
     """Create a bootstrap admin account when no users exist (D-05)."""
     async with async_session_factory() as session:
@@ -370,6 +426,7 @@ async def bootstrap_admin_if_needed() -> tuple[str, str] | None:
 
 async def init_db() -> None:
     """Create all database tables if they do not exist."""
+    await migrate_kbdocument_drop_sha_unique()
     async with engine.begin() as conn:
         await migrate_add_context_length(conn)
         await migrate_add_user_id_columns(conn)

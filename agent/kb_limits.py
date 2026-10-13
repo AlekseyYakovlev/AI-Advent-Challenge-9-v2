@@ -1,11 +1,13 @@
 """Knowledge base limits and chunking constants defined in one place."""
 
 MAX_FILE_BYTES: int = 50 * 1024 * 1024
-MAX_FILES: int = 10
+MAX_FILES: int = 200
 MAX_TOTAL_BYTES: int = 100 * 1024 * 1024
 MAX_REQUEST_BYTES: int = MAX_TOTAL_BYTES + 1024 * 1024
 ALLOWED_EXTENSIONS: frozenset[str] = frozenset({".pdf", ".txt", ".md"})
 MAX_KB_NAME_CHARS: int = 200
+MAX_SOURCE_NAME_CHARS: int = 300
+PHASE_ADDING: str = "adding"
 
 MIN_CHUNK_SIZE: int = 100
 MAX_EMBED_CHARS: int = 2000

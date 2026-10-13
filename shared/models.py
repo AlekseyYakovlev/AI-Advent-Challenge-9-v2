@@ -695,9 +695,14 @@ class KnowledgeBase(SQLModel, table=True):
 
 
 class KbDocument(SQLModel, table=True):
-    """A source file uploaded into a knowledge base."""
+    """A source file of a knowledge base.
 
-    __table_args__ = (UniqueConstraint("kb_id", "sha256", name="uq_kbdocument_kb_sha256"),)
+    ``filename`` is the source name: a relative path with forward slashes for files
+    chosen through a folder, a plain file name otherwise. ``sha256`` is used only to
+    detect changed content.
+    """
+
+    __table_args__ = (Index("ix_kbdocument_kb_filename", "kb_id", "filename"),)
 
     id: int | None = Field(default=None, primary_key=True)
     kb_id: int = Field(
