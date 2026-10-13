@@ -264,8 +264,9 @@ async def browser_attempt(page: Any, attempt: int) -> tuple[list[CheckLine], lis
     appeared, card, git_answer = await git.ask(page, Q_GIT)
     transcript += [f"Q: {Q_GIT}", f"card: {card}", f"A: {git_answer}"]
     live_cards = await page.locator(TOOL_CARD_SELECTOR, has_text="git_current_branch").count()
-    results.append(("git answer: tool card", appeared and git.card_names_the_tool(card)
-                    and CARD_NAME in card, f"{live_cards} card(s); {card[:100]}"))
+    # The card summary shows server and tool ("local-git · git_current_branch"), not the full name.
+    results.append(("git answer: tool card", appeared and git.card_names_the_tool(card),
+                    f"{live_cards} card(s); {card[:100]}"))
     results.append(("git answer: branch", BRANCH in git_answer.lower(), git_answer[:120]))
     return results, transcript, chat_id
 
@@ -384,7 +385,7 @@ async def http_attempt(client: httpx.AsyncClient, key: str) -> tuple[list[CheckL
          and help_info.get("kb_name") == KB_NAME and bool(doc_body.get("content")),
          f"status={doc.status_code}; sources={len(sources)}; kb_name={help_info.get('kb_name')}"),
         ("http: git answer", gitr.status_code == 200
-         and any("git_current_branch" in n for n in names)
+         and any(CARD_NAME == n for n in names)
          and BRANCH in str(git_body.get("content", "")).lower(),
          f"status={gitr.status_code}; tool_calls={names}"),
     ]
