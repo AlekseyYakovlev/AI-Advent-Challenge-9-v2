@@ -26,7 +26,7 @@ def _app_js() -> str:
 
 
 def test_index_declares_known_modals() -> None:
-    """The discovery regex finds the six known modals."""
+    """The discovery regex finds the seven known modals."""
     assert {
         "settings-modal",
         "add-user-modal",
@@ -34,6 +34,7 @@ def test_index_declares_known_modals() -> None:
         "scheduler-run-modal",
         "kb-create-modal",
         "kb-search-modal",
+        "kb-add-modal",
     } <= set(_modal_ids())
 
 

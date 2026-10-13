@@ -3612,7 +3612,17 @@ function handleEventFrame(frame) {
         return;
     }
     if (frame && frame.type === 'kb_progress' && frame.kb) {
+        const previous = (state.lastKbs || []).find((item) => item.id === frame.kb.id);
+        const wasAdding = Boolean(previous) && kbIsAdding(previous);
         upsertKb(frame.kb);
+        if (frame.add_summary && typeof frame.add_summary === 'object') {
+            state.kbAddSummary.set(frame.kb.id, frame.add_summary);
+            showToast(`Файлы добавлены в базу «${frame.kb.name}»`, 'success');
+        } else if (kbIsAdding(frame.kb)) {
+            state.kbAddSummary.delete(frame.kb.id);
+        } else if (wasAdding && frame.kb.status === 'ready' && !frame.kb.phase && frame.kb.error) {
+            showToast(kbAddFailureText(frame.kb), 'error');
+        }
         renderKbPanel();
         renderRagControls();
         return;
@@ -4074,7 +4084,17 @@ function removeKb(kbId) {
     if (state.lastKbs === null) return;
     state.lastKbs = state.lastKbs.filter((item) => item.id !== kbId);
     state.kbExpanded.delete(kbId);
+    state.kbAddSummary.delete(kbId);
     clearKbDeleteConfirm(kbId);
+}
+
+function kbIsAdding(kb) {
+    return kb.status === 'ready' && Boolean(kb.phase);
+}
+
+function kbAddFailureText(kb) {
+    const message = String(kb.error || '').replace(/[.\s]+$/, '');
+    return `Не удалось добавить файлы: ${message}. База осталась без изменений.`;
 }
 
 function clearKbDeleteConfirm(kbId) {
@@ -4169,20 +4189,34 @@ function buildKbCard(kb) {
 
     if (kb.status === 'queued' || kb.status === 'indexing') card.appendChild(kbProgressBar(kb));
 
-    if (kb.status === 'failed' && kb.error) {
-        const expanded = state.kbExpanded.has(kb.id);
-        const err = mcpEl('button', `text-xs text-red-400 text-left w-full ${expanded ? '' : 'line-clamp-2'}`, kb.error);
-        err.type = 'button';
-        err.setAttribute('aria-expanded', String(expanded));
-        err.addEventListener('click', () => {
-            if (state.kbExpanded.has(kb.id)) state.kbExpanded.delete(kb.id);
-            else state.kbExpanded.add(kb.id);
+    const adding = kbIsAdding(kb);
+    if (adding) {
+        card.appendChild(mcpEl('div', 'text-xs text-sky-400', `Добавление: ${kb.done} из ${kb.total}`));
+        card.appendChild(kbProgressBar(kb));
+    } else if (state.kbAddSummary.has(kb.id)) {
+        const summary = state.kbAddSummary.get(kb.id);
+        const line = mcpEl('div', 'text-xs text-slate-300 flex items-center justify-between gap-2');
+        line.setAttribute('role', 'status');
+        line.appendChild(mcpEl('span', '', `Добавлено: ${summary.added}, заменено: ${summary.replaced}, без изменений: ${summary.unchanged}`));
+        const hide = mcpEl('button', 'text-slate-400 hover:text-white text-base leading-none px-1', '×');
+        hide.type = 'button';
+        hide.setAttribute('aria-label', 'Скрыть сводку');
+        hide.addEventListener('click', () => {
+            state.kbAddSummary.delete(kb.id);
             renderKbPanel();
         });
-        card.appendChild(err);
+        line.appendChild(hide);
+        card.appendChild(line);
+    }
+
+    if (kb.status === 'failed' && kb.error) {
+        card.appendChild(kbErrorLine(kb, kb.error));
+    } else if (kb.status === 'ready' && !adding && kb.error) {
+        card.appendChild(kbErrorLine(kb, kbAddFailureText(kb)));
     }
 
     const actions = mcpEl('div', 'flex items-center justify-between gap-2 pt-1');
+    const leftButtons = mcpEl('span', 'flex gap-2');
     const searchBtn = mcpEl('button', 'rounded bg-slate-700 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed px-2 py-1 text-xs text-slate-200', 'Тест поиска');
     searchBtn.type = 'button';
     if (kb.status === 'ready') {
@@ -4191,9 +4225,34 @@ function buildKbCard(kb) {
         searchBtn.disabled = true;
         searchBtn.title = 'Поиск доступен после завершения индексации';
     }
-    actions.append(searchBtn, kbDeleteControls(kb));
+    leftButtons.appendChild(searchBtn);
+    if (kb.status === 'ready') {
+        const addBtn = mcpEl('button', 'rounded bg-slate-700 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed px-2 py-1 text-xs text-slate-200', 'Добавить файлы');
+        addBtn.type = 'button';
+        if (adding) {
+            addBtn.disabled = true;
+            addBtn.title = 'Идёт добавление файлов';
+        } else {
+            addBtn.addEventListener('click', () => openKbAddModal(kb, addBtn));
+        }
+        leftButtons.appendChild(addBtn);
+    }
+    actions.append(leftButtons, kbDeleteControls(kb));
     card.appendChild(actions);
     return card;
+}
+
+function kbErrorLine(kb, text) {
+    const expanded = state.kbExpanded.has(kb.id);
+    const err = mcpEl('button', `text-xs text-red-400 text-left w-full ${expanded ? '' : 'line-clamp-2'}`, text);
+    err.type = 'button';
+    err.setAttribute('aria-expanded', String(expanded));
+    err.addEventListener('click', () => {
+        if (state.kbExpanded.has(kb.id)) state.kbExpanded.delete(kb.id);
+        else state.kbExpanded.add(kb.id);
+        renderKbPanel();
+    });
+    return err;
 }
 
 function renderKbPanel() {
