@@ -595,6 +595,8 @@ async def run_add_job(
         return
     moved: list[Path] = []
     commit_task: asyncio.Task[_CommitResult] | None = None
+    failure: str | None = None
+    cancelled = False
     try:
         async with _get_semaphore():
             await ensure_embedding_model(kb.embedding_model)
@@ -625,17 +627,23 @@ async def run_add_job(
         await _finish_addition(kb_id, user_id, staging, items, unchanged, result, started)
     except (KbLoadError, EmbeddingError, KbAddError) as exc:
         logger.error("kb_add_failed", kb_id=kb_id, user_id=user_id, error=type(exc).__name__)
-        await _fail_add(kb_id, user_id, exc.message, staging, moved)
+        failure = exc.message
     except asyncio.CancelledError:
+        cancelled = True
+    except Exception as exc:
+        logger.error("kb_add_failed", kb_id=kb_id, user_id=user_id, error=type(exc).__name__)
+        failure = MSG_ADD_UNEXPECTED
+    # Cleanup runs after the handlers so a traceback no longer pins an open file
+    # handle inside the staging directory (Windows cannot delete open files).
+    if cancelled:
         settled = await _settle(commit_task) if commit_task is not None else None
         if settled is not None:
             await _finish_addition(kb_id, user_id, staging, items, unchanged, settled, started)
         else:
             await _fail_add(kb_id, user_id, MSG_ADD_INTERRUPTED, staging, moved)
-        raise
-    except Exception as exc:
-        logger.error("kb_add_failed", kb_id=kb_id, user_id=user_id, error=type(exc).__name__)
-        await _fail_add(kb_id, user_id, MSG_ADD_UNEXPECTED, staging, moved)
+        raise asyncio.CancelledError
+    if failure is not None:
+        await _fail_add(kb_id, user_id, failure, staging, moved)
 
 
 async def _fail_add(

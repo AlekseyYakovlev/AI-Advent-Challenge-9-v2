@@ -3,16 +3,19 @@
 import asyncio
 import hashlib
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import pytest
 from sqlmodel import select
 
 from agent import kb_indexer
+from agent.kb_indexer import AddItem
 from agent.embeddings import EmbeddingError
 from shared.auth import hash_password
 from shared.database import async_session_factory
-from shared.kb_storage import uploads_dir
+from shared.kb_storage import new_staging_dir, uploads_dir
 from shared.models import (
     KbChunk,
     KbDocument,
@@ -169,3 +172,64 @@ async def wait_until(predicate: Callable[[], Awaitable[bool] | bool], timeout: f
         if asyncio.get_running_loop().time() > deadline:
             raise AssertionError("condition not met in time")
         await asyncio.sleep(0.02)
+
+
+async def ready_kb(
+    monkeypatch: pytest.MonkeyPatch,
+    user_id: int,
+    files: dict[str, str | bytes] | None = None,
+    **seed_kwargs: Any,
+) -> int:
+    """Seed a base and index it to READY (the caller installs the fake embedder first)."""
+    kb_id = await seed_kb(user_id, files, **seed_kwargs)
+    await kb_indexer.run_index_job(kb_id, user_id)
+    kb = await get_kb(kb_id)
+    assert kb is not None and kb.status == KbStatus.READY
+    return kb_id
+
+
+def stage_add_items(
+    user_id: int,
+    kb_id: int,
+    files: dict[str, str | bytes],
+    replaces: dict[str, tuple[int, ...]] | None = None,
+) -> tuple[Path, list[AddItem]]:
+    """Write files into a fresh staging directory and describe them as AddItems."""
+    staging = new_staging_dir(user_id, kb_id)
+    items: list[AddItem] = []
+    for source, content in files.items():
+        data = content.encode("utf-8") if isinstance(content, str) else content
+        stored = uuid4().hex + Path(source).suffix
+        (staging / stored).write_bytes(data)
+        items.append(
+            AddItem(
+                source=source,
+                stored_name=stored,
+                sha256=hashlib.sha256(data).hexdigest(),
+                size_bytes=len(data),
+                replaces=(replaces or {}).get(source, ()),
+            )
+        )
+    return staging, items
+
+
+async def set_kb_phase(kb_id: int, phase: str | None) -> None:
+    """Set the phase column directly, reproducing the route's claim of the base."""
+    async with async_session_factory() as session:
+        kb = await session.get(KnowledgeBase, kb_id)
+        assert kb is not None
+        kb.phase = phase
+        session.add(kb)
+        await session.commit()
+
+
+async def document_rows(kb_id: int) -> list[KbDocument]:
+    """Fetch all document rows of a knowledge base ordered by id."""
+    async with async_session_factory() as session:
+        return list(
+            (
+                await session.exec(
+                    select(KbDocument).where(KbDocument.kb_id == kb_id).order_by(KbDocument.id)
+                )
+            ).all()
+        )

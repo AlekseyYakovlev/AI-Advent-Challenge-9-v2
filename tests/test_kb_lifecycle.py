@@ -10,24 +10,32 @@ from starlette.testclient import TestClient
 from agent import state as agent_state
 from agent.events import hub
 from agent.kb_indexer import (
+    MSG_ADD_INTERRUPTED,
+    MSG_ADD_INTERRUPTED_RESTART,
     MSG_INTERRUPTED_RESTART,
     delete_kb,
     recover_orphaned_kb_jobs,
     run_index_job,
     shutdown_kb_jobs,
+    spawn_add_job,
     spawn_index_job,
 )
+from agent.kb_limits import PHASE_ADDING
 from agent.main import app
 from kb_helpers import (
     chunk_rows,
     get_kb,
+    document_rows,
     install_fake_embedder,
+    ready_kb,
     seed_kb,
     seed_user,
+    set_kb_phase,
+    stage_add_items,
     wait_until,
 )
 from shared.database import async_session_factory, engine
-from shared.kb_storage import index_path, kb_dir
+from shared.kb_storage import index_path, kb_dir, new_staging_dir, staging_root, uploads_dir
 from shared.models import KbChunk, KbDocument, KbStatus, KnowledgeBase
 
 
@@ -224,3 +232,72 @@ async def test_fts_matches_cyrillic_prefix(monkeypatch: pytest.MonkeyPatch) -> N
         found = [row[0] for row in rows.fetchall()]
 
     assert found == [chunk.id for chunk in await chunk_rows(kb_id)]
+
+
+async def test_delete_during_add_removes_everything(monkeypatch: pytest.MonkeyPatch) -> None:
+    install_fake_embedder(monkeypatch)
+    user_id = await seed_user()
+    kb_id = await ready_kb(monkeypatch, user_id)
+    fake = install_fake_embedder(monkeypatch, block=asyncio.Event())
+    staging, items = stage_add_items(user_id, kb_id, {"extra.txt": "Дополнительный текст. " * 60})
+    await set_kb_phase(kb_id, PHASE_ADDING)
+    spawn_add_job(kb_id, user_id, staging, items, 0)
+    await wait_until(lambda: len(fake.batch_sizes) >= 1)
+    task = agent_state.kb_jobs[kb_id]
+
+    await _delete(kb_id)
+
+    assert task.done()
+    assert await get_kb(kb_id) is None
+    assert await chunk_rows(kb_id) == []
+    assert not kb_dir(user_id, kb_id).exists()
+
+
+async def test_shutdown_during_add_keeps_base_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+    install_fake_embedder(monkeypatch)
+    user_id = await seed_user()
+    kb_id = await ready_kb(monkeypatch, user_id)
+    chunks_before = [(c.id, c.text) for c in await chunk_rows(kb_id)]
+    index_before = index_path(user_id, kb_id).read_bytes()
+    fake = install_fake_embedder(monkeypatch, block=asyncio.Event())
+    staging, items = stage_add_items(user_id, kb_id, {"extra.txt": "Дополнительный текст. " * 60})
+    await set_kb_phase(kb_id, PHASE_ADDING)
+    spawn_add_job(kb_id, user_id, staging, items, 0)
+    await wait_until(lambda: len(fake.batch_sizes) >= 1)
+
+    await shutdown_kb_jobs()
+
+    kb = await get_kb(kb_id)
+    assert kb.status == KbStatus.READY
+    assert kb.phase is None
+    assert kb.error == MSG_ADD_INTERRUPTED
+    assert [(c.id, c.text) for c in await chunk_rows(kb_id)] == chunks_before
+    assert index_path(user_id, kb_id).read_bytes() == index_before
+    assert not staging.exists()
+
+
+async def test_recover_interrupted_addition(monkeypatch: pytest.MonkeyPatch) -> None:
+    install_fake_embedder(monkeypatch)
+    user_id = await seed_user()
+    kb_id = await ready_kb(monkeypatch, user_id)
+    await set_kb_phase(kb_id, PHASE_ADDING)
+    chunks_before = [(c.id, c.text) for c in await chunk_rows(kb_id)]
+    index_before = index_path(user_id, kb_id).read_bytes()
+    staging = new_staging_dir(user_id, kb_id)
+    (staging / "half.txt").write_text("x", encoding="utf-8")
+    stray = uploads_dir(user_id, kb_id) / "stray.bin"
+    stray.write_bytes(b"moved but never committed")
+    stored = [uploads_dir(user_id, kb_id) / d.stored_name for d in await document_rows(kb_id)]
+
+    assert await recover_orphaned_kb_jobs() == 0
+
+    kb = await get_kb(kb_id)
+    assert kb.status == KbStatus.READY
+    assert kb.phase is None
+    assert kb.error == MSG_ADD_INTERRUPTED_RESTART
+    assert kb.done_chunks == kb.chunk_count == kb.total_chunks
+    assert [(c.id, c.text) for c in await chunk_rows(kb_id)] == chunks_before
+    assert index_path(user_id, kb_id).read_bytes() == index_before
+    assert not staging_root(user_id, kb_id).exists()
+    assert not stray.exists()
+    assert all(path.exists() for path in stored)
