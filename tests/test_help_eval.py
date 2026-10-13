@@ -324,3 +324,11 @@ def test_load_meta_refuses_a_changed_fixture(tmp_path: Path) -> None:
     hashes = help_eval.dialog._fixture_hashes(fixture)
     (tmp_path / "run_meta.json").write_text(json.dumps(hashes), encoding="utf-8")
     assert help_eval._load_meta(tmp_path, fixture) is not None
+
+
+def test_automatic_checks_accepts_alternative_sources() -> None:
+    """`A or B` as the expected source accepts either file."""
+    item = _item(1, "docs", expected_source="README.md or docs/USER_GUIDE.md")
+    record = {"sources": ["docs/USER_GUIDE.md"], "tool_calls": [], "answer": "a"}
+    assert help_eval.automatic_checks(record, item)["source_ok"] is True
+    assert help_eval.automatic_checks({**record, "sources": ["docs/API_SPEC.md"]}, item)["source_ok"] is False

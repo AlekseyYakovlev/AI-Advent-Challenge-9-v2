@@ -405,7 +405,7 @@ def automatic_checks(record: dict[str, Any], item: dict[str, Any]) -> dict[str, 
     """Checks that need no model: expected source returned, expected tool called, answer refuses."""
     expected_source = str(item.get("expected_source") or "none")
     expected_tool = str(item.get("expected_tool") or "none")
-    wanted = [part.strip() for part in re.split(r"[,;]", expected_source) if part.strip()]
+    wanted = [part.strip() for part in re.split(r",|;|\s+or\s+", expected_source) if part.strip()]
     if expected_source == "none":
         source_ok = True
     else:
