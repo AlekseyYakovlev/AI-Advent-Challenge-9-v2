@@ -41,12 +41,12 @@ Requirements for milestone v5.0. Each maps to exactly one roadmap phase.
 - [x] **HELP-03**: During a `/help` turn the project git tools are available to the model, and a tool call made in that turn is visible in the chat like any other tool call.
 - [x] **HELP-04**: `/help` with no question shows a short usage text without calling the model.
 - [x] **HELP-05**: When no project documentation base is marked, or the marked base is not ready, `/help` with a question answers with a clear instruction on what to do and makes no model call.
-- [ ] **HELP-06**: `/help` works through the plain HTTP chat endpoint with an API key, with the same behaviour as in the browser; the JSON reply carries the answer, the sources and the tool calls.
+- [x] **HELP-06**: `/help` works through the plain HTTP chat endpoint with an API key, with the same behaviour as in the browser; the JSON reply carries the answer, the sources and the tool calls.
 - [x] **HELP-07**: The `/help` question and its answer are stored in the chat tree as ordinary messages and survive a page reload with their sources.
 
 ### Verification and Report
 
-- [ ] **VER-07**: pytest covers folder and accumulated upload, addition to an existing base, replacement of an updated file, the git MCP server (tools, root confinement, bad arguments), and `/help` over WebSocket and HTTP; `docs/TESTING_GUIDE.md` has matching sections.
+- [x] **VER-07**: pytest covers folder and accumulated upload, addition to an existing base, replacement of an updated file, the git MCP server (tools, root confinement, bad arguments), and `/help` over WebSocket and HTTP; `docs/TESTING_GUIDE.md` has matching sections.
 - [ ] **VER-08**: An isolated-copy end-to-end script (ports 18000/18001, scratch database) uploads a folder through the real UI, connects the git MCP server and runs `/help` in the browser and over HTTP.
 - [ ] **VER-09**: `docs/API_SPEC.md`, `docs/ARCHITECTURE.md` and `docs/USER_GUIDE.md` describe the new upload options, the git MCP server, the GitHub server setup and the `/help` command as built.
 - [ ] **VER-10**: `Day31_report.md` records a run of 8-10 control questions about the project through `/help` on a real model, with the answer, the sources, the tool calls and a verdict for each question, including the questions that failed.
@@ -101,9 +101,9 @@ Deferred to later days of Week 7. Tracked but not in the current roadmap.
 | HELP-03 | Phase 23 | Complete |
 | HELP-04 | Phase 23 | Complete |
 | HELP-05 | Phase 23 | Complete |
-| HELP-06 | Phase 23 | Pending |
+| HELP-06 | Phase 23 | Complete |
 | HELP-07 | Phase 23 | Complete |
-| VER-07 | Phase 23 | Pending |
+| VER-07 | Phase 23 | Complete |
 | VER-08 | Phase 23 | Pending |
 | VER-09 | Phase 23 | Pending |
 | VER-10 | Phase 23 | Pending |
