@@ -85,6 +85,7 @@ from agent.events import ws_events
 from agent.scheduler import scheduler
 from agent.kb_api import router as kb_router
 from agent.rag import parse_rag_payload
+from agent.help_api import router as help_router
 from agent.rag_api import router as rag_router
 from agent.task_memory_api import router as task_memory_router
 from agent.network_api import router as network_router
@@ -474,6 +475,7 @@ app.include_router(scheduler_router)
 app.include_router(providers_router)
 app.include_router(kb_router)
 app.include_router(rag_router)
+app.include_router(help_router)
 app.include_router(task_memory_router)
 app.include_router(network_router)
 app.include_router(api_keys_router)

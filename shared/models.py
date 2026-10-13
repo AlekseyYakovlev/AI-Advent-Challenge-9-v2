@@ -7,6 +7,7 @@ from typing import Optional
 from sqlalchemy import (
     Column,
     Enum as SAEnum,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -798,7 +799,8 @@ class HelpConfig(SQLModel, table=True):
     )
     top_k: int = Field(default=5)
     candidate_k: int = Field(default=20)
-    threshold: float | None = Field(default=0.45)
+    # No column-level default: an explicit None must be stored as NULL (calibrated value).
+    threshold: float | None = Field(default=0.45, sa_column=Column(Float, nullable=True))
     lexical: bool = Field(default=False)
     llm_rerank: bool = Field(default=False)
     hybrid: bool = Field(default=False)
