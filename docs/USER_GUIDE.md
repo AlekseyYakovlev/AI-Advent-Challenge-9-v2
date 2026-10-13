@@ -388,6 +388,76 @@ Flags:
 
 Output: the console, `verify_results.md` (tables) and `verify_results.json` (raw records) in the output directory. The key is never written to them. Exit codes: `0` everything behaved as expected, `1` an expectation was not met, `2` the check could not start (bad arguments, server unreachable, key refused, no usable model).
 
+## MCP серверы
+
+### Форма «MCP серверы»
+
+Форма находится в окне Settings, раздел «MCP серверы» (кнопка «+ Добавить сервер»). Поля: «Название», «Команда», «Аргументы (по одному в строке)», «Переменные окружения (KEY=VALUE, по одной в строке)», «Рабочая директория (необязательно)» и флажок «Включён». Включённые серверы подключаются сами при первом сообщении в чате. Вызов инструмента показывается в чате карточкой с именем `mcp__<название>__<инструмент>`.
+
+### Сервер git проекта (local-git)
+
+Это собственный сервер приложения только для чтения: `mcp_servers/project_git.py`. Он читает ЛОКАЛЬНУЮ рабочую копию на этом компьютере, а не GitHub.
+
+| Поле | Значение |
+|------|----------|
+| Название | `local-git` |
+| Команда | `python` |
+| Аргументы | строка 1: `C:\Projects\AiAdventAgentV2\mcp_servers\project_git.py`; строка 2: `--root=C:\Projects\AiAdventAgentV2`; необязательно: `--max-chars=18000` и `--timeout=10` (каждый аргумент в своей строке) |
+| Переменные окружения | пусто |
+| Рабочая директория | `C:\Projects\AiAdventAgentV2` |
+
+Пути даны как пример для этого компьютера: замените их путём к вашему репозиторию. Путь к скрипту лучше писать абсолютным: относительный отсчитывается от рабочей директории. Без `--root` корнем считается рабочая директория.
+
+| Инструмент | Параметры | Что делает |
+|------------|-----------|------------|
+| `git_current_branch` | нет | Текущая ветка (или отсоединённый HEAD) |
+| `git_status` | нет | Изменённые и неотслеживаемые файлы рабочей копии |
+| `git_diff` | `staged`, `ref`, `path` | Изменения; `ref` — `HEAD`, ветка, тег, хеш или диапазон вроде `main...HEAD` |
+| `git_tracked_files` | `path` | Список отслеживаемых файлов (для большого проекта — таблица по папкам) |
+| `git_recent_commits` | `count` (1-50, по умолчанию 10), `path`, `ref` | Последние коммиты |
+
+Лимиты: результат обрезается на `--max-chars` (по умолчанию 18000, меньше лимита приложения 20000) с пометкой, сколько показано, и советом сузить запрос параметром `path`. Каждая команда git ограничена `--timeout` (по умолчанию 10 секунд). Путь вне репозитория или аргумент, начинающийся с `-`, отклоняется ошибкой с подсказкой, как исправить вызов.
+
+Примеры вопросов: «на какой ветке проект?», «что изменено в рабочей копии?», «покажи последние 5 коммитов в `agent/`».
+
+### Сервер GitHub (github)
+
+Официальный `github-mcp-server`, версия `v2.0.2` (с ней проводилась проверка).
+
+**Установка.** Скачайте `github-mcp-server_Windows_x86_64.zip` со страницы `https://github.com/github/github-mcp-server/releases/tag/v2.0.2`. Сравните SHA-256 архива с файлом `github-mcp-server_2.0.2_checksums.txt` из того же релиза (для v2.0.2 ожидается `4ae64087501650752f21c9d5af5378107a5116d94ee1cf37786b22b8c4bd99df`):
+
+```powershell
+Get-FileHash .\github-mcp-server_Windows_x86_64.zip -Algorithm SHA256
+```
+
+Затем скопируйте `github-mcp-server.exe` в `C:\Users\Aleksey\go\bin` рядом с `filesystem.exe`.
+
+**Токен.** GitHub -> Settings -> Developer settings -> Fine-grained tokens. Repository access: «Only select repositories» = `AlekseyYakovlev/AI-Advent-Challenge-9-v2`. Права: Metadata: Read, Contents: Read and write, Pull requests: Read and write (запись — запас для будущих дней с Pull Request). Токен создаёте вы сами и вводите только в форму; в файлы репозитория его класть нельзя.
+
+| Поле | Значение |
+|------|----------|
+| Название | `github` |
+| Команда | `C:\Users\Aleksey\go\bin\github-mcp-server.exe` |
+| Аргументы | три строки: `stdio`, `--read-only`, `--toolsets=repos,pull_requests` |
+| Переменные окружения | `GITHUB_PERSONAL_ACCESS_TOKEN=<ваш токен>` |
+| Рабочая директория | пусто |
+
+В этой конфигурации сервер доступен только для чтения ТОЛЬКО благодаря флагу `--read-only`: у самого токена есть права на запись, поэтому если убрать флаг, станут доступны инструменты записи.
+
+**Маскирование.** После сохранения форма показывает `GITHUB_PERSONAL_ACCESS_TOKEN=•••`. Значение никогда не возвращается в браузер; повторное сохранение формы с маской оставляет сохранённое значение.
+
+Инструменты (по списку v2.0.2): `get_commit`, `get_file_contents`, `get_latest_release`, `get_release_by_tag`, `get_tag`, `list_branches`, `list_commits`, `list_pull_requests`, `list_releases`, `list_repository_collaborators`, `list_tags`, `pull_request_read`, `search_code`, `search_commits`, `search_pull_requests`, `search_repositories`.
+
+Кого спрашивать: `local-git` отвечает про рабочую копию на этом компьютере, `github` — про удалённый репозиторий на GitHub.
+
+### Если сервер не подключается
+
+- Папка не является репозиторием git: сервер сообщает, что нужно выполнить `git init`; сам репозиторий он никогда не создаёт. Ошибка приходит как `PROCESS_EXITED` с последней строкой stderr.
+- `git` не найден в PATH: установите Git for Windows и перезапустите приложение.
+- Корневая папка не существует: исправьте `--root`.
+- Команда git превысила время: сузьте запрос параметром `path` или увеличьте `--timeout`.
+- Неверный токен GitHub: сервер подключается и показывает инструменты, но вызовы возвращают `401 Bad credentials`; создайте токен заново и сохраните его в форме.
+
 ## Tips
 
 1. **Start with Sliding Window** for most conversations
@@ -435,3 +505,16 @@ Output: the console, `verify_results.md` (tables) and `verify_results.json` (raw
 - The firewall rule exists and the network is Private
 - Both ports 8000 and 8001 are allowed
 - A VPN or guest-Wi-Fi client isolation can block LAN traffic
+
+**MCP server local-git does not connect**
+- The folder in `--root` is a git repository (run `git init` there if it is not) and exists
+- `git` is available in PATH
+- The script path in the first argument is absolute and exists
+
+**MCP tool result is truncated**
+- The result is cut at `--max-chars` (18000 by default); narrow the question with `path`
+- A git command that runs longer than `--timeout` (10 seconds by default) is stopped; narrow it or raise the value
+
+**GitHub tools return 401**
+- The token is invalid, expired or has no access to `AlekseyYakovlev/AI-Advent-Challenge-9-v2`
+- Create a new fine-grained token and save it again in the form
