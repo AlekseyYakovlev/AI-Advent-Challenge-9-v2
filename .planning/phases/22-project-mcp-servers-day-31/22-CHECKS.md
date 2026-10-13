@@ -74,7 +74,19 @@ To repeat: start LM Studio with a chat model loaded, keep ports 18000/18001 free
 
 ## Test suite
 
-Status: pending (recorded by Plan 22-06)
+Date: 2026-10-13. Commit at the time of the run: c266dbe (after Plans 22-04 and 22-05 were complete).
+Command: `pytest tests/ -q -rs` (scratch DB_PATH; the GitHub token loaded into the process environment from the local `.env`, value never printed)
+Exit code: 1
+
+```
+1 failed, 2945 passed, 11 skipped, 31 warnings in 535.85s (0:08:55)
+```
+
+Failing test: `tests/test_kb_api.py::test_create_happy_path` (`assert all("a.txt" not in n and "b.md" not in n for n in on_disk)` at line 96). The test is in the knowledge-base upload area and does not touch MCP code. Re-run alone, it passes (`1 passed`), so the failure depends on leftover state from the full run (the on-disk upload directory for user 1 / job 1 can hold files from earlier runs); the cause was not investigated further because this plan changes no test or source file.
+
+Skipped tests (reasons as printed by `-rs`): 10 in `tests/test_kb_real_pdfs.py` (real PDF not available); 1 in `tests/test_live_deepseek_title.py` (live paid DeepSeek call; set RUN_LIVE_DEEPSEEK=1). The real-binary GitHub tests were not skipped in this run (the token was available).
+
+Suite: failed (tests/test_kb_api.py::test_create_happy_path; unrelated to Phase 22, passes in isolation)
 
 ## GHUB-02 GitHub server
 
