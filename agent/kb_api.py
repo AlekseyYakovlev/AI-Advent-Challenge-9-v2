@@ -177,6 +177,8 @@ def _clean_source_names(files: list[UploadFile] | None) -> list[str]:
     """Validate the file list and return sanitised source names (relative paths)."""
     if not files:
         raise _unprocessable(MSG_FILES_REQUIRED)
+    # Starlette's multipart parser enforces its own max_files (default 1000) and answers
+    # a generic 400 before this handler runs, so this message is only reachable below that.
     if len(files) > MAX_FILES:
         raise _unprocessable(MSG_TOO_MANY_FILES)
     names: list[str] = []
