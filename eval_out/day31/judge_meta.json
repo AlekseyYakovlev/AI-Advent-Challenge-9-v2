@@ -1,0 +1,20 @@
+{
+  "status": "run",
+  "judge_model": "deepseek-flash",
+  "date": "2026-10-13T19:11:40+00:00",
+  "max_tokens": 8000,
+  "counts": {
+    "local": {
+      "галлюцинация": 3,
+      "частично": 2,
+      "верно": 5
+    },
+    "deepseek": {
+      "частично": 3,
+      "галлюцинация": 1,
+      "верно": 6
+    }
+  },
+  "same_provider": true,
+  "note": "On the DeepSeek run the judge and the answering model are the same provider."
+}

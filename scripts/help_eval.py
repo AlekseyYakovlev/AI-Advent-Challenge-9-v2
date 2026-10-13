@@ -95,6 +95,7 @@ ANSWER_CUT: int = 1200
 JUDGE_ERROR_CUT: int = 200
 JUDGE_ERROR: str = "judge_error"
 CORRECT_VERDICT: str = "верно"
+JUDGE_MAX_TOKENS: int = 8000
 
 
 def report(message: str) -> None:
@@ -1135,7 +1136,7 @@ async def judge_command(args: argparse.Namespace) -> int:
             try:
                 result = await client.complete_chat_detailed(
                     messages, model, temperature=rag_judge.JUDGE_TEMPERATURE,
-                    max_tokens=rag_judge.JUDGE_MAX_TOKENS,
+                    max_tokens=args.max_tokens,
                 )
                 verdict, reason = judge_row(result.content)
             except (httpx.HTTPError, asyncio.TimeoutError, ValueError, KeyError, TypeError) as exc:
@@ -1145,7 +1146,7 @@ async def judge_command(args: argparse.Namespace) -> int:
             report(f"judge {model_key} {record['id']}: {verdict}")
         save_json(args.out / f"answers_{model_key}.json", records, [key])
     save_json(args.out / "judge_meta.json", {
-        "status": "run", "judge_model": model, "date": _now(), "counts": counts,
+        "status": "run", "judge_model": model, "date": _now(), "max_tokens": args.max_tokens, "counts": counts,
         "same_provider": "deepseek" in answers,
         "note": "On the DeepSeek run the judge and the answering model are the same provider.",
     }, [key])
@@ -1187,6 +1188,10 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--models", default=",".join(MODEL_KEYS), help="comma list: local,deepseek")
     judge = sub.add_parser("judge", help="grade saved answers with the DeepSeek judge")
     judge.add_argument("--model", default=PREFERRED_DEEPSEEK_MODEL, help="judge model id")
+    judge.add_argument(
+        "--max-tokens", type=int, default=JUDGE_MAX_TOKENS,
+        help="completion budget; reasoning models spend most of it before the verdict",
+    )
     sub.add_parser("summary", help="write summary.md from saved files")
     return parser
 

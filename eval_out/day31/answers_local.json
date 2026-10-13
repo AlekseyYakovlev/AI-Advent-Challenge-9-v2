@@ -1,0 +1,317 @@
+[
+  {
+    "id": "doc-run",
+    "category": "docs",
+    "question": "Как запустить приложение?",
+    "answer": "Для запуска приложения выполните следующие шаги:\n\n1. Запустите приложение командой `python run.py` [1][2]\n2. Откройте браузер по адресу `http://127.0.0.1:8000` [1][2]\n3. При первом запуске с пустой базой данных создаётся bootstrap-аккаунт с username `admin` и сгенерированным паролем, который выводится в терминале — сохраните его [2]\n\nAPI для отправки сообщений работает на порту 8001 (AGENT_PORT) [4]. Для работы с локальными моделями через LM Studio: запустите приложение LM Studio, выберите модель из выпадающего списка и нажмите \"OK\" для загрузки [5].",
+    "kind": null,
+    "stored": true,
+    "sources": [
+      "docs/USER_GUIDE.md",
+      "README.md"
+    ],
+    "best_score": 0.6378,
+    "quotes": 2,
+    "quotes_auto": 0,
+    "quotes_unverified": 0,
+    "tool_calls": [],
+    "warnings": [],
+    "verdict": "ok",
+    "kb_name": "project-docs",
+    "error": null,
+    "elapsed_s": 6.25,
+    "status": 200,
+    "expected_answer": "Установить зависимости командой pip install -r requirements.txt.\nСкопировать .env.example в .env и поправить нужные значения.\nЗапустить приложение командой python run.py.\nОткрыть интерфейс по адресу http://localhost:8000; процесс UI сам запускает процесс Agent на порту 8001.\nПри первом запуске с пустой базой создаётся аккаунт admin со сгенерированным паролем, который один раз выводится в терминал.",
+    "expected_source": "README.md or docs/USER_GUIDE.md",
+    "expected_tool": "none",
+    "judge_verdict": "галлюцинация",
+    "judge_reason": "ответ содержит не подтверждённые эталоном ссылки [1][2][4][5] и детали про LM Studio, а также пропускает установку зависимостей и настройку .env."
+  },
+  {
+    "id": "doc-env",
+    "category": "docs",
+    "question": "Какие переменные окружения нужны в файле .env?",
+    "answer": "На основе документации проекта, вот переменные окружения для файла `.env`:\n\n**Основные настройки серверов:**\n- `UI_PORT` — порт UI сервера (по умолчанию 8000) [1]\n- `AGENT_PORT` — порт Agent сервера (по умолчанию 8001) [1]\n- `BIND_HOST` — адрес привязки для обоих серверов: `127.0.0.1` или `0.0.0.0` [1][3]\n\n**База данных и LLM:**\n- `DB_PATH` — путь к файлу SQLite базы данных (по умолчанию `app.db`) [1]\n- `DEEPSEEK_API_KEY` — API ключ для DeepSeek cloud backend [1][4]\n- `LM_STUDIO_BASE_URL` — адрес локального LM Studio сервера (по умолчанию `http://localhost:1234`) [1]\n- `LLM_TIMEOUT` — таймаут запросов к LLM в секундах (по умолчанию 60.0) [1]\n\n**Ограничения и безопасность:**\n- `RATE_LIMIT_MESSAGES_PER_MINUTE` — сообщений в минуту на чат; 0 отключает лимит [1]\n- `LOGIN_MAX_FAILED_ATTEMPTS` — неверных паролей до блокировки входа; 0 отключает лимит [1]\n- `LOGIN_LOCKOUT_SECONDS` — длительность блокировки входа в секундах (по умолчанию 300) [1]\n- `MAX_CONCURRENT_GENERATIONS` — одновременных генераций сообщений в чате; 0 без ограничений [1]\n\n**MCP инструменты:**\n- `MCP_AUTO_CONNECT` — автоматическое подключение MCP серверов при первом сообщении (по умолчанию true) [1]\n- `MCP_TOOL_CALL_TIMEOUT` — таймаут одного вызова MCP инструмента в секундах (по умолчанию 30.0) [1][3]\n\n**Knowledge base:**\n- `KB_STORAGE_DIR` — папка для хранения knowledge base; пустое значение означает `<DB_PATH stem>_kb` рядом с базой данных [1][3]\n\n**Настройки планировщика (Scheduler):**\n- `SCHEDULER_ENABLED` — запуск фонового цикла опроса (по умолчанию true) [3]\n- `SCHEDULER_POLL_INTERVAL` — интервал между тиками поиска задач в секундах (по умолчанию 1.0) [3]\n- `SCHEDULER_RUN_TIMEOUT` — общее время выполнения одного запуска в секундах (по умолчанию 120.0) [3]\n- `SCHEDULER_MIN_INTERVAL_SECONDS` — минимальный интервал для interval jobs (по умолчанию 10) [3]\n- `SCHEDULER_LATE_THRESHOLD_SECONDS` — порог задержки запуска задачи (по умолчанию 60.0) [3]\n- `SCHEDULER_MAX_CONCURRENT_RUNS` — максимальное количество одновременных запусков (по умолчанию 2) [3]\n- `SCHEDULER_MAX_ACTIVE_TASKS_PER_USER` — лимит активных задач на пользователя (по умолчанию 50) [3]\n\n**Дополнительные настройки:**\n- `LLM_PROVIDER_CHECK_TIMEOUT` — таймаут проверки подключения к провайдеру LLM (по умолчанию 10.0) [3]\n- `LLM_PROVIDER_ENV_FILE` — файл с переменными для провайдера LLM (по умолчанию `.env`) [3][4]\n- `MCP_TOOL_RESULT_MAX_CHARS` — максимальное количество символов в результате MCP инструмента (по умолчанию 20000) [3]\n- `KB_EMBED_TIMEOUT` — таймаут запроса эмбеддингов к LM Studio (по умолчанию 120.0) [3]\n- `TASK_MEMORY_ENABLED` — включение памяти задач и осведомлённости о контексте (по умолчанию true) [3]",
+    "kind": null,
+    "stored": true,
+    "sources": [
+      "README.md",
+      "docs/TESTING_GUIDE.md",
+      "docs/API_SPEC.md"
+    ],
+    "best_score": 0.5584,
+    "quotes": 3,
+    "quotes_auto": 0,
+    "quotes_unverified": 0,
+    "tool_calls": [],
+    "warnings": [],
+    "verdict": "ok",
+    "kb_name": "project-docs",
+    "error": null,
+    "elapsed_s": 14.98,
+    "status": 200,
+    "expected_answer": "Настройки читаются из файла .env; после изменения нужно перезапустить python run.py.\nUI_PORT (по умолчанию 8000) и AGENT_PORT (по умолчанию 8001) задают порты серверов.\nDB_PATH (по умолчанию app.db) задаёт путь к файлу SQLite.\nDEEPSEEK_API_KEY задаёт ключ облачного бэкенда DeepSeek.\nLM_STUDIO_BASE_URL (по умолчанию http://localhost:1234) задаёт адрес локального LM Studio.\nЕсть также BIND_HOST, LLM_TIMEOUT, RATE_LIMIT_MESSAGES_PER_MINUTE, LOGIN_MAX_FAILED_ATTEMPTS, LOGIN_LOCKOUT_SECONDS, MAX_CONCURRENT_GENERATIONS, MCP_AUTO_CONNECT, MCP_TOOL_CALL_TIMEOUT и KB_STORAGE_DIR.",
+    "expected_source": "README.md",
+    "expected_tool": "none",
+    "judge_verdict": "галлюцинация",
+    "judge_reason": "Хотя перечислены все переменные из эталона, ответ добавляет множество не подтверждённых эталоном переменных (планировщик и др.) и вымышленные ссылки [1][3]."
+  },
+  {
+    "id": "doc-arch",
+    "category": "docs",
+    "question": "Из каких процессов состоит приложение и как они общаются между собой?",
+    "answer": "На основе документации:\n\n**Процессы приложения:**\n\n1. **UI process** — обслуживает статический фронтенд (`ui/static/`) и контролирует subprocess Agent [1]\n\n2. **Agent process** — REST API, WebSocket chat, LLM clients, context engine, memory, tasks, scheduler, MCP client и RAG pipeline [1]\n\n3. **Bundled MCP servers** — отдельные stdio процессы:\n   - `mcp_servers/project_git.py` — 5 read-only инструментов для git (не часть agent/ui) [3]\n   - `github-mcp-server` — внешний бинарный файл с токеном из `GITHUB_PERSONAL_ACCESS_TOKEN` [3]\n\n**Коммуникация между процессами:**\n\n- UI запускает Agent через `asyncio.create_subprocess_exec` [2]\n- Healthcheck: GET /health каждые 3 секунды [2]\n- Orphan cleanup: psutil находит/убивает процессы на порту 8001 [2]\n- Оба процесса привязываются к одной настройке `BIND_HOST` (`127.0.0.1` по умолчанию, `0.0.0.0` для LAN); supervisor передаёт как `--host` и продолжает проверять `/health` на `127.0.0.1` [2]",
+    "kind": null,
+    "stored": true,
+    "sources": [
+      "README.md",
+      "docs/ARCHITECTURE.md",
+      "docs/API_SPEC.md"
+    ],
+    "best_score": 0.6066,
+    "quotes": 2,
+    "quotes_auto": 0,
+    "quotes_unverified": 0,
+    "tool_calls": [],
+    "warnings": [],
+    "verdict": "ok",
+    "kb_name": "project-docs",
+    "error": null,
+    "elapsed_s": 9.02,
+    "status": 200,
+    "expected_answer": "Приложение состоит из двух процессов Python: сервера UI на порту 8000 и сервера Agent на порту 8001.\nUI отдаёт статический фронтенд и запускает Agent как подпроцесс через asyncio.create_subprocess_exec.\nUI проверяет Agent запросом GET /health каждые 3 секунды и перезапускает его, если он остановился.\nОба сервера слушают один адрес BIND_HOST (по умолчанию 127.0.0.1).",
+    "expected_source": "docs/ARCHITECTURE.md or README.md",
+    "expected_tool": "none",
+    "judge_verdict": "частично",
+    "judge_reason": "Верно указаны UI/Agent, запуск через asyncio.create_subprocess_exec и healthcheck, но не названы порты 8000/8001 и перезапуск Agent, а также добавлены отдельные MCP-процессы, которых нет в эталоне."
+  },
+  {
+    "id": "doc-api",
+    "category": "docs",
+    "question": "Каким HTTP-запросом отправить сообщение в чат и как при этом авторизоваться?",
+    "answer": "Для отправки сообщения в чат через HTTP используется POST-запрос к эндпоинту `/api/v1/chats/{chat_id}/messages`.\n\n**Авторизация:**\nЧерез заголовок `Authorization: Bearer <your key>` [1][3]\n\n**Пример запроса:**\n```bash\ncurl -s -X POST http://127.0.0.1:8001/api/v1/chats/<chat_id>/messages \\\n  -H \"Authorization: Bearer <your key>\" -H \"Content-Type: application/json\" \\\n  -d '{\"content\": \"Привет\", \"model\": \"<model>\"}'\n```\n\n**Тело запроса:**\n- `content` — текст сообщения (обязательно) [3]\n- `model` — id модели (обязательно) [3]\n- `kb_id` — опционально, id базы знаний для RAG [1][3]\n\n**Важно:**\n- Используйте порт AGENT_PORT (8001 по умолчанию), а не UI порт [1]\n- Content-Type должен быть `application/json`, иначе вернётся ошибка 415 [3]\n- Чат создаётся через `POST /api/v1/chats` и нужно запомнить его `id` [2]",
+    "kind": null,
+    "stored": true,
+    "sources": [
+      "docs/USER_GUIDE.md",
+      "docs/API_SPEC.md"
+    ],
+    "best_score": 0.6665,
+    "quotes": 2,
+    "quotes_auto": 0,
+    "quotes_unverified": 0,
+    "tool_calls": [],
+    "warnings": [],
+    "verdict": "ok",
+    "kb_name": "project-docs",
+    "error": null,
+    "elapsed_s": 8.23,
+    "status": 200,
+    "expected_answer": "Запрос: POST /api/v1/chats/{chat_id}/messages на порт Agent (AGENT_PORT, по умолчанию 8001), а не на порт UI.\nАвторизация: заголовок Authorization: Bearer <ключ API>; ключ создаётся в Настройках, раздел «API ключи».\nВ теле JSON указываются content (текст сообщения) и model (идентификатор загруженной модели); необязательный kb_id выбирает базу знаний.\nОтвет приходит одним JSON-телом: текст ответа content, статистика токенов, вызовы инструментов и данные RAG.",
+    "expected_source": "docs/API_SPEC.md",
+    "expected_tool": "none",
+    "judge_verdict": "верно",
+    "judge_reason": "Ответ верно указывает метод и эндпоинт, порт Agent (8001), авторизацию через заголовок Bearer с API-ключом и обязательные поля тела content и model, а также опциональный kb_id."
+  },
+  {
+    "id": "doc-tests",
+    "category": "docs",
+    "question": "Как запустить тесты проекта?",
+    "answer": "Чтобы запустить тесты проекта, выполните команду:\n\n```bash\npytest tests/ -v\n```\n\nЭто запустит весь набор тестов [3]. Тесты используют отдельную базу данных `test_app.db` и браузерные скрипты работают на изолированных копиях приложения на портах 18000 и 18001 [3].\n\nДля конкретных модулей (например, лимиты) можно запустить:\n```bash\npytest tests/test_limits_config.py tests/test_limits_core.py tests/test_rate_limit.py -q\n```\n[1]",
+    "kind": null,
+    "stored": true,
+    "sources": [
+      "docs/TESTING_GUIDE.md",
+      "README.md",
+      "docs/USER_GUIDE.md",
+      "docs/API_SPEC.md"
+    ],
+    "best_score": 0.5621,
+    "quotes": 2,
+    "quotes_auto": 0,
+    "quotes_unverified": 0,
+    "tool_calls": [
+      {
+        "name": "git_current_branch",
+        "ok": true
+      },
+      {
+        "name": "git_status",
+        "ok": true
+      }
+    ],
+    "warnings": [],
+    "verdict": "ok",
+    "kb_name": "project-docs",
+    "error": null,
+    "elapsed_s": 17.39,
+    "status": 200,
+    "expected_answer": "Весь набор тестов запускается командой pytest tests/ -v.\nТесты используют отдельную базу данных test_app.db.\nБраузерные скрипты scripts/e2e_*_playwright.py работают на изолированной копии приложения на портах 18000 и 18001.",
+    "expected_source": "README.md or docs/TESTING_GUIDE.md",
+    "expected_tool": "none",
+    "judge_verdict": "верно",
+    "judge_reason": "Ответ точно воспроизводит команду `pytest tests/ -v`, упоминает отдельную БД `test_app.db` и изолированные порты 18000/18001, совпадая с эталоном по существу."
+  },
+  {
+    "id": "git-branch",
+    "category": "git",
+    "question": "На какой ветке сейчас находится проект?",
+    "answer": "Проект сейчас находится на ветке **Day31**.",
+    "kind": null,
+    "stored": true,
+    "sources": [
+      "docs/USER_GUIDE.md",
+      "docs/API_SPEC.md",
+      "docs/TESTING_GUIDE.md",
+      "docs/ARCHITECTURE.md"
+    ],
+    "best_score": 0.4804,
+    "quotes": 0,
+    "quotes_auto": 0,
+    "quotes_unverified": 0,
+    "tool_calls": [
+      {
+        "name": "git_current_branch",
+        "ok": true
+      }
+    ],
+    "warnings": [],
+    "verdict": "ok",
+    "kb_name": "project-docs",
+    "error": null,
+    "elapsed_s": 5.79,
+    "status": 200,
+    "expected_answer": "Текущая ветка: Day31",
+    "expected_source": "none",
+    "expected_tool": "git_current_branch",
+    "judge_verdict": "верно",
+    "judge_reason": "Ответ полностью совпадает с эталоном — указана текущая ветка Day31."
+  },
+  {
+    "id": "git-commits",
+    "category": "git",
+    "question": "Какие три последних коммита в проекте?",
+    "answer": "Вот три последних коммита в проекте:\n\n1. **892efd9** (2026-10-13, Aleksey) — `feat(23-08): add judge and summary commands to the control-run driver`\n2. **9892a91** (2026-10-13, Aleksey) — `docs(23-07): complete /help end-to-end run plan`\n3. **54328bb** (2026-10-13, Aleksey) — `docs(23-07): record the VER-08 end-to-end run`",
+    "kind": null,
+    "stored": true,
+    "sources": [],
+    "best_score": null,
+    "quotes": 0,
+    "quotes_auto": 0,
+    "quotes_unverified": 0,
+    "tool_calls": [
+      {
+        "name": "git_recent_commits",
+        "ok": true
+      }
+    ],
+    "warnings": [],
+    "verdict": "below_threshold",
+    "kb_name": "project-docs",
+    "error": null,
+    "elapsed_s": 7.91,
+    "status": 200,
+    "expected_answer": "Последние коммиты: feat(23-08): add judge and summary commands to the control-run driver; docs(23-07): complete /help end-to-end run plan; docs(23-07): record the VER-08 end-to-end run",
+    "expected_source": "none",
+    "expected_tool": "git_recent_commits",
+    "judge_verdict": "верно",
+    "judge_reason": "Все три сообщения коммитов совпадают с эталоном дословно; дополнительные метаданные (хеши, дата, автор) не противоречат эталону и являются правдоподобными деталями вывода лога."
+  },
+  {
+    "id": "mixed-status",
+    "category": "mixed",
+    "question": "Какие файлы изменены в рабочей копии и к какой части архитектуры они относятся?",
+    "answer": "В рабочей копии изменён один файл:\n\n*   **`.planning/HANDOFF.json`** — удалён (изменено состояние с `100644` на удаление). Этот файл содержит план фазы 21 (`project-docs-in-rag-day-31`) и относится к архитектуре RAG, тестированию MCP-серверов и управлению знаниями [1][2][5].\n\nТакже есть два не отслеживаемых файла:\n*   `.planning/.pending-auth-captures.jsonl`\n*   `eval_out/day31/raw/`",
+    "kind": null,
+    "stored": true,
+    "sources": [
+      "docs/TESTING_GUIDE.md",
+      "docs/API_SPEC.md"
+    ],
+    "best_score": 0.5428,
+    "quotes": 1,
+    "quotes_auto": 0,
+    "quotes_unverified": 1,
+    "tool_calls": [
+      {
+        "name": "git_status",
+        "ok": true
+      },
+      {
+        "name": "git_diff",
+        "ok": true
+      }
+    ],
+    "warnings": [],
+    "verdict": "ok",
+    "kb_name": "project-docs",
+    "error": null,
+    "elapsed_s": 9.8,
+    "status": 200,
+    "expected_answer": "Изменены: .planning/HANDOFF.json, .planning/.pending-auth-captures.jsonl\nСписок изменённых файлов берётся из git status; эталон строится во время запуска.\nКаталог agent/ — процесс Agent: REST API, WebSocket-чат, клиенты LLM, память, задачи, планировщик, клиент MCP и конвейер RAG.\nКаталог ui/ — процесс UI: статический фронтенд ui/static/ и надзор за подпроцессом Agent.\nКаталог shared/ — код обоих процессов: конфигурация, база данных, модели, логирование.\nКаталоги scripts/, tests/ и docs/ — скрипты, тесты и документация.",
+    "expected_source": "README.md or docs/ARCHITECTURE.md",
+    "expected_tool": "git_status",
+    "judge_verdict": "галлюцинация",
+    "judge_reason": "Ответ содержит вымышленные ссылки [1][2][5] и не подтверждённые эталоном сведения, а список изменённых файлов и архитектурная привязка не совпадают с эталоном."
+  },
+  {
+    "id": "mixed-docs-files",
+    "category": "mixed",
+    "question": "Какие файлы документации в каталоге docs отслеживаются в git и что описывает API_SPEC.md?",
+    "answer": "В каталоге `docs` отслеживаются следующие файлы:\n- `docs/API_SPEC.md`\n- `docs/ARCHITECTURE.md`\n- `docs/TESTING_GUIDE.md`\n- `docs/USER_GUIDE.md`\n\n**API_SPEC.md** описывает REST и WebSocket API [2]. В частности, он содержит спецификацию по knowledge bases (Day 21), включая создание баз знаний с multipart полями: параметры `name`, `strategy`, `chunk_size`, `chunk_overlap`, `embedding_model` и файлы [5].",
+    "kind": null,
+    "stored": true,
+    "sources": [
+      "docs/TESTING_GUIDE.md",
+      "README.md",
+      "docs/USER_GUIDE.md",
+      "docs/API_SPEC.md"
+    ],
+    "best_score": 0.6341,
+    "quotes": 2,
+    "quotes_auto": 0,
+    "quotes_unverified": 0,
+    "tool_calls": [
+      {
+        "name": "git_tracked_files",
+        "ok": true
+      }
+    ],
+    "warnings": [],
+    "verdict": "ok",
+    "kb_name": "project-docs",
+    "error": null,
+    "elapsed_s": 8.18,
+    "status": 200,
+    "expected_answer": "В git отслеживаются docs/API_SPEC.md, docs/ARCHITECTURE.md, docs/TESTING_GUIDE.md и docs/USER_GUIDE.md.\ndocs/API_SPEC.md — спецификация API: REST и WebSocket Agent-сервера (порт 8001), список маршрутов и форматы ответов.",
+    "expected_source": "docs/API_SPEC.md",
+    "expected_tool": "git_tracked_files",
+    "judge_verdict": "частично",
+    "judge_reason": "Список файлов совпадает, но описание API_SPEC.md неполное: нет порта 8001, маршрутов и форматов ответов, зато добавлены не подтверждённые эталоном детали."
+  },
+  {
+    "id": "outside",
+    "category": "out_of_corpus",
+    "question": "Какая погода будет завтра в Париже?",
+    "answer": "Я не знаю, какая погода будет завтра в Париже. У меня нет доступа к погодным данным — только инструменты для работы с git-репозиторием.",
+    "kind": null,
+    "stored": true,
+    "sources": [],
+    "best_score": null,
+    "quotes": 0,
+    "quotes_auto": 0,
+    "quotes_unverified": 0,
+    "tool_calls": [],
+    "warnings": [],
+    "verdict": "below_threshold",
+    "kb_name": "project-docs",
+    "error": null,
+    "elapsed_s": 3.14,
+    "status": 200,
+    "expected_answer": "Модель говорит, что не знает ответа или что вопрос не относится к проекту; погоду она не выдумывает.",
+    "expected_source": "none",
+    "expected_tool": "none",
+    "judge_verdict": "верно",
+    "judge_reason": "Ответ честно сообщает об отсутствии доступа к погодным данным и не выдумывает прогноз, что совпадает с эталоном."
+  }
+]
