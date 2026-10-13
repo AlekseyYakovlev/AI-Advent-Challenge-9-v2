@@ -85,7 +85,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 22-06-PLAN.md — User installs the GitHub server and token; GHUB-02 check run and recorded; final full-suite run recorded
+- [x] 22-06-PLAN.md — User installs the GitHub server and token; GHUB-02 check run and recorded; final full-suite run recorded
 
 ### Phase 23: /help command, verification and report (Day 31)
 
@@ -181,7 +181,7 @@ Full details: [milestones/v4.0-ROADMAP.md](milestones/v4.0-ROADMAP.md)
 | 19. API keys and HTTP chat (Day 30) | v4.0 | 6/6 | Complete    | 2026-10-12 |
 | 20. Limits, verification script and report (Day 30) | v4.0 | 8/8 | Complete    | 2026-10-12 |
 | 21. Project docs in RAG (Day 31) | v5.0 | 7/7 | Complete   | 2026-10-13 |
-| 22. Project MCP servers (Day 31) | v5.0 | 5/6 | In Progress|  |
+| 22. Project MCP servers (Day 31) | v5.0 | 6/6 | Complete   | 2026-10-13 |
 | 23. /help command, verification and report (Day 31) | v5.0 | 0/0 | Not started | - |
 
 ## Backlog
