@@ -1,0 +1,139 @@
+{
+  "date": "2026-10-13T18:30:46+00:00",
+  "questions": [
+    "doc-run",
+    "git-branch",
+    "mixed-status"
+  ],
+  "models": {
+    "local": {
+      "status": "run",
+      "model": "qwen/qwen3.5-9b",
+      "results": [
+        {
+          "id": "doc-run",
+          "category": "docs",
+          "answer": "## Как запустить приложение\n\n1. Запустите приложение командой: `python run.py` [1][2]\n2. Откройте браузер по адресу `http://localhost:8000` или `http://127.0.0.1:8000` [1][2]\n\n**Важно:** При первом запуске с пустой базой данных приложение создаёт учётную запись `admin` с сгенерированным паролем. Пароль выводится один раз в терминале, где выполняется `python run.py`, и не показывается повторно — сохраните его [2].\n\n**API доступ:** Для отправки сообщений используйте порт 8001 (Agent port), а не UI порт 8000 [3].",
+          "sources": [
+            "docs/USER_GUIDE.md",
+            "README.md"
+          ],
+          "quotes_verified": 2,
+          "tool_calls": [],
+          "has_sources": true,
+          "has_verified_quote": true,
+          "called_expected_tool": null,
+          "expected_tool": "none",
+          "warnings": [],
+          "error": null
+        },
+        {
+          "id": "git-branch",
+          "category": "git",
+          "answer": "Проект находится на ветке **Day31**.",
+          "sources": [
+            "docs/API_SPEC.md",
+            "docs/TESTING_GUIDE.md",
+            "docs/ARCHITECTURE.md"
+          ],
+          "quotes_verified": 1,
+          "tool_calls": [
+            "git_current_branch"
+          ],
+          "has_sources": true,
+          "has_verified_quote": true,
+          "called_expected_tool": true,
+          "expected_tool": "git_current_branch",
+          "warnings": [],
+          "error": null
+        },
+        {
+          "id": "mixed-status",
+          "category": "mixed",
+          "answer": "Из инструмента git видно, что в рабочей копии изменены следующие файлы:\n\n1. **`.planning/HANDOFF.json`** — удалён (D)\n2. **`.planning/.pending-auth-captures.jsonl`** — не отслеживается (??)\n\nЭти файлы относятся к планированию проекта (папка `.planning`). Однако в предоставленных фрагментах документации нет информации о структуре папок `.planning` или содержании файла `HANDOFF.json`. Документация описывает:\n- Knowledge bases [1][3]\n- Project MCP servers [2][4]\n- API Specification [3]\n- Testing Guide [1][2][4][5]\n\nЯ не могу точно определить, к какой части архитектуры относятся эти файлы на основе доступной документации.",
+          "sources": [
+            "docs/TESTING_GUIDE.md",
+            "docs/API_SPEC.md"
+          ],
+          "quotes_verified": 2,
+          "tool_calls": [
+            "git_status"
+          ],
+          "has_sources": true,
+          "has_verified_quote": true,
+          "called_expected_tool": true,
+          "expected_tool": "git_status",
+          "warnings": [],
+          "error": null
+        }
+      ]
+    },
+    "deepseek": {
+      "status": "run",
+      "model": "deepseek-flash",
+      "results": [
+        {
+          "id": "doc-run",
+          "category": "docs",
+          "answer": "Запуск приложения:\n\n1. Запустите приложение командой `python run.py` [1][2].\n2. Откройте интерфейс в браузере по адресу `http://127.0.0.1:8000` [1] или `http://localhost:8000` [2].\n3. Создайте новый чат или выберите существующий [1].\n\nДополнительно: UI-процесс сам запускает процесс Agent на порту 8001, проверяет его работоспособность и перезапускает при остановке [2]. При первом запуске с пустой базой создаётся учётная запись `admin` со сгенерированным паролем, который один раз печатается в терминале [2].",
+          "sources": [
+            "docs/USER_GUIDE.md",
+            "README.md"
+          ],
+          "quotes_verified": 2,
+          "tool_calls": [],
+          "has_sources": true,
+          "has_verified_quote": true,
+          "called_expected_tool": null,
+          "expected_tool": "none",
+          "warnings": [],
+          "error": null
+        },
+        {
+          "id": "git-branch",
+          "category": "git",
+          "answer": "Сейчас проект находится на ветке **Day31** (локальная рабочая копия).\n\nОтвет получен только из инструментов git, поэтому раздел «Цитаты:» не привожу.",
+          "sources": [
+            "docs/API_SPEC.md",
+            "docs/TESTING_GUIDE.md",
+            "docs/ARCHITECTURE.md"
+          ],
+          "quotes_verified": 0,
+          "tool_calls": [
+            "git_current_branch"
+          ],
+          "has_sources": true,
+          "has_verified_quote": false,
+          "called_expected_tool": true,
+          "expected_tool": "git_current_branch",
+          "warnings": [],
+          "error": null
+        },
+        {
+          "id": "mixed-status",
+          "category": "mixed",
+          "answer": "**Изменённые файлы (ветка `Day31`, локальная рабочая копия):**\n\n1. `D .planning/HANDOFF.json` — файл удалён из рабочей копии (изменение не проиндексировано).\n2. `?? .planning/.pending-auth-captures.jsonl` — новый, не отслеживаемый git файл.\n\nИтого: «2 changed files».\n\n**К какой части архитектуры относятся:** оба лежат в служебной папке `.planning/` — это артефакты планирования/рабочего процесса (состояние передачи задачи и лог захватов авторизации), а не код продукта: ни UI, ни Agent, ни ядро баз знаний, ни MCP-серверы, ни документация из фрагментов их не описывают. Во фрагментах документации папка `.planning/` не упоминается вообще, поэтому сказать, какой именно «частью архитектуры» она официально считается, я не могу — по git это просто служебная директория вне тематических разделов документации.",
+          "sources": [
+            "docs/TESTING_GUIDE.md",
+            "docs/API_SPEC.md"
+          ],
+          "quotes_verified": 0,
+          "tool_calls": [
+            "git_status",
+            "git_current_branch"
+          ],
+          "has_sources": true,
+          "has_verified_quote": false,
+          "called_expected_tool": true,
+          "expected_tool": "git_status",
+          "warnings": [],
+          "error": null
+        }
+      ]
+    }
+  },
+  "mcp": {
+    "id": 1,
+    "status": "connected"
+  }
+}
