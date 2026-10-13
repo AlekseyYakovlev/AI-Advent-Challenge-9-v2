@@ -1,32 +1,42 @@
 {
   "version": "1.0",
-  "timestamp": "2026-10-13T00:57:54.491Z",
-  "phase": "21",
-  "phase_name": "project-docs-in-rag-day-31",
-  "phase_dir": ".planning/phases/21-project-docs-in-rag-day-31",
-  "plan": 7,
-  "task": 0,
-  "total_tasks": 2,
+  "timestamp": "2026-10-13T20:13:17.387Z",
+  "phase": "24",
+  "phase_name": "automated-pr-code-review-day-32",
+  "phase_dir": ".planning/phases/24-automated-pr-code-review-day-32",
+  "plan": "24-05, 24-06 (wave 3, in flight)",
+  "task": null,
+  "total_tasks": null,
   "status": "paused",
   "completed_tasks": [
-    {"id": "21-01", "name": "Source-name identity, limits endpoint", "status": "done", "commit": "19d644c"},
-    {"id": "21-02", "name": "README + guard test", "status": "done", "commit": "2fa0024"},
-    {"id": "21-03", "name": "Add-files background job", "status": "done", "commit": "7f10a86"},
-    {"id": "21-05", "name": "Folder upload form", "status": "done", "commit": "d962f1e"},
-    {"id": "21-04", "name": "Add-files route", "status": "done", "commit": "3d0bc4d"},
-    {"id": "21-06/1", "name": "Add-files modal and submit flow", "status": "done", "commit": "2d63970"},
-    {"id": "21-06/2", "name": "Card states + tests", "status": "done", "commit": "3752711"}
+    {"id": "24-01", "name": "Day32 branch + REV requirements", "status": "done"},
+    {"id": "24-02", "name": "ReviewConfig/ReviewCodeIndex tables + code chunker", "status": "done"},
+    {"id": "24-03", "name": "review_github.py (live MCP check NOT run, no token)", "status": "done"},
+    {"id": "24-04", "name": "pr-review.yml + scripts/pr_review_ci.py", "status": "done"},
+    {"id": "24-11", "name": "review_judge.py + report tables", "status": "done"}
   ],
   "remaining_tasks": [
-    {"id": "21-07", "name": "Docs sync, e2e scripts, Chromium check (wave 5)", "status": "not_started"}
+    {"id": "24-05", "name": "git code indexer", "status": "executor was running in background when paused"},
+    {"id": "24-06", "name": "review core pipeline", "status": "executor was running in background when paused"},
+    {"id": "24-07", "name": "review route + settings routes", "status": "not_started"},
+    {"id": "24-08", "name": "Settings UI section", "status": "not_started"},
+    {"id": "24-10", "name": "control set + review_control.py", "status": "not_started"},
+    {"id": "24-09", "name": "docs", "status": "not_started"},
+    {"id": "24-12", "name": "security decision, runner, push Day32, smoke PR (checkpoint)", "status": "not_started"},
+    {"id": "24-13", "name": "control runs (checkpoint)", "status": "not_started"},
+    {"id": "24-14", "name": "judge, Day32_report.md", "status": "not_started"}
   ],
-  "blockers": [],
-  "human_actions_pending": [],
+  "blockers": [
+    {"description": "GITHUB_PERSONAL_ACCESS_TOKEN not set in executor env; GitHub MCP assumptions A1/A2/A7 unconfirmed", "type": "human_action", "workaround": "observe on first control PR in 24-13"},
+    {"description": "No DEEPSEEK_API_KEY in executor env; judge never ran live", "type": "human_action", "workaround": "set key before 24-14"}
+  ],
+  "human_actions_pending": [
+    {"action": "Wave 3 executors (24-05, 24-06) were running in worktrees worktree-agent-ae7bb870acc926271 and worktree-agent-aabe733530a33d49c; check if they committed SUMMARY, then merge", "context": "pause happened mid-wave", "blocking": true}
+  ],
   "decisions": [
-    {"decision": "Run all plans sequentially on main tree, no worktrees", "rationale": "Plan files were untracked, a worktree would not contain them", "phase": "21"},
-    {"decision": "Narrowed test_login_lockout limits guard to exempt /api/v1/kb/", "rationale": "New /api/v1/kb/limits route tripped a loose substring check", "phase": "21"}
+    {"decision": "Day32 cut from Day31 0b53b7c; main fast-forwarded to 0b53b7c and pushed", "rationale": "user asked to push and merge Day31", "phase": "24"}
   ],
-  "uncommitted_files": [],
-  "next_action": "Run /bm:execute-phase 21: only plan 21-07 (wave 5) remains, then review, verify, complete.",
-  "context_notes": "Executor agent for 21-06 was still running in background when paused; its WIP may have finished or stalled. Check git status/log before resuming. Open scope question: no per-KB document list UI/API (KBUP-03 wording)."
+  "uncommitted_files": [".planning/.pending-auth-captures.jsonl"],
+  "next_action": "Check wave 3 worktrees (git log 64689c1..<branch>) and SUMMARY files; if finished, merge with --no-ff, run pytest, remove worktrees, update tracking, then run wave 4 (24-07). Otherwise re-run /bm:execute-phase 24.",
+  "context_notes": "Base for wave 3 was 64689c1. Full suite passed after wave 2 (3246 passed; test_kb_api::test_create_happy_path flaked once). Stale Phase 23 worktree branches (a1a1f04c, ace39d8e, af16e5f9) still exist, untouched."
 }
