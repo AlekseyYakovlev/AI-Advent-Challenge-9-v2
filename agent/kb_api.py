@@ -440,7 +440,7 @@ async def create_kb(
         # BaseException so a client disconnect (CancelledError) still cleans up files.
         await asyncio.shield(session.rollback())
         if kb_id is not None:
-            remove_kb_dir(user_id, kb_id)
+            await asyncio.shield(asyncio.to_thread(remove_kb_dir, user_id, kb_id))
         raise
     await session.refresh(kb)
     kb_indexer.spawn_index_job(kb.id, user_id)
@@ -524,13 +524,13 @@ async def add_files_route(
         raise _unprocessable(exc.message) from exc
     except HTTPException:
         if staging is not None:
-            remove_tree(staging)
+            await asyncio.shield(asyncio.to_thread(remove_tree, staging))
         raise
     except BaseException:
         # BaseException so a client disconnect (CancelledError) still cleans up.
         await asyncio.shield(session.rollback())
         if staging is not None:
-            remove_tree(staging)
+            await asyncio.shield(asyncio.to_thread(remove_tree, staging))
         if claimed:
             await asyncio.shield(_release_add_claim(kb_id))
         raise
