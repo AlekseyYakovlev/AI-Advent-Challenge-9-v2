@@ -645,3 +645,70 @@ Automation cannot prove reachability from another machine, so the live run is ma
 ### scripts/e2e_mcp_git_playwright.py (browser UAT, not part of pytest)
 - Starts an isolated copy of the app at UI :18000 / Agent :18001 with a real LM Studio model and a temporary repository with branches `alpha` and `beta`. It never touches :8000/:8001.
 - Exit 0 all checks passed, 1 a check failed, 2 blocked (recorded as "not run"), 4 Playwright missing.
+
+## /help command (Day 31)
+
+### Coverage map for Day 31
+
+| Area | Test files |
+|------|-----------|
+| Folder and accumulated upload | `test_kb_folder_ui.py`, `test_kb_add_ui.py` |
+| Addition to an existing base and replacement of an updated file | `test_kb_add_job.py`, `test_kb_add_api.py` |
+| Git MCP server: tools, root confinement, bad arguments | `test_mcp_project_git_core.py`, `test_mcp_project_git.py` |
+| `/help` over WebSocket | `test_help_ws.py` |
+| `/help` over HTTP | `test_help_http.py` |
+
+### test_help_command.py
+- recognition: question extracted, empty question, `/helpme` and other text rejected, raw payload check
+- the built-in tool groups match the tool registry
+- notices: usage for an empty question; no base for no row, no mark, a foreign base, a base that is not ready, no owner; no notice for a ready base, also while files are being added
+- default tools: only `local-git`; a missing default server gives a warning; an enabled built-in group exposes only that group
+- stored server choice: chosen servers used, missing ones flagged, a disabled server warns without raising, a toolset failure falls back to a warning, `only_server_ids` filters before connecting
+
+### test_help_api.py
+- defaults of `GET /api/v1/help/config`, default server is `local-git`
+- PUT: marking a ready base, `null` clears and omission keeps, a foreign base is 404, a base that is not ready is 422, threshold `null` versus unchanged, `candidate_k` raised to `top_k`, validation 422, flags, MCP server choice, another user's server is 404, a deleted server is reported missing
+- 401 without a session, a foreign origin is rejected, another user does not see the mark
+- deleting the marked base clears the mark; the chat's RAG config is untouched
+
+### test_help_turn.py
+- the fragments instruction override and the exact wording of the prompts
+- the outbound list has no chat history, with and without tools
+- retrieval: fragments kept, below the threshold the model is still called (no gate), an embedder failure continues, the chat's RAG config is ignored
+- quotes: verified model quotes kept, a git-only answer drops code-picked quotes, a failed tool call keeps strict behaviour
+
+### test_help_ws.py
+- usage and no-base notices store nothing and call no model; the not-ready notice names the base
+- a real turn answers with sources and the label; the outbound request holds only the `/help` prompt, fragments and question
+- `ChatRagConfig` is neither read nor changed; nothing found still calls the model
+- default tools are only `local-git`; a missing server gives a warning; the tool call frame and trace; a built-in write tool is rejected by default; the task group offers task tools only
+- side jobs do not run; the tree route returns label, sources and quotes; the next ordinary message sees the pair
+- `/helpme` is an ordinary turn; notices take no rate slot, a real turn takes one, an invalid payload takes none; an upstream failure discards the user message
+
+### test_help_http.py
+- usage and no-base notice bodies (`200`, `stored: false`); the success body with `help`
+- the tool call is reported; a missing default server warns
+- `kb_id` is ignored for `/help` (an id, a missing id and `null`); the chat config is kept
+- notices take no rate slot, need no chat lock and emit no `chat_updated`; a real turn takes a rate slot; no credentials is 401; an ordinary body has `help: null`
+
+### test_help_ui.py (frontend source guard)
+- the Settings section, its element ids and position; numeric ranges; stage labels equal the chat popover labels
+- the notice is transient and never enters the message state; builders use `textContent` only
+- label and knowledge base badge markers; sending does not inspect the command; the required Russian strings
+
+### test_help_eval.py
+- control set validation, frozen set loading, secret scrubbing, git snapshot, expected answers, question records
+- threshold decision rule, model choice, the isolation guard refuses live ports and `app.db`, the default threshold is read from the source
+
+### test_docs_help.py (documentation source guard)
+- heading order of the `/help` sections, required strings, the default threshold and the usage text equal the constants in code
+- the Phase 21 and 22 descriptions stay; every test file named here exists; no key-shaped string in `docs/`
+
+### scripts/e2e_help_playwright.py (isolated copy, not part of pytest)
+- Starts an isolated copy of the app at UI :18000 / Agent :18001 with a scratch database, a real LM Studio model and a temporary repository; it never touches :8000/:8001. Command: `python scripts/e2e_help_playwright.py`.
+- Exit 0 all checks passed, 1 a check failed, 2 blocked (recorded as `not run`, never as passed), 4 Playwright missing. The outcome is recorded in `.planning/phases/23-help-command-verification-and-report-day-31/23-CHECKS.md`.
+
+### scripts/help_eval.py (control run, not part of pytest)
+- `python scripts/help_eval.py check|measure|spike|run` works on an isolated copy at :18000 / :18001 with a scratch database and never opens `app.db` for writing. `check` prints what can run; `measure` records the best score per control question; `spike` tries the combined prompt; `run` asks the frozen control set of ten questions on the local and the DeepSeek model.
+- Exit 0 done, 1 aborted, 2 blocked by the preflight. A model that could not run is recorded as `not run`.
+- Results are written to `eval_out/day31/` (`threshold.json`, `spike.json`, `CALIBRATION.md`, the run records).
