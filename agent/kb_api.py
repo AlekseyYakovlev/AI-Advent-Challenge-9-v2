@@ -285,7 +285,7 @@ async def _classify_additions(
 async def _claim_kb_for_add(session: AsyncSession, kb_id: int) -> bool:
     """Atomically mark a ready, idle base as being added to; False when another request won."""
     try:
-        result = await session.execute(
+        result = await session.exec(
             update(KnowledgeBase)
             .where(
                 KnowledgeBase.id == kb_id,
@@ -311,7 +311,7 @@ async def _release_add_claim(kb_id: int) -> None:
     """Clear the addition marker when a claimed request fails before its job starts."""
     async with async_session_factory() as session:
         try:
-            await session.execute(
+            await session.exec(
                 update(KnowledgeBase)
                 .where(KnowledgeBase.id == kb_id, KnowledgeBase.phase == PHASE_ADDING)
                 .values(phase=None)
