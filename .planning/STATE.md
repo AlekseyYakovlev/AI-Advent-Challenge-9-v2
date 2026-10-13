@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v5.0
 milestone_name: "Week 7: Pipeline"
 status: executing
-last_updated: "2026-10-13T09:10:51.185Z"
+last_updated: "2026-10-13T09:14:14.026Z"
 last_activity: 2026-10-13 -- Phase 22 execution started
 progress:
   total_phases: 6
   completed_phases: 1
   total_plans: 13
-  completed_plans: 11
+  completed_plans: 12
   percent: 17
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-10-13)
 ## Current Position
 
 Phase: 22 (project-mcp-servers-day-31) — EXECUTING
-Plan: 5 of 6
+Plan: 6 of 6
 Status: Executing Phase 22
 Last activity: 2026-10-13 -- Phase 22 execution started
 
@@ -58,6 +58,7 @@ No phases executed yet — metrics will populate after Phase 1 completes.
 - [Phase 21]: [Phase 21-04]: Add admission is a conditional UPDATE (ready AND phase IS NULL) checked by rowcount
 - [Phase ?]: [Phase 21-07]: Multipart file names verified from browser-encoded FormData (Playwright cannot read File-part bodies); part B blocked, exit 3
 - [Phase 22-01]: project git MCP server supports A..B and A...B ranges; avoids shared logger since stdout is the protocol channel
+- [Phase 22-05]: 22-CHECKS.md is the evidence file for D-19; PGIT-04 browser run recorded as not run (LM Studio unavailable)
 
 ### Roadmap Evolution
 
@@ -115,6 +116,7 @@ None.
 | Phase 21 P04 | 25m | 2 tasks | 3 files |
 | Phase 21 P07 | 45min | 2 tasks | 8 files |
 | Phase 22 P01 | 40min | 2 tasks | 3 files |
+| Phase 22 P05 | 25min | 2 tasks | 2 files |
 
 ## Deferred Items
 
@@ -144,7 +146,7 @@ Items acknowledged and deferred at milestone close on 2026-10-12:
 
 ## Session Continuity
 
-**Last session:** 2026-10-13T09:10:51.178Z
+**Last session:** 2026-10-13T09:14:10.099Z
 **Next action:** Phase 21 is planned (7 plans, 5 waves). Run `/bm:execute-phase 21` on branch Day31.
 
 ---
