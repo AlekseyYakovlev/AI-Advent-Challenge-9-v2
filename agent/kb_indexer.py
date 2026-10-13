@@ -613,6 +613,7 @@ async def run_add_job(
         return
     moved: list[Path] = []
     commit_task: asyncio.Task[_CommitResult] | None = None
+    move_task: asyncio.Future[None] | None = None
     failure: str | None = None
     cancelled = False
     try:
@@ -631,13 +632,16 @@ async def run_add_job(
             vectors = await _embed_all(kb_id, kb.embedding_model, [(0, text) for text in texts])
             if any(len(vector) != kb.dim for vector in vectors):
                 raise KbAddError(MSG_ADD_DIM_MISMATCH)
-            await asyncio.to_thread(
-                _move_staged,
-                staging,
-                uploads_dir(user_id, kb_id),
-                [item.stored_name for item in items],
-                moved,
+            move_task = asyncio.ensure_future(
+                asyncio.to_thread(
+                    _move_staged,
+                    staging,
+                    uploads_dir(user_id, kb_id),
+                    [item.stored_name for item in items],
+                    moved,
+                )
             )
+            await asyncio.shield(move_task)
             commit_task = asyncio.create_task(
                 _commit_addition(kb_id, user_id, items, drafts_by_item, page_counts, vectors)
             )
@@ -658,6 +662,11 @@ async def run_add_job(
     # Cleanup runs after the handlers so a traceback no longer pins an open file
     # handle inside the staging directory (Windows cannot delete open files).
     if cancelled:
+        if move_task is not None and not move_task.done():
+            # The move thread keeps running after cancellation; let it finish so
+            # every moved file is in `moved` before cleanup.
+            with contextlib.suppress(Exception, asyncio.CancelledError):
+                await move_task
         settled = await _settle(commit_task) if commit_task is not None else None
         if settled is not None:
             await _finish_addition(kb_id, user_id, staging, items, unchanged, settled, started)
