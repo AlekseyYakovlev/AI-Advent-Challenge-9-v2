@@ -4312,7 +4312,14 @@ async function loadKbLimits() {
 }
 
 function kbSourceName(file) {
-    return (file.webkitRelativePath || file.name).split('\\').join('/');
+    // Mirror the server's _clean_source_name so the pending-list dedupe matches it.
+    const raw = (file.webkitRelativePath || file.name).normalize('NFC').split('\\').join('/');
+    return raw
+        .replace(/[\u0000-\u001f\u007f]/g, '')
+        .split('/')
+        .map((seg) => seg.trim())
+        .filter((seg) => seg && seg !== '.' && seg !== '..')
+        .join('/');
 }
 
 function kbHasAllowedExtension(name) {
