@@ -49,9 +49,17 @@ def kb_out(kb: KnowledgeBase) -> KbOut:
     )
 
 
-def kb_progress_frame(kb: KnowledgeBase) -> dict[str, Any]:
-    """Event frame announcing a knowledge base status or progress change."""
-    return {"type": "kb_progress", "kb": kb_out(kb).model_dump(mode="json")}
+def kb_progress_frame(
+    kb: KnowledgeBase, add_summary: dict[str, int] | None = None
+) -> dict[str, Any]:
+    """Event frame announcing a knowledge base status or progress change.
+
+    The optional add_summary is sent once, in the final frame of an addition.
+    """
+    frame: dict[str, Any] = {"type": "kb_progress", "kb": kb_out(kb).model_dump(mode="json")}
+    if add_summary is not None:
+        frame["add_summary"] = add_summary
+    return frame
 
 
 def kb_deleted_frame(kb_id: int) -> dict[str, Any]:
