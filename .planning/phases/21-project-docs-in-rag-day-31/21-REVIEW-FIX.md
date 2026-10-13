@@ -2,9 +2,9 @@
 phase: 21-project-docs-in-rag-day-31
 fixed_at: 2026-10-13T00:00:00Z
 review_path: .planning/phases/21-project-docs-in-rag-day-31/21-REVIEW.md
-iteration: 1
-findings_in_scope: 4
-fixed: 3
+iteration: 2
+findings_in_scope: 7
+fixed: 6
 skipped: 1
 status: partial
 ---
@@ -13,11 +13,11 @@ status: partial
 
 **Fixed at:** 2026-10-13
 **Source review:** .planning/phases/21-project-docs-in-rag-day-31/21-REVIEW.md
-**Iteration:** 1
+**Iteration:** 2 (covers pass 1: WR-01..WR-04, pass 2: IN-01..IN-03)
 
 **Summary:**
-- Findings in scope: 4
-- Fixed: 3
+- Findings in scope: 7
+- Fixed: 6
 - Skipped: 1
 
 ## Fixed Issues
@@ -40,6 +40,24 @@ status: partial
 **Commit:** 91aa0e0
 **Applied fix:** The three synchronous `remove_kb_dir`/`remove_tree` calls now use `await asyncio.shield(asyncio.to_thread(...))`.
 
+### IN-01: Duplicated chunk-row construction
+
+**Files modified:** `agent/kb_indexer.py`
+**Commit:** b3d0837
+**Applied fix:** Extracted `_chunk_rows(kb_id, doc, drafts)`; both `_insert_chunks` and `_commit_addition` now use it. The per-caller batch insert loops stay separate because they collect different outputs (pairs vs ids). Per-file test runs pass.
+
+### IN-02: Client and server source-name normalisation differ
+
+**Files modified:** `ui/static/app.js`
+**Commit:** abde9cd
+**Applied fix:** `kbSourceName` now mirrors the server's `_clean_source_name`: NFC normalisation, backslash to slash, control-character removal, segment trim, and dropping empty/`.`/`..` segments. The Windows drive-prefix strip is not mirrored (browser-provided names never carry one). `node --check` and the UI/upload tests pass.
+
+### IN-03: Starlette multipart limits are not reflected in the 200-file cap
+
+**Files modified:** `agent/kb_api.py`
+**Commit:** 3a1949a
+**Applied fix:** Documentation-only. Added a comment at the `MAX_FILES` check noting that Starlette's own `max_files` (default 1000) answers a generic 400 first, so the friendly message is only reachable below that.
+
 ## Skipped Issues
 
 ### WR-03: Storage grows without a per-base cap, and the new-file cap is per request only
@@ -52,4 +70,4 @@ status: partial
 
 _Fixed: 2026-10-13_
 _Fixer: Claude (gsd-code-fixer)_
-_Iteration: 1_
+_Iteration: 2_
