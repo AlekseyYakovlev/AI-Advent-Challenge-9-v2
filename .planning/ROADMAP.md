@@ -100,7 +100,35 @@ Plans:
   4. The same `/help` message sent to the HTTP chat endpoint with an API key returns the answer, the sources and the tool calls in one JSON body
   5. `Day31_report.md` records 8-10 control questions about the project run through `/help` on a real model, and pytest, the isolated-copy end-to-end script and the three documents cover everything built in this milestone
 
-**Plans**: TBD
+**Plans**: 8 plans
+
+Plans:
+
+**Wave 1**
+
+- [ ] 23-01-PLAN.md — HelpConfig table, /help building blocks (recognition, notices, tool selection) and the config REST routes
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 23-02-PLAN.md — /help retrieval without the gate, tool-aware quote verification, shared turn-middle helper
+- [ ] 23-03-PLAN.md — Settings section, knowledge base badge, answer label and temporary notice in the browser
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 23-04-PLAN.md — /help wired into the chat turn (WebSocket) and the HTTP chat endpoint, with tests
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 23-05-PLAN.md — Control-run driver, threshold re-measurement, prompt spike on both models, frozen control set
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [ ] 23-06-PLAN.md — /help in API_SPEC, ARCHITECTURE, USER_GUIDE, TESTING_GUIDE and the documentation guard test
+- [ ] 23-07-PLAN.md — Isolated-copy end-to-end script (folder upload, git server, /help in browser and over HTTP) and its recorded run
+
+**Wave 6** *(blocked on Wave 5 completion)*
+
+- [ ] 23-08-PLAN.md — Control run on two models, DeepSeek judge, full test-suite record and Day31_report.md
 
 **UI hint**: yes
 
