@@ -148,6 +148,26 @@ def _build_and_write_index(
     return int(index.ntotal)
 
 
+def _chunk_rows(kb_id: int, doc: KbDocument, drafts: list[ChunkDraft]) -> list[KbChunk]:
+    """Build the KbChunk rows for one document from its chunk drafts."""
+    return [
+        KbChunk(
+            kb_id=kb_id,
+            document_id=doc.id,
+            chunk_index=i,
+            chunk_id=f"{doc.id}-{i}",
+            text=draft.text,
+            section=draft.section,
+            source=doc.filename,
+            title=Path(doc.filename).stem,
+            page_start=draft.page_start,
+            char_start=draft.char_start,
+            char_end=draft.char_end,
+        )
+        for i, draft in enumerate(drafts)
+    ]
+
+
 async def _insert_chunks(
     kb_id: int, docs: list[KbDocument], drafts_by_doc: list[list[ChunkDraft]]
 ) -> list[tuple[int, str]]:
@@ -156,22 +176,7 @@ async def _insert_chunks(
     async with async_session_factory() as session:
         try:
             for doc, drafts in zip(docs, drafts_by_doc):
-                rows = [
-                    KbChunk(
-                        kb_id=kb_id,
-                        document_id=doc.id,
-                        chunk_index=i,
-                        chunk_id=f"{doc.id}-{i}",
-                        text=draft.text,
-                        section=draft.section,
-                        source=doc.filename,
-                        title=Path(doc.filename).stem,
-                        page_start=draft.page_start,
-                        char_start=draft.char_start,
-                        char_end=draft.char_end,
-                    )
-                    for i, draft in enumerate(drafts)
-                ]
+                rows = _chunk_rows(kb_id, doc, drafts)
                 for start in range(0, len(rows), CHUNK_INSERT_SLICE):
                     batch = rows[start : start + CHUNK_INSERT_SLICE]
                     session.add_all(batch)
@@ -413,22 +418,7 @@ async def _commit_addition(
             await session.flush()
             new_ids: list[int] = []
             for doc, drafts in zip(docs, drafts_by_item):
-                rows = [
-                    KbChunk(
-                        kb_id=kb_id,
-                        document_id=doc.id,
-                        chunk_index=i,
-                        chunk_id=f"{doc.id}-{i}",
-                        text=draft.text,
-                        section=draft.section,
-                        source=doc.filename,
-                        title=Path(doc.filename).stem,
-                        page_start=draft.page_start,
-                        char_start=draft.char_start,
-                        char_end=draft.char_end,
-                    )
-                    for i, draft in enumerate(drafts)
-                ]
+                rows = _chunk_rows(kb_id, doc, drafts)
                 for start in range(0, len(rows), CHUNK_INSERT_SLICE):
                     batch = rows[start : start + CHUNK_INSERT_SLICE]
                     session.add_all(batch)
