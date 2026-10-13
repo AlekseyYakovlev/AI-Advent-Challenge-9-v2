@@ -42,7 +42,7 @@ from agent.kb_limits import (
     SEARCH_DEFAULT_TOP_K,
     SEARCH_MAX_TOP_K,
 )
-from agent.kb_schemas import KbOut, kb_out, kb_progress_frame
+from agent.kb_schemas import KbFileOut, KbOut, kb_out, kb_progress_frame
 from agent.kb_search import (
     MSG_INDEX_CORRUPT,
     MSG_NOT_READY,
@@ -463,6 +463,30 @@ async def get_kb_route(
 ) -> KbOut:
     """Return one of the current user's knowledge bases."""
     return kb_out(await _get_owned_kb(session, kb_id, current_user.id))
+
+
+@router.get("/{kb_id}/files", response_model=list[KbFileOut])
+async def list_kb_files(
+    kb_id: int,
+    session: AsyncSession = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+) -> list[KbFileOut]:
+    """List the source files already stored in one of the current user's knowledge bases."""
+    await _get_owned_kb(session, kb_id, current_user.id)
+    rows = await session.exec(
+        select(KbDocument)
+        .where(KbDocument.kb_id == kb_id)
+        .order_by(KbDocument.filename, KbDocument.id)
+    )
+    return [
+        KbFileOut(
+            id=doc.id,
+            filename=doc.filename,
+            size_bytes=doc.size_bytes,
+            page_count=doc.page_count,
+        )
+        for doc in rows.all()
+    ]
 
 
 @router.delete(

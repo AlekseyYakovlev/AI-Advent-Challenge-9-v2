@@ -8,6 +8,15 @@ from pydantic import BaseModel
 from shared.models import KnowledgeBase
 
 
+class KbFileOut(BaseModel):
+    """A source file of a knowledge base as shown to the client."""
+
+    id: int
+    filename: str
+    size_bytes: int
+    page_count: int | None
+
+
 class KbOut(BaseModel):
     """A knowledge base as shown to the client, including live indexing progress."""
 
