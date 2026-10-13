@@ -2,8 +2,11 @@
 
 import asyncio
 import hashlib
+import re
+import unicodedata
 from pathlib import Path
 from typing import Any, BinaryIO
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile, status
 from pydantic import BaseModel, Field
@@ -31,6 +34,7 @@ from agent.kb_limits import (
     MAX_KB_NAME_CHARS,
     MAX_QUERY_CHARS,
     MAX_REQUEST_BYTES,
+    MAX_SOURCE_NAME_CHARS,
     MAX_TOTAL_BYTES,
     SEARCH_DEFAULT_TOP_K,
     SEARCH_MAX_TOP_K,
@@ -56,16 +60,19 @@ MSG_KB_NOT_FOUND = "База знаний не найдена"
 MSG_NAME_REQUIRED = "Введите название базы знаний."
 MSG_NAME_TOO_LONG = "Название не длиннее 200 символов."
 MSG_FILES_REQUIRED = "Выберите хотя бы один файл."
-MSG_TOO_MANY_FILES = "Можно загрузить не больше 10 файлов."
+MSG_TOO_MANY_FILES = f"Можно загрузить не больше {MAX_FILES} файлов за одну загрузку."
 MSG_BAD_EXTENSION = "Файл {name}: поддерживаются только PDF, TXT и MD."
-MSG_FILE_TOO_LARGE = "Файл {name} больше 50 МБ."
-MSG_TOTAL_TOO_LARGE = "Общий размер файлов больше 100 МБ."
+MSG_FILE_TOO_LARGE = "Файл {name} больше " + f"{MAX_FILE_BYTES // (1024 * 1024)} МБ."
+MSG_TOTAL_TOO_LARGE = f"Общий размер файлов больше {MAX_TOTAL_BYTES // (1024 * 1024)} МБ."
+MSG_SOURCE_TOO_LONG = "Имя файла {name} длиннее " + f"{MAX_SOURCE_NAME_CHARS} символов."
 MSG_EMPTY_FILE = "Файл {name} пустой."
 MSG_DUPLICATE = "Файл {name} уже добавлен."
 MSG_BAD_STRATEGY = "Неизвестная стратегия разбиения."
 MSG_MODEL_REQUIRED = "Выберите модель эмбеддингов."
 
 READ_CHUNK_BYTES = 1024 * 1024
+_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]")
+_DRIVE_SEGMENT = re.compile(r"^[A-Za-z]:$")
 CHECK_PROBE_TEXT = "проверка эмбеддинга"
 
 
@@ -150,19 +157,36 @@ def _validate_settings(
     return name, kb_strategy, chunk_size, chunk_overlap, model
 
 
-def _clean_filenames(files: list[UploadFile] | None) -> list[str]:
-    """Validate the file list and return sanitised display names."""
+def _clean_source_name(raw: str) -> str:
+    """Normalise an uploaded file name into a safe relative source name."""
+    text = unicodedata.normalize("NFC", raw).replace("\\", "/")
+    text = _CONTROL_CHARS.sub("", text)
+    segments = [seg.strip() for seg in text.split("/")]
+    segments = [seg for seg in segments if seg and seg not in (".", "..")]
+    if segments and _DRIVE_SEGMENT.match(segments[0]):
+        segments = segments[1:]
+    return "/".join(segments)
+
+
+def _clean_source_names(files: list[UploadFile] | None) -> list[str]:
+    """Validate the file list and return sanitised source names (relative paths)."""
     if not files:
         raise _unprocessable(MSG_FILES_REQUIRED)
     if len(files) > MAX_FILES:
         raise _unprocessable(MSG_TOO_MANY_FILES)
     names: list[str] = []
+    seen: set[str] = set()
     for upload in files:
-        # Display name only; the file is stored under a server-generated name.
-        name = Path((upload.filename or "").replace("\\", "/")).name
-        if Path(name).suffix.lower() not in ALLOWED_EXTENSIONS:
-            raise _unprocessable(MSG_BAD_EXTENSION.format(name=name or "без имени"))
-        names.append(name)
+        # Display identity only; the file is stored under a server-generated name.
+        source = _clean_source_name(upload.filename or "")
+        if Path(source).suffix.lower() not in ALLOWED_EXTENSIONS:
+            raise _unprocessable(MSG_BAD_EXTENSION.format(name=source or "без имени"))
+        if len(source) > MAX_SOURCE_NAME_CHARS:
+            raise _unprocessable(MSG_SOURCE_TOO_LONG.format(name=source[:60] + "…"))
+        if source in seen:
+            raise _unprocessable(MSG_DUPLICATE.format(name=source))
+        seen.add(source)
+        names.append(source)
     return names
 
 
@@ -172,49 +196,47 @@ def _write_chunk(handle: BinaryIO, data: bytes) -> None:
 
 
 async def _store_upload(
-    upload: UploadFile, name: str, target: Path, index: int, total_so_far: int
+    upload: UploadFile, name: str, target: Path, total_so_far: int
 ) -> tuple[str, int, str]:
     """Stream one upload to disk; returns (stored_name, size, sha256)."""
     digest = hashlib.sha256()
     size = 0
-    tmp_path = target / f"{index:02d}.part"
-    handle = await asyncio.to_thread(tmp_path.open, "wb")
+    tmp_path = target / f"{uuid4().hex}.part"
     try:
-        while True:
-            data = await upload.read(READ_CHUNK_BYTES)
-            if not data:
-                break
-            size += len(data)
-            if size > MAX_FILE_BYTES:
-                raise UploadRejectedError(MSG_FILE_TOO_LARGE.format(name=name))
-            if total_so_far + size > MAX_TOTAL_BYTES:
-                raise UploadRejectedError(MSG_TOTAL_TOO_LARGE)
-            digest.update(data)
-            await asyncio.to_thread(_write_chunk, handle, data)
-    finally:
-        await asyncio.to_thread(handle.close)
-    if size == 0:
-        raise UploadRejectedError(MSG_EMPTY_FILE.format(name=name))
-    sha = digest.hexdigest()
-    stored = f"{index:02d}_{sha[:12]}{Path(name).suffix.lower()}"
-    await asyncio.to_thread(tmp_path.replace, target / stored)
-    return stored, size, sha
+        handle = await asyncio.to_thread(tmp_path.open, "wb")
+        try:
+            while True:
+                data = await upload.read(READ_CHUNK_BYTES)
+                if not data:
+                    break
+                size += len(data)
+                if size > MAX_FILE_BYTES:
+                    raise UploadRejectedError(MSG_FILE_TOO_LARGE.format(name=name))
+                if total_so_far + size > MAX_TOTAL_BYTES:
+                    raise UploadRejectedError(MSG_TOTAL_TOO_LARGE)
+                digest.update(data)
+                await asyncio.to_thread(_write_chunk, handle, data)
+        finally:
+            await asyncio.to_thread(handle.close)
+        if size == 0:
+            raise UploadRejectedError(MSG_EMPTY_FILE.format(name=name))
+        stored = f"{uuid4().hex}{Path(name).suffix.lower()}"
+        await asyncio.to_thread(tmp_path.replace, target / stored)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+    return stored, size, digest.hexdigest()
 
 
 async def _store_all(
-    files: list[UploadFile], names: list[str], user_id: int, kb_id: int
+    files: list[UploadFile], names: list[str], target: Path
 ) -> list[tuple[str, str, int, str]]:
-    """Stream all uploads; returns (filename, stored_name, size, sha256) per file."""
-    target = uploads_dir(user_id, kb_id)
+    """Stream all uploads into target; returns (source, stored_name, size, sha256) per file."""
     await asyncio.to_thread(target.mkdir, parents=True, exist_ok=True)
     stored_rows: list[tuple[str, str, int, str]] = []
-    seen: set[str] = set()
     total = 0
-    for index, (upload, name) in enumerate(zip(files, names)):
-        stored, size, sha = await _store_upload(upload, name, target, index, total)
-        if sha in seen:
-            raise UploadRejectedError(MSG_DUPLICATE.format(name=name))
-        seen.add(sha)
+    for upload, name in zip(files, names):
+        stored, size, sha = await _store_upload(upload, name, target, total)
         total += size
         stored_rows.append((name, stored, size, sha))
     return stored_rows
@@ -229,6 +251,18 @@ async def embedding_models_route(
         return await list_embedding_models()
     except EmbeddingError as exc:
         raise _embedding_http_error(exc) from exc
+
+
+@router.get("/limits")
+async def limits_route(current_user: User = Depends(get_current_user)) -> dict[str, Any]:
+    """Return the upload limits so the page never hard-codes them."""
+    return {
+        "max_files": MAX_FILES,
+        "max_file_bytes": MAX_FILE_BYTES,
+        "max_total_bytes": MAX_TOTAL_BYTES,
+        "max_source_name_chars": MAX_SOURCE_NAME_CHARS,
+        "extensions": sorted(ALLOWED_EXTENSIONS),
+    }
 
 
 @router.post(
@@ -284,7 +318,7 @@ async def create_kb(
         name, kb_strategy, size, overlap, model = _validate_settings(
             name, strategy, chunk_size, chunk_overlap, embedding_model
         )
-        names = _clean_filenames(files)
+        names = _clean_source_names(files)
     except HTTPException as exc:
         logger.warning("kb_create_rejected", user_id=current_user.id, status=exc.status_code)
         raise
@@ -304,7 +338,7 @@ async def create_kb(
     try:
         await session.flush()
         kb_id = kb.id
-        stored = await _store_all(files or [], names, user_id, kb_id)
+        stored = await _store_all(files or [], names, uploads_dir(user_id, kb_id))
         for filename, stored_name, file_size, sha in stored:
             session.add(
                 KbDocument(

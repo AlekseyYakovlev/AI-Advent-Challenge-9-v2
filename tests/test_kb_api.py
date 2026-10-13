@@ -19,16 +19,25 @@ from agent.kb_api import (
     MSG_FILES_REQUIRED,
     MSG_NAME_REQUIRED,
     MSG_NAME_TOO_LONG,
+    MSG_SOURCE_TOO_LONG,
     MSG_TOO_MANY_FILES,
     MSG_TOTAL_TOO_LARGE,
 )
 from agent.kb_chunking import MSG_BAD_OVERLAP, MSG_SIZE_TOO_LARGE, MSG_SIZE_TOO_SMALL
-from agent.kb_limits import MAX_REQUEST_BYTES
+from agent.kb_api import _clean_source_name
+from agent.kb_limits import (
+    ALLOWED_EXTENSIONS,
+    MAX_FILE_BYTES,
+    MAX_FILES,
+    MAX_REQUEST_BYTES,
+    MAX_SOURCE_NAME_CHARS,
+    MAX_TOTAL_BYTES,
+)
 from kb_helpers import NOMIC, RU_TEXT, install_fake_embedder, vector_for, wait_until
 from shared.config import settings
 from shared.database import async_session_factory
 from shared.kb_storage import kb_root, uploads_dir
-from shared.models import KbDocument, KnowledgeBase
+from shared.models import KbChunk, KbDocument, KnowledgeBase
 
 BASE = settings.LM_STUDIO_BASE_URL.rstrip("/")
 GIGA = "giga-embeddings-instruct-480m-0826"
@@ -98,10 +107,10 @@ async def test_create_happy_path(
         ({"chunk_size": "300", "chunk_overlap": "151"}, [("a.txt", b"x")], MSG_BAD_OVERLAP),
         ({"chunk_overlap": "-1"}, [("a.txt", b"x")], MSG_BAD_OVERLAP),
         ({}, [], MSG_FILES_REQUIRED),
-        ({}, [(f"f{i}.txt", bytes([65 + i])) for i in range(11)], MSG_TOO_MANY_FILES),
+        ({}, [(f"f{i}.txt", b"x") for i in range(MAX_FILES + 1)], MSG_TOO_MANY_FILES),
         ({}, [("a.docx", b"x")], MSG_BAD_EXTENSION.format(name="a.docx")),
         ({}, [("a.txt", b"")], MSG_EMPTY_FILE.format(name="a.txt")),
-        ({}, [("a.txt", b"same"), ("b.txt", b"same")], MSG_DUPLICATE.format(name="b.txt")),
+        ({}, [("docs/a.txt", b"one"), ("docs/a.txt", b"two")], MSG_DUPLICATE.format(name="docs/a.txt")),
     ],
     ids=["name-empty", "name-long", "strategy", "size-small", "size-large", "overlap-high",
          "overlap-negative", "no-files", "too-many", "extension", "empty-file", "duplicate"],
@@ -357,3 +366,139 @@ async def test_delete_mid_job_cancels_and_cleans(
     assert (await authenticated_client.get(f"/api/v1/kb/{kb_id}")).status_code == 404
     await _assert_nothing_left()
     assert kb_indexer.kb_jobs == {}
+
+
+BS = chr(92)
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (f"docs{BS}sub{BS}API_SPEC.md", "docs/sub/API_SPEC.md"),
+        ("../../evil.txt", "evil.txt"),
+        (f"C:{BS}Users{BS}x{BS}a.txt", "Users/x/a.txt"),
+        ("/abs/a.md", "abs/a.md"),
+        ("docs/./a/../b.md", "docs/a/b.md"),
+        ("a" + chr(0) + "b" + chr(13) + chr(10) + ".txt", "ab.txt"),
+        ("docs/" + "и" + chr(0x306) + ".md", "docs/" + chr(0x439) + ".md"),
+        ("docs/README.MD", "docs/README.MD"),
+    ],
+)
+def test_clean_source_name(raw: str, expected: str) -> None:
+    assert _clean_source_name(raw) == expected
+
+
+async def _stored_docs() -> list[KbDocument]:
+    async with async_session_factory() as session:
+        return list((await session.exec(select(KbDocument))).all())
+
+
+async def test_relative_paths_are_kept_as_sources(
+    authenticated_client: AsyncClient, spawned: list[tuple[int, int]]
+) -> None:
+    resp = await _post(authenticated_client, _files(("docs/API_SPEC.md", b"spec")))
+    assert resp.status_code == 202
+    assert [d.filename for d in await _stored_docs()] == ["docs/API_SPEC.md"]
+
+
+async def test_same_basename_in_two_folders_are_separate_documents(
+    authenticated_client: AsyncClient, spawned: list[tuple[int, int]]
+) -> None:
+    resp = await _post(
+        authenticated_client,
+        _files(("docs/a/README.md", b"same"), ("docs/b/README.md", b"same")),
+    )
+    assert resp.status_code == 202
+    assert sorted(d.filename for d in await _stored_docs()) == [
+        "docs/a/README.md",
+        "docs/b/README.md",
+    ]
+
+
+async def test_same_content_under_two_names_is_accepted(
+    authenticated_client: AsyncClient, spawned: list[tuple[int, int]]
+) -> None:
+    resp = await _post(authenticated_client, _files(("a.txt", b"same"), ("b.txt", b"same")))
+    assert resp.status_code == 202
+    assert len(await _stored_docs()) == 2
+
+
+async def test_overlong_source_name_rejected(
+    authenticated_client: AsyncClient, spawned: list[tuple[int, int]]
+) -> None:
+    name = "a" * (MAX_SOURCE_NAME_CHARS + 1 - 4) + ".txt"
+    assert len(name) == MAX_SOURCE_NAME_CHARS + 1
+    resp = await _post(authenticated_client, _files((name, b"x")))
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == MSG_SOURCE_TOO_LONG.format(name=name[:60] + "…")
+    await _assert_nothing_left()
+
+
+@pytest.mark.parametrize("name", ["docs.d/noext", ".md", ""])
+async def test_missing_extension_rejected(
+    authenticated_client: AsyncClient, spawned: list[tuple[int, int]], name: str
+) -> None:
+    resp = await _post(authenticated_client, _files((name, b"x")))
+    assert resp.status_code == 422
+    if name:
+        assert resp.json()["detail"] == MSG_BAD_EXTENSION.format(name=name)
+    # An empty file name never reaches the handler: the multipart parser treats it as a text field.
+    await _assert_nothing_left()
+
+
+async def test_limits_route_returns_constants(authenticated_client: AsyncClient) -> None:
+    resp = await authenticated_client.get("/api/v1/kb/limits")
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "max_files": MAX_FILES,
+        "max_file_bytes": MAX_FILE_BYTES,
+        "max_total_bytes": MAX_TOTAL_BYTES,
+        "max_source_name_chars": MAX_SOURCE_NAME_CHARS,
+        "extensions": sorted(ALLOWED_EXTENSIONS),
+    }
+
+
+async def test_limits_route_requires_auth(client: AsyncClient) -> None:
+    assert (await client.get("/api/v1/kb/limits")).status_code == 401
+
+
+async def test_stored_names_do_not_contain_source_names(
+    authenticated_client: AsyncClient, spawned: list[tuple[int, int]]
+) -> None:
+    resp = await _post(authenticated_client, _files(("docs/secret-name.txt", b"data")))
+    assert resp.status_code == 202
+    names = [p.name for p in kb_root().rglob("*") if p.is_file()]
+    assert names
+    assert all("secret-name" not in n and "docs" not in n for n in names)
+
+
+async def test_relative_source_reaches_search(
+    authenticated_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    install_fake_embedder(monkeypatch)
+
+    async def fake_query(model_id: str, text: str, *args: object) -> list[float]:
+        return vector_for(text)
+
+    monkeypatch.setattr(kb_search, "embed_query", fake_query)
+    resp = await _post(
+        authenticated_client,
+        _files(("docs/guide.txt", RU_TEXT.encode("utf-8"))),
+        chunk_size="200",
+        chunk_overlap="20",
+    )
+    assert resp.status_code == 202
+    kb_id = resp.json()["id"]
+
+    async def ready() -> bool:
+        return (await authenticated_client.get(f"/api/v1/kb/{kb_id}")).json()["status"] == "ready"
+
+    await wait_until(ready, timeout=10)
+    search = await authenticated_client.post(
+        f"/api/v1/kb/{kb_id}/search", json={"query": "пример текста", "top_k": 5}
+    )
+    results = search.json()["results"]
+    assert results and all(r["source"] == "docs/guide.txt" for r in results)
+    async with async_session_factory() as session:
+        chunks = (await session.exec(select(KbChunk))).all()
+    assert chunks and all(c.title == "guide" for c in chunks)
