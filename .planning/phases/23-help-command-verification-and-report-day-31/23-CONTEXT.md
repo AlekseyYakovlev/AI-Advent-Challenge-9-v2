@@ -73,7 +73,7 @@ Phases 21 and 22 are complete (all plans have summaries, both verification docum
 - The demonstration path: mark the documentation base in Settings, ask `/help как запустить приложение?` in any chat and see sources such as `README.md` and `docs/USER_GUIDE.md`; ask `/help на какой ветке проект?` and see the `mcp__local-git__…` tool-call card; reload the page and see both exchanges with their label; send the same message to the HTTP endpoint with an API key and get the answer, the sources and the tool calls in one JSON body.
 - The 0.67 threshold was calibrated for `bge-m3` on legal texts and falsely refused 3 of 8 answerable questions in Day 24. With D-01 a miss no longer blocks the answer, but it still removes the sources, so the threshold on Markdown documentation is worth a look during research.
 - Quote verification (`agent/rag_cite.py`) was built and tested on legal prose; Markdown with code blocks and tables is a new kind of text for it.
-- The DeepSeek key was a placeholder when Phase 12 was checked (recorded as blocked). The DeepSeek run and the judge of D-18/D-19 need a working key in `.env`; the key is never written to a file in the repository.
+- The DeepSeek key: the user stated on 2026-10-13 that a working key is set in the DeepSeek provider settings of the app (the placeholder recorded as blocked in Phase 12 is no longer the case). The control run uses an isolated copy with a scratch database, so research must find how the run script and the judge get the same key the user's provider uses (provider rows reference `.env`-declared names, Phase 12-01). The key is never written to a file in the repository, a planning document, a log or the report. D-21 still applies if the key is refused at run time.
 
 </specifics>
 
