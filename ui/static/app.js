@@ -3817,6 +3817,196 @@ async function loadNetworkInfo() {
 
 // ---- end Network ----
 
+state.helpConfig = null;
+const HELP_DEFAULT_SERVER_NAME = 'local-git';
+const HELP_SAVE_ERROR = 'Не удалось сохранить настройки /help. Проверьте соединение и попробуйте снова.';
+let helpSaveStatusTimer = null;
+
+async function fetchHelpConfig(silent) {
+    try {
+        state.helpConfig = await apiFetch('/api/v1/help/config');
+    } catch (err) {
+        if (!silent) showToast(err.message, 'error');
+    }
+}
+
+async function loadHelpConfig(silent = false) {
+    if (state.lastKbs === null) await loadKbList(true);
+    await fetchHelpConfig(silent);
+    renderHelpSection();
+}
+
+function helpKbHintText(readyCount) {
+    if (readyCount === 0) return 'Создайте и проиндексируйте базу в окне баз знаний (README.md и docs/).';
+    return 'Показываются только готовые базы. Отметка действует для вашей учётной записи.';
+}
+
+function renderHelpKbSelect(cfg) {
+    const select = $('help-kb');
+    const ready = readyKbs();
+    select.replaceChildren();
+    if (!ready.length) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = 'Нет готовых баз знаний';
+        select.appendChild(opt);
+        select.disabled = true;
+    } else {
+        const none = document.createElement('option');
+        none.value = '';
+        none.textContent = '— не выбрана —';
+        select.appendChild(none);
+        ready.forEach((kb) => {
+            const opt = document.createElement('option');
+            opt.value = String(kb.id);
+            opt.textContent = kb.name;
+            select.appendChild(opt);
+        });
+        select.disabled = false;
+        select.value = cfg.kb_id ? String(cfg.kb_id) : '';
+    }
+    $('help-kb-hint').textContent = helpKbHintText(ready.length);
+    $('help-kb-clear').classList.toggle('hidden', !cfg.kb_id);
+}
+
+function renderHelpSearchFields(cfg) {
+    $('help-top-k').value = String(cfg.top_k || 5);
+    const candidate = $('help-candidate-k');
+    candidate.min = String(cfg.top_k || 1);
+    candidate.value = String(cfg.candidate_k || 20);
+    const threshold = $('help-threshold');
+    const note = $('help-threshold-note');
+    const hasOverride = typeof cfg.threshold === 'number';
+    if (hasOverride) {
+        threshold.value = cfg.threshold.toFixed(2);
+        note.textContent = '';
+    } else if (typeof cfg.calibrated_threshold === 'number') {
+        threshold.value = cfg.calibrated_threshold.toFixed(2);
+        note.textContent = '(калибр.)';
+    } else {
+        threshold.value = '0.00';
+        note.textContent = '(нет калибровки)';
+    }
+    $('help-threshold-reset').classList.toggle('hidden', !hasOverride);
+    $('help-stage-lexical').checked = Boolean(cfg.lexical);
+    $('help-stage-llm').checked = Boolean(cfg.llm_rerank);
+    $('help-stage-hybrid').checked = Boolean(cfg.hybrid);
+    $('help-stage-rewrite').checked = Boolean(cfg.rewrite);
+}
+
+function renderHelpMcpList(cfg) {
+    const list = $('help-mcp-list');
+    const hint = $('help-mcp-hint');
+    const servers = state.mcpServers || [];
+    const chosen = new Set(Array.isArray(cfg.mcp_server_ids) ? cfg.mcp_server_ids : []);
+    list.replaceChildren();
+    servers.forEach((server) => {
+        const row = mcpEl('div', 'flex items-center justify-between gap-2');
+        const left = mcpEl('div', 'flex items-center gap-2 min-w-0');
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.id = `help-mcp-${server.id}`;
+        box.className = 'rounded';
+        box.dataset.serverId = String(server.id);
+        box.checked = chosen.has(server.id);
+        const label = mcpEl('label', 'text-sm truncate', server.name);
+        label.htmlFor = box.id;
+        left.append(box, label);
+        row.append(left, mcpEl('span', 'text-xs text-slate-500 shrink-0', MCP_STATUS_LABELS[server.status] || ''));
+        list.appendChild(row);
+    });
+    if (!servers.length) {
+        hint.className = 'text-xs text-slate-500';
+        hint.textContent = 'MCP серверы не настроены.';
+    } else if (!servers.some((s) => s.name === HELP_DEFAULT_SERVER_NAME)) {
+        hint.className = 'text-xs text-yellow-500';
+        hint.textContent = 'Сервер local-git не настроен — /help ответит только по документации.';
+    } else {
+        hint.className = 'text-xs';
+        hint.textContent = '';
+    }
+}
+
+function renderHelpSection() {
+    const cfg = state.helpConfig;
+    if (!cfg || !$('help-section')) return;
+    renderHelpKbSelect(cfg);
+    renderHelpSearchFields(cfg);
+    renderHelpMcpList(cfg);
+    $('help-tools-memory').checked = Boolean(cfg.tools_memory);
+    $('help-tools-tasks').checked = Boolean(cfg.tools_tasks);
+    $('help-tools-scheduler').checked = Boolean(cfg.tools_scheduler);
+}
+
+async function saveHelpSetting(patch) {
+    const previous = state.helpConfig;
+    try {
+        state.helpConfig = await apiFetch('/api/v1/help/config', {
+            method: 'PUT',
+            body: JSON.stringify(patch),
+        });
+    } catch (err) {
+        state.helpConfig = previous;
+        renderHelpSection();
+        showToast(HELP_SAVE_ERROR, 'error');
+        return;
+    }
+    renderHelpSection();
+    const status = $('help-save-status');
+    status.textContent = 'Сохранено';
+    clearTimeout(helpSaveStatusTimer);
+    helpSaveStatusTimer = setTimeout(() => { status.textContent = ''; }, 2000);
+    if (state.lastKbs !== null) renderKbPanel();
+}
+
+function bindHelpUi() {
+    const clampInt = (value, low, high, fallback) => (
+        Math.min(high, Math.max(low, parseInt(value, 10) || fallback))
+    );
+    $('help-kb').addEventListener('change', (e) => {
+        saveHelpSetting({ kb_id: Number(e.target.value) || null });
+    });
+    $('help-kb-clear').addEventListener('click', () => saveHelpSetting({ kb_id: null }));
+    $('help-top-k').addEventListener('change', (e) => {
+        const clamped = clampInt(e.target.value, 1, 20, 5);
+        e.target.value = String(clamped);
+        saveHelpSetting({ top_k: clamped });
+    });
+    $('help-candidate-k').addEventListener('change', (e) => {
+        const low = (state.helpConfig && state.helpConfig.top_k) || 1;
+        const clamped = clampInt(e.target.value, low, 50, low);
+        e.target.value = String(clamped);
+        saveHelpSetting({ candidate_k: clamped });
+    });
+    $('help-threshold').addEventListener('change', (e) => {
+        if (e.target.value.trim() === '') {
+            saveHelpSetting({ threshold: null });
+            return;
+        }
+        const parsed = parseFloat(e.target.value);
+        const value = Number.isFinite(parsed) ? Math.round(Math.min(1, Math.max(0, parsed)) * 100) / 100 : 0;
+        saveHelpSetting({ threshold: value });
+    });
+    $('help-threshold-reset').addEventListener('click', () => saveHelpSetting({ threshold: null }));
+    [
+        ['help-stage-lexical', 'lexical'],
+        ['help-stage-llm', 'llm_rerank'],
+        ['help-stage-hybrid', 'hybrid'],
+        ['help-stage-rewrite', 'rewrite'],
+        ['help-tools-memory', 'tools_memory'],
+        ['help-tools-tasks', 'tools_tasks'],
+        ['help-tools-scheduler', 'tools_scheduler'],
+    ].forEach(([id, field]) => {
+        $(id).addEventListener('change', (e) => saveHelpSetting({ [field]: e.target.checked }));
+    });
+    $('help-mcp-list').addEventListener('change', () => {
+        const ids = [...$('help-mcp-list').querySelectorAll('input[type="checkbox"]')]
+            .filter((box) => box.checked)
+            .map((box) => Number(box.dataset.serverId));
+        saveHelpSetting({ mcp_server_ids: ids });
+    });
+}
+
 async function openSettingsModal() {
     const perChat = $('settings-per-chat').checked;
     const chatId = perChat && state.currentChatId ? state.currentChatId : null;
@@ -3839,7 +4029,7 @@ async function openSettingsModal() {
     $('settings-max-tokens').value = settings.max_tokens;
     $('settings-system-prompt').value = settings.system_prompt;
     $('settings-modal').classList.remove('hidden');
-    loadMcpServers().catch((err) => showToast(err.message, 'error'));
+    loadMcpServers().then(() => loadHelpConfig()).catch((err) => showToast(err.message, 'error'));
     loadLlmProviders().catch((err) => showToast(err.message, 'error'));
     loadApiKeys();
     loadNetworkInfo();
@@ -3968,6 +4158,7 @@ function bindEvents() {
         saveChatRag({ kb_id: e.target.value ? Number(e.target.value) : null });
     });
     bindRagSearchUi();
+    bindHelpUi();
     $('rag-k-input').addEventListener('change', (e) => {
         const clamped = Math.min(20, Math.max(1, parseInt(e.target.value, 10) || 5));
         e.target.value = String(clamped);
@@ -4067,6 +4258,8 @@ async function loadKbList(silent = false) {
         if (!silent) showToast('Не удалось загрузить базы знаний', 'error');
         return;
     }
+    await fetchHelpConfig(true);
+    renderHelpSection();
     renderKbPanel();
 }
 
@@ -4175,7 +4368,11 @@ function buildKbCard(kb) {
     const head = mcpEl('div', 'flex items-center justify-between gap-2');
     const name = mcpEl('span', 'text-sm font-semibold truncate', kb.name);
     name.title = kb.name;
-    head.append(name, kbStatusChip(kb));
+    head.append(name);
+    if (state.helpConfig && kb.id === state.helpConfig.kb_id) {
+        head.append(mcpEl('span', RAG_CHIP_NEUTRAL + ' text-xs shrink-0', 'Документация проекта'));
+    }
+    head.append(kbStatusChip(kb));
     card.appendChild(head);
 
     const shortModel = String(kb.embedding_model || '').split('/').pop();
