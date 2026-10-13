@@ -112,7 +112,7 @@ Plans:
 **Wave 2** *(blocked on Wave 1 completion)*
 
 - [x] 23-02-PLAN.md — /help retrieval without the gate, tool-aware quote verification, shared turn-middle helper
-- [ ] 23-03-PLAN.md — Settings section, knowledge base badge, answer label and temporary notice in the browser
+- [x] 23-03-PLAN.md — Settings section, knowledge base badge, answer label and temporary notice in the browser
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -211,7 +211,7 @@ Full details: [milestones/v4.0-ROADMAP.md](milestones/v4.0-ROADMAP.md)
 | 20. Limits, verification script and report (Day 30) | v4.0 | 8/8 | Complete    | 2026-10-12 |
 | 21. Project docs in RAG (Day 31) | v5.0 | 7/7 | Complete   | 2026-10-13 |
 | 22. Project MCP servers (Day 31) | v5.0 | 6/6 | Complete   | 2026-10-13 |
-| 23. /help command, verification and report (Day 31) | v5.0 | 2/8 | In Progress|  |
+| 23. /help command, verification and report (Day 31) | v5.0 | 3/8 | In Progress|  |
 
 ## Backlog
 

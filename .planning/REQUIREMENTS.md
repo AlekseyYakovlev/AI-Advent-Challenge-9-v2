@@ -42,7 +42,7 @@ Requirements for milestone v5.0. Each maps to exactly one roadmap phase.
 - [x] **HELP-04**: `/help` with no question shows a short usage text without calling the model.
 - [x] **HELP-05**: When no project documentation base is marked, or the marked base is not ready, `/help` with a question answers with a clear instruction on what to do and makes no model call.
 - [ ] **HELP-06**: `/help` works through the plain HTTP chat endpoint with an API key, with the same behaviour as in the browser; the JSON reply carries the answer, the sources and the tool calls.
-- [ ] **HELP-07**: The `/help` question and its answer are stored in the chat tree as ordinary messages and survive a page reload with their sources.
+- [x] **HELP-07**: The `/help` question and its answer are stored in the chat tree as ordinary messages and survive a page reload with their sources.
 
 ### Verification and Report
 
@@ -102,7 +102,7 @@ Deferred to later days of Week 7. Tracked but not in the current roadmap.
 | HELP-04 | Phase 23 | Complete |
 | HELP-05 | Phase 23 | Complete |
 | HELP-06 | Phase 23 | Pending |
-| HELP-07 | Phase 23 | Pending |
+| HELP-07 | Phase 23 | Complete |
 | VER-07 | Phase 23 | Pending |
 | VER-08 | Phase 23 | Pending |
 | VER-09 | Phase 23 | Pending |
