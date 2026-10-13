@@ -226,14 +226,18 @@ async def build_mcp_toolset(
     session: AsyncSession,
     user_id: int,
     reserved: set[str],
+    only_server_ids: set[int] | None = None,
 ) -> McpToolset:
     """Build the toolset from the user's enabled servers, connecting idle ones first.
 
     With MCP_AUTO_CONNECT on, enabled servers with auto_connect on and without a live session
     or a recorded failure
     are connected concurrently before their tools are read; failures add no tools.
+    When only_server_ids is given, other servers are neither connected nor exposed.
     """
     rows = await mcp_config.list_servers(session, user_id)
+    if only_server_ids is not None:
+        rows = [row for row in rows if row.id in only_server_ids]
     if settings.MCP_AUTO_CONNECT:
         await _auto_connect_missing(user_id, rows)
     live: list[tuple[int, str, list[McpToolInfo]]] = []

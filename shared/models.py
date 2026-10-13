@@ -777,6 +777,39 @@ class ChatRagConfig(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class HelpConfig(SQLModel, table=True):
+    """Per-user /help settings: documentation base, search settings and tool choice.
+
+    A None threshold means the calibrated value of the marked base's embedding model.
+    A None mcp_servers_json means the default tool choice (only the local-git server);
+    otherwise it is a JSON list of {"id", "name"} objects naming whole MCP servers.
+    """
+
+    user_id: int = Field(
+        sa_column=Column(
+            Integer, ForeignKey("user.id", ondelete="CASCADE"), primary_key=True
+        )
+    )
+    kb_id: int | None = Field(
+        default=None,
+        sa_column=Column(
+            Integer, ForeignKey("knowledgebase.id", ondelete="SET NULL"), nullable=True
+        ),
+    )
+    top_k: int = Field(default=5)
+    candidate_k: int = Field(default=20)
+    threshold: float | None = Field(default=0.45)
+    lexical: bool = Field(default=False)
+    llm_rerank: bool = Field(default=False)
+    hybrid: bool = Field(default=False)
+    rewrite: bool = Field(default=False)
+    mcp_servers_json: str | None = Field(default=None)
+    tools_memory: bool = Field(default=False)
+    tools_tasks: bool = Field(default=False)
+    tools_scheduler: bool = Field(default=False)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
 class ChatTaskMemory(SQLModel, table=True):
     """One task-memory document per chat: goal, clarified points, constraints."""
 
