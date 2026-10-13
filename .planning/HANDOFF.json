@@ -4,8 +4,8 @@
   "phase": "21",
   "phase_name": "project-docs-in-rag-day-31",
   "phase_dir": ".planning/phases/21-project-docs-in-rag-day-31",
-  "plan": 6,
-  "task": 2,
+  "plan": 7,
+  "task": 0,
   "total_tasks": 2,
   "status": "paused",
   "completed_tasks": [
@@ -15,7 +15,7 @@
     {"id": "21-05", "name": "Folder upload form", "status": "done", "commit": "d962f1e"},
     {"id": "21-04", "name": "Add-files route", "status": "done", "commit": "3d0bc4d"},
     {"id": "21-06/1", "name": "Add-files modal and submit flow", "status": "done", "commit": "2d63970"},
-    {"id": "21-06/2", "name": "Card states + tests", "status": "in_progress", "progress": "uncommitted edits to ui/static/app.js, tests/test_modal_close_policy.py, new tests/test_kb_add_ui.py; no SUMMARY yet"}
+    {"id": "21-06/2", "name": "Card states + tests", "status": "done", "commit": "3752711"}
   ],
   "remaining_tasks": [
     {"id": "21-07", "name": "Docs sync, e2e scripts, Chromium check (wave 5)", "status": "not_started"}
@@ -26,7 +26,7 @@
     {"decision": "Run all plans sequentially on main tree, no worktrees", "rationale": "Plan files were untracked, a worktree would not contain them", "phase": "21"},
     {"decision": "Narrowed test_login_lockout limits guard to exempt /api/v1/kb/", "rationale": "New /api/v1/kb/limits route tripped a loose substring check", "phase": "21"}
   ],
-  "uncommitted_files": ["ui/static/app.js", "tests/test_modal_close_policy.py", "tests/test_kb_add_ui.py"],
-  "next_action": "Run /bm:execute-phase 21; safe-resume gate will see 21-06 commits without SUMMARY: choose close out / re-execute remaining task 2 of 21-06, then waves 5 (21-07), review, verify.",
+  "uncommitted_files": [],
+  "next_action": "Run /bm:execute-phase 21: only plan 21-07 (wave 5) remains, then review, verify, complete.",
   "context_notes": "Executor agent for 21-06 was still running in background when paused; its WIP may have finished or stalled. Check git status/log before resuming. Open scope question: no per-KB document list UI/API (KBUP-03 wording)."
 }
