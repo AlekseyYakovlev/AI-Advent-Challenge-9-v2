@@ -66,7 +66,26 @@ Plans:
   3. The user adds the server in Settings with the values from the documentation, asks in a chat which branch the project is on, and gets the branch that is checked out at that moment, with the tool call visible
   4. With the documented configuration the app connects to `github-mcp-server` in read-only mode and lists its tools; the token is masked after saving
 
-**Plans**: TBD
+**Plans**: 6 plans
+
+Plans:
+**Wave 1**
+
+- [ ] 22-01-PLAN.md — Git server core: launch arguments, fail-fast startup, process runner, path gate, ref gate, truncation helpers
+- [ ] 22-02-PLAN.md — Real-binary pytest check for `github-mcp-server` (read-only) and always-on token masking test
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 22-03-PLAN.md — The five read-only git tools with behaviour, stdio and app-path tests
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 22-04-PLAN.md — Documentation of both servers (form values, install, token) and a docs guard test
+- [ ] 22-05-PLAN.md — PGIT-04 browser script on the isolated copy and the recorded local-git checks
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 22-06-PLAN.md — User installs the GitHub server and token; GHUB-02 check run and recorded; final full-suite run recorded
 
 ### Phase 23: /help command, verification and report (Day 31)
 
