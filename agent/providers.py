@@ -331,11 +331,12 @@ async def get_provider_row(
     return row
 
 
-def build_client(row: LlmProvider) -> LLMClient:
+def build_client(row: LlmProvider, timeout: float | None = None) -> LLMClient:
     """Build a fresh client so edits to the base URL or key apply immediately."""
     return LLMClient(
         base_url=row.base_url,
         api_key=resolve_env_secret(row.api_key_env) or "",
+        timeout=timeout,
     )
 
 
