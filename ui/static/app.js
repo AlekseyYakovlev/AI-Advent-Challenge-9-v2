@@ -4055,6 +4055,194 @@ function bindHelpUi() {
     });
 }
 
+const REVIEW_LM_STUDIO_KIND = 'lm_studio';
+const REVIEW_LM_STUDIO_DOWN_TEXT = 'LM Studio недоступен, индекс не обновлён. Запустите LM Studio и повторите.';
+const REVIEW_POLL_INTERVAL_MS = 2000;
+let reviewPollTimer = null;
+state.reviewConfig = null;
+
+function setReviewError(text) {
+    const el = $('review-error');
+    el.textContent = text || '';
+    el.classList.toggle('hidden', !text);
+}
+
+function reviewSettingsOpen() {
+    return !$('settings-modal').classList.contains('hidden');
+}
+
+function stopReviewPolling() {
+    if (reviewPollTimer !== null) {
+        clearTimeout(reviewPollTimer);
+        reviewPollTimer = null;
+    }
+}
+
+function reviewProviderKind() {
+    const id = Number($('review-provider').value);
+    const provider = state.llmProviders.find((p) => p.id === id);
+    return provider ? provider.kind : null;
+}
+
+function updateReviewCloudNote() {
+    const kind = reviewProviderKind();
+    $('review-cloud-note').classList.toggle('hidden', kind === null || kind === REVIEW_LM_STUDIO_KIND);
+}
+
+function fillReviewSelect(select, items, selected, emptyLabel) {
+    select.replaceChildren();
+    if (emptyLabel !== undefined) {
+        const empty = document.createElement('option');
+        empty.value = '';
+        empty.textContent = emptyLabel;
+        select.appendChild(empty);
+    }
+    items.forEach(([value, label]) => {
+        const opt = document.createElement('option');
+        opt.value = String(value);
+        opt.textContent = label;
+        select.appendChild(opt);
+    });
+    select.value = selected === null || selected === undefined ? '' : String(selected);
+}
+
+async function fillReviewModels(providerId, selectedModel) {
+    let groups = [];
+    try {
+        groups = await fetchModelGroups(false);
+    } catch (err) {
+        groups = [];
+    }
+    const group = groups.find((g) => g.provider_id === providerId && !g.error);
+    const ids = group ? group.models.filter((m) => m.type !== 'embeddings').map((m) => m.id) : [];
+    if (selectedModel && !ids.includes(selectedModel)) ids.unshift(selectedModel);
+    fillReviewSelect($('review-model'), ids.map((id) => [id, id]), selectedModel || (ids[0] ?? ''));
+}
+
+function renderReviewIndexState(data) {
+    const refresh = data.refresh || {};
+    const index = data.code_index;
+    const status = $('review-index-status');
+    const btn = $('review-refresh-btn');
+    const configured = Boolean(data.repo_path);
+    if (refresh.running) {
+        const progress = refresh.total > 0 ? ` (${refresh.done}/${refresh.total})` : '';
+        status.textContent = `Идёт индексация${progress}`;
+        btn.disabled = true;
+        btn.textContent = 'Индексация…';
+    } else {
+        btn.textContent = 'Обновить индекс кода';
+        btn.disabled = !configured;
+        status.textContent = index
+            ? `Обновлён: ${new Date(index.updated_at).toLocaleString('ru-RU')}, файлов: ${index.file_count}`
+            : 'Не построен';
+    }
+    $('review-refresh-hint').classList.toggle('hidden', configured);
+}
+
+async function renderReviewSettings(data) {
+    state.reviewConfig = data;
+    $('review-repo-path').value = data.repo_path || '';
+    const effective = data.effective || {};
+    const kbs = (state.lastKbs || []).filter((kb) => kb.status === 'ready');
+    fillReviewSelect($('review-docs-kb'), kbs.map((kb) => [kb.id, kb.name]), data.docs_kb_id, 'Не выбрана');
+    const providers = state.llmProviders.filter((p) => p.enabled);
+    const providerId = data.provider_id ?? effective.provider_id;
+    fillReviewSelect($('review-provider'), providers.map((p) => [p.id, p.name]), providerId);
+    updateReviewCloudNote();
+    await fillReviewModels(Number($('review-provider').value), data.model || effective.model);
+    renderReviewIndexState(data);
+}
+
+async function loadReviewSettings() {
+    setReviewError('');
+    try {
+        if (state.lastKbs === null || state.lastKbs === undefined) {
+            state.lastKbs = await apiFetch('/api/v1/kb') || [];
+        }
+        if (!state.llmProviders.length) await loadLlmProviders();
+        const data = await apiFetch('/api/v1/reviews/config');
+        await renderReviewSettings(data);
+        if (data.refresh && data.refresh.running) scheduleReviewPoll();
+    } catch (err) {
+        setReviewError(err.message);
+    }
+}
+
+async function saveReviewSettings() {
+    const path = $('review-repo-path').value.trim();
+    if (!path) {
+        setReviewError('Укажите путь к репозиторию.');
+        return;
+    }
+    setReviewError('');
+    const btn = $('review-save-btn');
+    btn.disabled = true;
+    try {
+        const docs = $('review-docs-kb').value;
+        const body = {
+            repo_path: path,
+            docs_kb_id: docs ? Number(docs) : null,
+            provider_id: Number($('review-provider').value) || null,
+            model: $('review-model').value || null,
+        };
+        const data = await apiFetch('/api/v1/reviews/config', { method: 'PUT', body: JSON.stringify(body) });
+        await renderReviewSettings(data);
+        showToast('Настройки ревью сохранены', 'success');
+    } catch (err) {
+        setReviewError(err.message);
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+function scheduleReviewPoll() {
+    stopReviewPolling();
+    reviewPollTimer = setTimeout(pollReviewIndex, REVIEW_POLL_INTERVAL_MS);
+}
+
+async function pollReviewIndex() {
+    reviewPollTimer = null;
+    if (!reviewSettingsOpen()) return;
+    try {
+        const data = await apiFetch('/api/v1/reviews/code-index');
+        const merged = { ...data, repo_path: state.reviewConfig ? state.reviewConfig.repo_path : '' };
+        renderReviewIndexState(merged);
+        if (data.refresh && data.refresh.running) {
+            scheduleReviewPoll();
+            return;
+        }
+        if (data.refresh && data.refresh.error) {
+            const text = /LM Studio/i.test(data.refresh.error) ? REVIEW_LM_STUDIO_DOWN_TEXT : data.refresh.error;
+            setReviewError(text);
+        }
+    } catch (err) {
+        setReviewError(err.message);
+    }
+}
+
+async function refreshReviewIndex() {
+    setReviewError('');
+    const btn = $('review-refresh-btn');
+    btn.disabled = true;
+    try {
+        await apiFetch('/api/v1/reviews/code-index/refresh', { method: 'POST', body: JSON.stringify({}) });
+        $('review-index-status').textContent = 'Идёт индексация';
+        btn.textContent = 'Индексация…';
+        scheduleReviewPoll();
+    } catch (err) {
+        btn.disabled = false;
+        setReviewError(err.message);
+    }
+}
+
+$('review-save-btn').addEventListener('click', saveReviewSettings);
+$('review-refresh-btn').addEventListener('click', refreshReviewIndex);
+$('review-provider').addEventListener('change', () => {
+    updateReviewCloudNote();
+    fillReviewModels(Number($('review-provider').value), null);
+});
+
 async function openSettingsModal() {
     const perChat = $('settings-per-chat').checked;
     const chatId = perChat && state.currentChatId ? state.currentChatId : null;
@@ -4079,11 +4267,13 @@ async function openSettingsModal() {
     $('settings-modal').classList.remove('hidden');
     loadMcpServers().then(() => loadHelpConfig()).catch((err) => showToast(err.message, 'error'));
     loadLlmProviders().catch((err) => showToast(err.message, 'error'));
+    loadReviewSettings();
     loadApiKeys();
     loadNetworkInfo();
 }
 
 function closeSettingsModal() {
+    stopReviewPolling();
     $('settings-modal').classList.add('hidden');
 }
 
