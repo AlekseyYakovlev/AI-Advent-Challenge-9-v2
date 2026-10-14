@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from agent import code_git, code_index, mcp_config, providers, review_service
+from agent import code_git, code_index, folder_picker, mcp_config, providers, review_service
 from agent.dependencies import (
     AUTH_METHOD_API_KEY,
     get_current_user,
@@ -20,6 +20,7 @@ from agent.dependencies import (
     require_allowed_origin,
     require_json_content_type,
 )
+from agent.folder_picker import FolderPickerError
 from agent.kb_api import _get_owned_kb, _unprocessable
 from agent.rag_api import MSG_KB_NOT_READY
 from agent.review_service import ReviewServiceError
@@ -40,6 +41,15 @@ MSG_INTERNAL = "Внутренняя ошибка при выполнении р
 MSG_BAD_REPO = "Не удалось прочитать репозиторий: {reason} Проверьте путь и повторите."
 MSG_SAVE_FIRST = "Сначала укажите путь и сохраните настройки."
 MSG_NO_BRANCH = "Не удалось определить ветку для индексации."
+CODE_PICK_BUSY = "FOLDER_PICKER_BUSY"
+MSG_PICK_BUSY = "Окно выбора папки уже открыто."
+PICK_STATUS_BY_CODE: dict[str, int] = {
+    "FOLDER_PICKER_TIMEOUT": 504,
+    "FOLDER_PICKER_UNAVAILABLE": 503,
+    "FOLDER_PICKER_UNSUPPORTED": 501,
+}
+# One desktop, so at most one dialog at a time across all users.
+_pick_lock = asyncio.Lock()
 MSG_PROVIDER_NOT_FOUND = "Провайдер не найден"
 MSG_SERVER_NOT_FOUND = "MCP-сервер не найден"
 
@@ -301,6 +311,23 @@ async def put_review_config(
         raise
     logger.info("review_config_updated", user_id=current_user.id, changed=changed)
     return await _config_out(session, current_user.id, row, include_path=True)
+
+
+@router.post(
+    "/api/v1/reviews/pick-folder",
+    dependencies=[Depends(require_allowed_origin), Depends(require_json_content_type)],
+)
+async def pick_review_folder(current_user: User = Depends(get_session_user)) -> Any:
+    """Open a folder dialog on the agent's desktop and return the chosen path; session only."""
+    if _pick_lock.locked():
+        return _error_response(409, MSG_PICK_BUSY, CODE_PICK_BUSY)
+    logger.info("folder_pick_requested", user_id=current_user.id)
+    async with _pick_lock:
+        try:
+            path = await folder_picker.pick_folder()
+        except FolderPickerError as exc:
+            return _error_response(PICK_STATUS_BY_CODE.get(exc.code, 503), exc.detail, exc.code)
+    return {"path": path}
 
 
 @router.get("/api/v1/reviews/code-index")
