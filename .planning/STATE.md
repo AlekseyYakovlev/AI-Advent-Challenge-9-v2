@@ -165,3 +165,4 @@ Items acknowledged and deferred at milestone close on 2026-10-12:
 - Plan Phase 21: /bm:plan-phase 21
 
 | 261013-kia | Add list of previously added files to the Добавить файлы modal | 2026-10-13 | 76b4b7e | [261013-kia-add-list-of-previously-added-files-to-th](./quick/261013-kia-add-list-of-previously-added-files-to-th/) |
+| 261014-re4 | Folder picker button for review repo path (pick-folder endpoint) | 2026-10-14 | 7263b80 | | [261014-re4-folder-picker-button-for-review-repo-pat](./quick/261014-re4-folder-picker-button-for-review-repo-pat/) |
