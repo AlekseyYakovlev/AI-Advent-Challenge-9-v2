@@ -1265,6 +1265,130 @@ curl -s -X POST http://127.0.0.1:8001/api/v1/chats/12/messages \
   -d '{"content": "/help как запустить приложение?", "model": "qwen2.5-7b-instruct"}'
 ```
 
+## Automated PR review (Day 32)
+
+The Agent reviews a GitHub Pull Request on request: `POST /api/v1/reviews` reads the Pull Request through the GitHub MCP server, searches the project documentation and the project code, asks a model and returns three sections (bugs, architecture problems, recommendations). The GitHub Action in `.github/workflows/pr-review.yml` calls it through `scripts/pr_review_ci.py` and publishes the result as one comment. The review settings and the code index have their own routes. All routes are on the Agent port (default 8001); user-facing messages are in Russian.
+
+### POST /api/v1/reviews
+
+Authentication: an API key in `Authorization: Bearer <key>` or the cookie session; the review is made for the key holder and uses that user's settings. The request must have `Content-Type: application/json` and, for a browser, an allowed origin.
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `repo` | string | `owner/name` of the GitHub repository: letters, digits, `_`, `.`, `-`, at most 200 characters |
+| `pr_number` | integer | Pull Request number, at least 1 |
+| `head_sha` | string | Optional 40-character commit id the caller saw; empty is allowed |
+
+Unknown fields are rejected with 422. The repository folder on disk is never taken from the request: it comes from the saved review settings, and the Agent checks that its `origin` matches `repo`.
+
+The call is synchronous: the reply comes when the review is finished, which can take many minutes on a local model. A first call for a new base branch also builds the code index before the model is asked. A request that the client drops does not stop the review; the per-Pull-Request lock is released when the review ends. Only one review of the same Pull Request runs at a time for a user.
+
+Success reply (`200`):
+
+```json
+{
+  "repo": "AlekseyYakovlev/AI-Advent-Challenge-9-v2",
+  "pr_number": 12,
+  "head_sha": "0123456789abcdef0123456789abcdef01234567",
+  "head_changed": false,
+  "base_ref": "Day32",
+  "base_commit": "89abcdef0123456789abcdef0123456789abcdef",
+  "provider": "LM Studio",
+  "model": "qwen2.5-coder-14b-instruct",
+  "sections": {
+    "bugs": "- `agent/x.py`: the commit is missing after the write.",
+    "architecture": "Замечаний нет.",
+    "recommendations": "- Use `structlog` instead of `print`."
+  },
+  "sources": {
+    "docs": [{"file": "CLAUDE.md", "section": "Code conventions"}],
+    "code": [{"file": "agent/main.py", "section": "delete_chat (L120-160)", "lines": "120-160"}]
+  },
+  "docs_used": true,
+  "parts": 1,
+  "unreviewed_files": [],
+  "notes": []
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `head_sha`, `head_changed` | The head commit read from GitHub at the start; `head_changed` is `true` when a newer commit appeared during the review (a note says so) |
+| `base_ref`, `base_commit` | The base branch of the Pull Request and the commit at its tip that the code index was built from |
+| `provider`, `model` | The provider and model that wrote the review |
+| `sections` | Three Markdown texts; `Замечаний нет.` when a section has no remarks |
+| `sources.docs`, `sources.code` | Fragments given to the model: file and section; code entries also have `lines` (`start-end`, or `null`) |
+| `docs_used` | `false` when no documentation base was available (a note explains why) |
+| `parts` | Number of parts the diff was split into; 1 means one model call, more means a per-file review with a merge call |
+| `unreviewed_files` | Files that were not analysed because GitHub gave no changed text for them (binary or too large) |
+| `notes` | Short remarks: parts used, documentation not used, files not analysed, new commits during the review |
+
+Error body: `{"detail": "<readable Russian reason>", "code": "<CODE>"}`. The text never contains a key, a token or an exception message.
+
+| Code | HTTP status | Meaning |
+|------|-------------|---------|
+| `REVIEW_NOT_CONFIGURED` | 409 | The repository path is not saved, the chosen provider is disabled or deleted, or no model can be chosen |
+| `GITHUB_MCP_UNAVAILABLE` | 503 | The MCP server named `github` is missing, disabled, did not connect, rejected the token (401) or did not answer in time |
+| `PR_NOT_FOUND` | 404 | GitHub has no such Pull Request |
+| `BASE_UNAVAILABLE` | 503 | The base branch cannot be fetched from `origin`, or the repository folder does not match `repo` |
+| `EMBEDDER_UNAVAILABLE` | 503 | LM Studio cannot compute embeddings for the search |
+| `LM_STUDIO_UNAVAILABLE` | 503 | LM Studio is not running or has no chat model loaded |
+| `LLM_UNREACHABLE` | 503 | The cloud provider did not answer |
+| `CODE_INDEX_UNAVAILABLE` | 503 | The code knowledge base is missing or cannot be read |
+| `LLM_ERROR` | 502 | The model answered with an HTTP error (the status is named) |
+| `REVIEW_BAD_OUTPUT` | 502 | The model answer had no three sections even after one repair call |
+| `PR_TOO_LARGE` | 422 | The Pull Request needs more than 20 parts, has too many files, or the context length is too small |
+| `REVIEW_BUSY` | 409 | The same Pull Request of this user is already being reviewed |
+| `INTERNAL_ERROR` | 500 | Unexpected failure; fixed text, details are in the log |
+
+Other statuses come from the shared checks: `401` without credentials, `403` for a foreign origin, `415` without a JSON content type, `422` for a body that does not validate. A code that is not in the table is answered with `502`.
+
+```bash
+curl -s -X POST http://127.0.0.1:8001/api/v1/reviews \
+  -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+  -d '{"repo": "AlekseyYakovlev/AI-Advent-Challenge-9-v2", "pr_number": 12}'
+```
+
+### GET /api/v1/reviews/config
+
+Returns the caller's review settings (cookie session or API key).
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `repo_configured` | boolean | `true` when a repository path is saved; sent to every caller |
+| `repo_path` | string or `null` | The saved folder; sent only to a session caller and omitted for an API key |
+| `docs_kb_id` | integer or `null` | Documentation base chosen for the review; `null` means the base marked for `/help` |
+| `provider_id` | integer or `null` | Provider; `null` means the user's enabled local LM Studio provider |
+| `model` | string or `null` | Model; `null` means the first chat model loaded in LM Studio |
+| `github_server_id` | integer or `null` | MCP server; `null` means the enabled server named `github` |
+| `context_length` | integer | Context length the budget is planned for, default 65536 |
+| `updated_at` | string or `null` | ISO time of the last change |
+| `effective` | object | What a review would use now: `docs_kb_id`, `docs_kb_name`, `docs_kb_source`, `provider_id`, `provider_name`, `provider_kind`, `model` |
+| `code_index` | object or `null` | The most recently updated code base: `base_ref`, `indexed_commit`, `file_count`, `chunk_count`, `updated_at` |
+| `refresh` | object | State of the background index refresh: `running`, `phase`, `done`, `total`, `error` |
+
+### PUT /api/v1/reviews/config
+
+Session only: an API key gets `403`, so a key found in a CI log cannot change the repository folder. It needs a JSON content type and an allowed origin. An omitted field keeps its value and an explicit `null` clears it (for `context_length`, back to 65536).
+
+| Field | Rule |
+|-------|------|
+| `repo_path` | An existing git repository with a remote `origin`; the saved value is the top-level folder. Otherwise `422` with the reason |
+| `docs_kb_id` | The caller's own ready base; a foreign or missing base is `404`, a base that is not ready is `422` |
+| `provider_id`, `github_server_id` | The caller's own provider or MCP server; otherwise `404` |
+| `model` | Text up to 200 characters |
+| `context_length` | 8192 to 262144 |
+
+The reply has the shape of `GET /api/v1/reviews/config`.
+
+### GET /api/v1/reviews/code-index
+
+Returns `{"code_index": <object or null>, "refresh": <object>}`. `code_index` describes the most recently updated code base; `refresh` has the running flag, the phase (`fetch`, `diff`, `embed`, `commit`), the progress counters and the last error text. Cookie session or API key.
+
+### POST /api/v1/reviews/code-index/refresh
+
+Session only. Starts a background refresh of the code index and answers `202` with `{"running": true, "base_ref": "<branch>"}`. The body is optional (`{"base_ref": "Day32"}`); an empty POST works. The branch is chosen in this order: the body, the base of the last index, the current local branch of the saved folder; when none is known the answer is `422`. `422` also means that no repository path is saved yet. `409` with code `REVIEW_INDEX_BUSY` means a refresh of this user is already running. Poll `GET /api/v1/reviews/code-index` for the result.
+
 ## Environment Settings
 
 | Variable | Default | Meaning |

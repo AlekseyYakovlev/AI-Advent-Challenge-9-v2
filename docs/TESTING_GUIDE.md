@@ -712,3 +712,105 @@ Automation cannot prove reachability from another machine, so the live run is ma
 - `python scripts/help_eval.py check|measure|spike|run` works on an isolated copy at :18000 / :18001 with a scratch database and never opens `app.db` for writing. `check` prints what can run; `measure` records the best score per control question; `spike` tries the combined prompt; `run` asks the frozen control set of ten questions on the local and the DeepSeek model.
 - Exit 0 done, 1 aborted, 2 blocked by the preflight. A model that could not run is recorded as `not run`.
 - Results are written to `eval_out/day31/` (`threshold.json`, `spike.json`, `CALIBRATION.md`, the run records).
+
+## Automated PR review (Day 32)
+
+### Coverage map for Day 32
+
+| Area | Test files |
+|------|-----------|
+| Review route, settings routes, code index routes | `test_review_api.py` |
+| Chain of the review and provider/model/base resolution | `test_review_service.py` |
+| Pull Request data through the GitHub MCP server | `test_review_github.py` |
+| Git access to the base branch | `test_code_git.py` |
+| Incremental code knowledge base | `test_code_index.py`, `test_code_chunking.py` |
+| Budget, parts, retrieval, model calls | `test_review_pipeline.py`, `test_review_prompts.py` |
+| Workflow and comment script | `test_pr_review_ci.py` |
+| Settings section in the browser source | `test_review_settings_ui.py` |
+| Control set, control script, judge | `test_review_control_set.py`, `test_review_control.py`, `test_review_judge.py` |
+| Documentation | `test_docs_day32.py` |
+
+### test_review_api.py
+- authentication: 401 without credentials; success with an API key and with a session cookie
+- body validation (unknown field, bad repository name, bad number or sha); wrong content type and foreign origin are rejected
+- every error code maps to its status; an unknown code is 502; an unexpected error is a fixed 500 text without the exception
+- the busy guard answers `REVIEW_BUSY` for the same Pull Request; the lock is released after an error and after a cancelled request
+- settings GET: defaults for a session and for a key; the repository path is hidden from an API key
+- settings PUT: session only and the row stays unchanged for a key; omitted keeps and `null` clears; bad repository path, field bounds, a base that is not ready is 422, foreign ids are 404; two users never see each other
+- code index: the state; refresh without a saved path, session-only refresh, the base branch rules, an invalid branch and the busy answer
+
+### test_review_service.py
+- no row or an empty path is `REVIEW_NOT_CONFIGURED`; the documentation base falls back from the review setting to the `/help` mark; a foreign or not-ready base counts as absent
+- model choice: a stored model needs no LM Studio call; a loaded chat model skips embedding models; no loaded model; LM Studio not answering; a disabled provider
+- call order and arguments; the embedding model follows the documentation base
+- the head in the reply is the one read from GitHub; new commits during the review add a note; a failed final head check does not fail the review; the parts note
+- domain errors become service errors, other exceptions propagate; not configured stops before GitHub is asked
+
+### test_review_github.py
+- metadata, files and diff are read; files are paged and a missing patch is `None`; too many pages is `PR_TOO_LARGE`; a huge diff is returned unchanged; a null body becomes an empty string
+- error results are mapped (not found, token rejected); timeout and MCP errors are `GITHUB_MCP_UNAVAILABLE`; unparseable replies are not understood
+- an invalid repository name raises before any call; the final head check makes one call; server resolution errors
+- the real-binary test reads a Pull Request through the real `github-mcp-server.exe`; it is skipped unless the binary exists and `GITHUB_PERSONAL_ACCESS_TOKEN` and `GITHUB_REVIEW_TEST_PR` are set
+
+### test_code_git.py
+- repository validation (top-level folder, unusable text, missing folder, not a repository, no `origin`); repository key from the `origin` URL formats
+- branch name rules; `fetch` ignores the checked-out branch and local edits; an unknown branch does not reveal the `origin` URL; concurrent branches do not mix; a detached HEAD has no branch
+- the tree lists regular files only; blobs are read byte-exact; an unknown id raises; an empty list is empty; a timeout kills the process
+
+### test_code_chunking.py
+- Python structure and section names; async and nested functions; a long function is split and covers every line; a single huge line is cut
+- Cyrillic text, empty file, other files by line windows, CRLF normalisation; a Python file that does not parse falls back to windows
+- first line and name of a fragment, the line range parser, character offsets, the 2000-character cap over the real repository files
+
+### test_code_index.py
+- indexable file rules (suffixes, size, excluded folders)
+- the first refresh builds a ready base; an unpushed edit does not change the index; no new commit embeds nothing; edit, add and delete update only the difference; a delete-only commit
+- an embedder failure keeps the previous index; a failed first build leaves nothing; a failure inside the commit rolls back
+- a repository that does not match is refused before any fetch (case-insensitive); an unknown branch is `BASE_UNAVAILABLE`; a different branch gets its own base; the sixth base removes the oldest
+- concurrent refreshes stay consistent; two users are isolated; the job reports progress and refuses a second start; a failure is stored as a readable text; the module never opens files from disk
+
+### test_review_pipeline.py
+- token estimate headroom; diff splitting by file (renames, spaces); one part when the diff fits; a split covers every file; a huge file is split by hunks with a note; missing patches use the diff segment; too many parts and a too small context are `PR_TOO_LARGE`
+- queries are bounded and hold the right parts for documentation and code
+- parsing of the model reply (headings, think blocks, bad format); sanitising of mentions, images and HTML; code is kept; truncation
+- one part is one call with both sources; separate quotas and no second-stage options; three parts make four calls and the merge call has no diff; every call is tool-less with reasoning off
+- no documentation base and a documentation failure still produce a review; an embedder failure stops it; a code index failure is reported; model errors are mapped and carry only the status; a rejected reasoning field is retried; a bad reply gets one repair call; unreviewed files are named; the output is sanitised; the module imports no tool modules
+
+### test_review_prompts.py
+- neutralising of angle brackets and equals runs; the shape and text of the review messages
+- a closing tag inside the diff cannot escape the diff element; a missing documentation block is announced; the part note and a long description; the merge messages wrap partial answers
+
+### test_pr_review_ci.py
+- comment structure, empty source lists, notes, defusing of mentions and images, truncation order (sources first, then sections proportionally)
+- failure lines for each cause and the 300-character cut; finding the script's own comment (marker and bot login); create when absent, follow pages and patch
+- `main`: success, a failed review with echoed secrets scrubbed, a forbidden comment, missing or malformed variables, the default app address
+- the script imports only the standard library; the workflow pins the action by commit, has the right triggers, guards, runner label and permissions, and has no expression inside `run:` and no literal secret
+
+### test_review_settings_ui.py (frontend source guard)
+- the section position and its copy; labels on the controls; live regions; the accent only on the save button; the cloud note
+- no `innerHTML` in the section functions; routes and wiring; balanced braces
+
+### test_review_control_set.py
+- the manifest ids and control flags; the expected items; the sources exist and parse; every edit matches once; new paths do not collide with the repository; fixtures stay out of knowledge bases; the large Pull Request forces the per-file path
+
+### test_review_control.py
+- the Pull Request tree is built with the edits and an ambiguous edit is refused; `open` pushes branches and exits 4 without a token, is idempotent, and creates or reuses Pull Requests with a token
+- `wait`: ok when the comment names the head, other commits and authors are ignored, no workflow run or a queued run is `не запускалось`
+- `collect`, `rerun` (keeps the tree), `close` (only patches the state); `git` refuses foreign refs and commands; `prepare-docs`; a missing key or a dead app end as not run; no secret reaches the output
+
+### test_review_judge.py
+- splitting a review at the sources block; judge messages and a hostile review that cannot close a tag; parsing of the judge reply with tolerance and rejection
+- only control Pull Requests are judged; a failed review is not judged and calls no model; a missing run, an unparsable reply retried once, a transport failure is `не запускалось`
+- the `--check` command; the tables for several runs, a clean Pull Request row, escaping of pipes and newlines, no network for `--tables`
+
+### test_docs_day32.py (documentation source guard)
+- the user guide names the secret, the variable, the runner label, the approval setting, `--ephemeral`, `CLAUDE.md`, and the private-repository option; no key-shaped string anywhere in the docs
+- the API reference lists every code of `STATUS_BY_CODE`; the secret and variable names equal the ones in the workflow; every failure line of the script is explained in the guide; the README mentions the workflow
+
+### scripts/e2e_review_settings_playwright.py (isolated copy, not part of pytest)
+- Starts an isolated copy of the app at UI :18000 / Agent :18001 with a scratch database and checks the «Ревью Pull Request» section in a browser; it never touches :8000/:8001. Command: `python scripts/e2e_review_settings_playwright.py`. The result is written to `eval_out/day32/e2e_review_settings.md`.
+- A step that needs LM Studio and could not run (for example the successful index refresh) is recorded as `не запускалось`, never as passed.
+
+### Control run on real Pull Requests (manual, not part of pytest)
+- `scripts/review_control.py` opens the frozen control set of Pull Requests (`prepare-docs`, `open`, `wait`, `collect`, `rerun`, `close`, `status`); `scripts/review_judge.py` asks a DeepSeek judge which planted defects each review found and how many remarks were false. The control run of Plan 24-13 uses the local model and then DeepSeek; the records are in `eval_out/day32/`.
+- Exit codes of the control script: 0 done, 1 failed, 3 not run, 4 a manual step is needed. A run that could not be made (no runner, no token, no model) is recorded as `не запускалось`, never as a result.

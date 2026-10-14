@@ -786,3 +786,73 @@ adherence judged by DeepSeek).
 **Skipped side jobs.** A `/help` turn updates no task memory, extracts no facts, generates no chat title and runs no invariant resolution or self-critique; `done.invariant_conflict` is always `null`. A new chat opened with `/help` keeps the default title until an ordinary message is sent.
 
 **Storage.** The label and the warnings are stored in the `help` object inside `Message.rag_sources` of the assistant message, next to the sources and quotes, so they survive a reload. Later ordinary turns see the stored pair as ordinary history. Tool-call cards are live-only for every chat and are not restored from the message tree after a reload.
+
+## Automated PR review (Day 32)
+
+A Pull Request on GitHub is reviewed by the local app: a workflow on a self-hosted runner asks the Agent for a review over HTTP and publishes the answer as one comment. The model sees the changed text, the project rules and the code around the change, and writes three sections: potential bugs, architecture problems, recommendations.
+
+### Flow from the event to the comment
+
+1. A Pull Request is opened, updated, reopened or marked ready; `.github/workflows/pr-review.yml` starts a job on the runner labelled `pr-review` (not for drafts and not for Pull Requests from forks).
+2. The job runs `scripts/pr_review_ci.py`, which sends `POST /api/v1/reviews` with the API key.
+3. `agent/review_service.py` loads the user's review settings (`reviewconfig`) and resolves the provider, the model and the documentation base.
+4. `agent/review_github.py` reads the Pull Request through the GitHub MCP server: the tool `pull_request_read` with the methods `get`, `get_files` and `get_diff`. The calls are made by code, not by the model: no model is involved, and the tool result is never cut.
+5. `agent/code_git.py` runs `git fetch` of the base branch from `origin`, and `agent/code_index.py` refreshes the code knowledge base incrementally.
+6. `agent/review_pipeline.py` plans the parts, searches both bases for each part, calls the model and merges the partial answers.
+7. The reply is sanitised and returned; the script builds the comment, replaces its earlier comment (found by a hidden marker) or creates a new one, and writes the job summary.
+
+### Modules and tables
+
+| Module | Role |
+|--------|------|
+| `agent/review_api.py` | Routes of the review, its settings and the code index; maps error codes to statuses; per-Pull-Request lock |
+| `agent/review_service.py` | Chain settings -> GitHub -> index -> review -> final head check; provider and model resolution |
+| `agent/review_github.py` | Pull Request data through the MCP server, paging of the file list |
+| `agent/code_git.py` | The only place that runs `git`: repository validation, `fetch`, tree listing, blob reading |
+| `agent/code_index.py` | Incremental code knowledge base per user, repository and base branch; background refresh job |
+| `agent/code_chunking.py` | Splitting of code files into fragments |
+| `agent/review_pipeline.py` | Budget, parts, per-base retrieval, model calls, merge call, output cleaning |
+| `agent/review_prompts.py` | The prompts and the wrapping of untrusted text |
+
+Two tables hold the state. `reviewconfig` has one row per user: the repository folder, the documentation base, provider, model, MCP server and `context_length`. `reviewcodeindex` links a user, a repository key and a base branch to its code knowledge base (`kb_id`) and stores the indexed commit and the time of the last update.
+
+### Code knowledge base
+
+The code base is built from the files tracked by git at the tip of the Pull Request's base branch. The files are read from the git object store with `git ls-tree` and `git cat-file`, never from the work tree, so uncommitted edits and the branch that is checked out do not change the index, and the review never reads a file from the disk of the repository. There is one base per user, repository and base branch, at most 5 per user; a sixth removes the least recently updated one. The base is an ordinary knowledge base named `Код: <repository>@<branch>`, and it is not meant to be edited by hand.
+
+- Change detection: the git blob id of each file is stored in `KbDocument.sha256`. A refresh embeds only added and changed files and removes deleted ones; with no new commit nothing is embedded.
+- Indexed: tracked regular files with the suffixes `.py`, `.js`, `.html`, `.css`, `.ini`, `.toml`, `.cfg`, `.yml`, `.yaml`, `.json`, `.txt`, up to 200000 bytes (JSON up to 20000 bytes).
+- Excluded: `.planning/`, `docs/`, `eval_out/`, `tests/fixtures/`, `node_modules/`, Markdown and other documents, images, databases, keys, lock files. Documentation goes into the documentation base instead.
+- Splitting (`agent/code_chunking.py`): a Python file is split by functions, classes and methods with `ast`; a long function is cut further. Other files, and a Python file that does not parse, are cut into windows of 50 lines with an overlap of 8. A fragment has at most 2000 characters; a single huge line is cut by characters. The section of a fragment is `name (Lstart-end)`, for example `delete_chat (L120-160)`, so a source can name its lines.
+- Atomic swap: the vector index is written next to the current one and promoted only after the database commit succeeds; a failed refresh keeps the previous index, and a failed first build leaves nothing behind.
+
+### Retrieval
+
+Two bases are searched separately for each part of the diff: the project documentation base (rules, architecture, conventions) and the code base. Each has its own quota so that the large code base cannot push the rules out: 4 fragments from documentation (similarity threshold 0.35) and 6 from code (threshold 0.0, so the quota of the top 6 decides). Code fragments are always taken as the best matches because code similarity scores are low and a fixed cut-off would drop them all. The first stage takes 20 candidates; the second-stage options of the chat (keyword search, model rerank, query rewriting) are off, so no extra model call is made.
+
+The query is built from the part, not from a user question. For documentation: the Pull Request title, the changed paths, the names from the hunk headers and a fixed phrase about project rules, architecture and code conventions. For code: the changed paths, the hunk-header names and the added lines (at most 40 lines of 200 characters). Every query is cut to 1500 characters.
+
+### Budget and the per-file path
+
+The context length of the review settings (default 65536) is shared: the fragments take 25 percent, the answer 3000 tokens, the fixed text of the prompt 1200 tokens; the rest is the room for the changed text of one call:
+
+`available = context_length - 1200 - 3000 - 0.25 * context_length`
+
+Tokens are estimated with a deliberately pessimistic count so that Russian text and code do not overflow the window. If the whole diff fits, one call is made. Otherwise the diff is split by file, the files are packed greedily into parts that each fit, and a file that is bigger than the room is split by hunks (and a single huge line by characters), each piece marked as a part of that file. Each part is reviewed with its own retrieval, then one merge call receives only the partial answers (no diff) and writes the three final sections. More than 20 parts, or a context length too small for the prompt, ends with `PR_TOO_LARGE`. A file for which GitHub gave no changed text (binary or too large) is listed in `unreviewed_files` and named in a note: it was not analysed.
+
+### Model call
+
+The provider and the model come from the review settings. By default this is the local LM Studio provider and the model that is loaded there; a cloud provider can be chosen, and then the changed text and the fragments leave the machine (the settings window says so). Every call is made without tools, with the reasoning effort turned off (retried once without that field when the provider rejects it), temperature 0.2 and at most 3000 answer tokens. It waits for a slot of the shared generation queue like a chat turn does, and has its own timeout of 900 seconds per call. When the answer lacks the three headings, one repair call with a reminder is made; if that fails too, the code is `REVIEW_BAD_OUTPUT`.
+
+### Security notes
+
+- The diff, the Pull Request text and the fragments are untrusted. They go to the model as data inside tags, with angle brackets and runs of equal signs neutralised so that the text cannot close a tag, and the system prompt tells the model to treat them as data.
+- The model has no tools and the pipeline module imports none, so instructions inside a Pull Request cannot make it act.
+- The reply is sanitised before it leaves the Agent: reasoning blocks, images, scripts, HTML tags and comments are removed, `@mentions` are defused, and over-long sections are truncated. The script defuses them again before publishing.
+- The GitHub MCP server is read-only (`--read-only`), and the routes never take a repository folder from the request.
+- Keys: the API key lives in the repository secret and in the Agent; it is never logged and is scrubbed from every line the script prints. Writing the review settings and refreshing the index are allowed only for a web session, never for an API key.
+- The runner executes the workflow on the owner's machine; its safe configuration is described in `docs/USER_GUIDE.md`.
+
+### Out of scope
+
+Inline comments on lines, posting comments from the app itself (the workflow posts), a `/review` chat command, GitHub-hosted runners and blocking a merge on the result.
