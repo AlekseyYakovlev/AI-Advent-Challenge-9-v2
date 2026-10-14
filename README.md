@@ -14,6 +14,7 @@ AiAdventAgentV2 is a local-first AI chat application made of two Python processe
 - Knowledge bases with RAG answers and source citations.
 - API keys and an HTTP chat endpoint for calling the agent from scripts.
 - LAN mode: the app can be made reachable from the local network over plain HTTP.
+- Automated review of GitHub Pull Requests: a workflow asks the app for a review that uses the project docs and code.
 
 ## Directory structure
 
@@ -79,6 +80,12 @@ Settings are read from the `.env` file. Restart `python run.py` after changing t
 | `MCP_AUTO_CONNECT` | true | Connect enabled MCP servers automatically at the first chat turn. |
 | `MCP_TOOL_CALL_TIMEOUT` | 30.0 | Timeout in seconds for one MCP tool call. |
 | `KB_STORAGE_DIR` | empty | Knowledge-base storage folder; empty means a folder named after the database file with the suffix `_kb` next to it. |
+
+## Automated PR review
+
+A GitHub Action (`.github/workflows/pr-review.yml`) runs on a self-hosted runner on the owner's machine. The script `scripts/pr_review_ci.py` asks the Agent (`POST /api/v1/reviews`) for a review of the Pull Request and publishes it as one comment with three sections: potential bugs, architecture problems and recommendations. The Agent reads the Pull Request through the GitHub MCP server, searches the project documentation and an index of the base branch code, and asks a local or cloud model. The check is advisory and never blocks a merge.
+
+Because the repository is public, read the safe runner configuration before registering a runner: see the section on automated PR review in [docs/USER_GUIDE.md](docs/USER_GUIDE.md). The route reference is in [docs/API_SPEC.md](docs/API_SPEC.md), and the design is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The Day 32 results are described in `Day32_report.md`.
 
 ## Knowledge base from the project docs
 
