@@ -122,7 +122,10 @@ def test_plan_parts_splits_one_huge_file_by_hunks_with_a_note() -> None:
 
 
 def test_plan_parts_uses_diff_segment_when_patch_is_missing() -> None:
-    segment = f"diff --git a/x.py b/x.py\n{_patch(1, lines=60)}"
+    segment = (
+        f"diff --git a/x.py b/x.py\n{_patch(1, lines=60)}\n"
+        f"diff --git a/y.py b/y.py\n{_patch(2, lines=60)}"
+    )
     pr = _pr([_file("x.py", None), _file("y.py", _patch(2, lines=60))], diff=segment)
     parts, unreviewed = plan_parts(pr, 8000)
     joined = "\n".join(part.diff_text for part in parts)
