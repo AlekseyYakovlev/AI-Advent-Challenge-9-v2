@@ -17,6 +17,7 @@ _HTML_COPY: tuple[str, ...] = (
     "Состояние индекса кода",
     "Не построен",
     "Сначала укажите путь и сохраните настройки.",
+    "Выбрать папку…",
 )
 _JS_COPY: tuple[str, ...] = ("Индексация…", "Идёт индексация", "Обновлён: ")
 _CONTROLS: tuple[str, ...] = (
@@ -30,8 +31,14 @@ _ROUTES: tuple[str, ...] = (
     "/api/v1/reviews/code-index/refresh",
     "/api/v1/reviews/code-index'",
     "/api/v1/kb",
+    "/api/v1/reviews/pick-folder",
 )
-_FUNCTIONS: tuple[str, ...] = ("loadReviewSettings", "saveReviewSettings", "refreshReviewIndex")
+_FUNCTIONS: tuple[str, ...] = (
+    "loadReviewSettings",
+    "saveReviewSettings",
+    "refreshReviewIndex",
+    "pickReviewFolder",
+)
 
 
 def _app_js() -> str:
@@ -124,6 +131,20 @@ def test_routes_and_wiring() -> None:
         assert route in js, route
     assert "loadReviewSettings" in _function_source(js, "openSettingsModal")
     assert "stopReviewPolling" in _function_source(js, "closeSettingsModal")
+
+
+def test_pick_folder_button() -> None:
+    """The folder button follows the path field, fills it by value and never saves."""
+    section: str = _section()
+    tag = re.search(r'<button[^>]*id="review-pick-folder-btn"[^>]*>', section)
+    assert tag is not None
+    assert 'type="button"' in tag.group(0)
+    assert section.index('id="review-repo-path"') < tag.start()
+    js: str = _app_js()
+    source: str = _function_source(js, "pickReviewFolder")
+    assert "$('review-repo-path').value =" in source
+    assert "/api/v1/reviews/config" not in source
+    assert "addEventListener('click', pickReviewFolder)" in js
 
 
 def test_js_balance() -> None:

@@ -4196,6 +4196,25 @@ async function saveReviewSettings() {
     }
 }
 
+async function pickReviewFolder() {
+    setReviewError('');
+    const btn = $('review-pick-folder-btn');
+    btn.disabled = true;
+    btn.textContent = 'Окно выбора открыто…';
+    try {
+        const data = await apiFetch('/api/v1/reviews/pick-folder', { method: 'POST', body: JSON.stringify({}) });
+        if (data && data.path) {
+            $('review-repo-path').value = data.path;
+            $('review-repo-path').focus();
+        }
+    } catch (err) {
+        setReviewError(err.message);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Выбрать папку…';
+    }
+}
+
 function scheduleReviewPoll() {
     stopReviewPolling();
     reviewPollTimer = setTimeout(pollReviewIndex, REVIEW_POLL_INTERVAL_MS);
@@ -4238,6 +4257,7 @@ async function refreshReviewIndex() {
 
 $('review-save-btn').addEventListener('click', saveReviewSettings);
 $('review-refresh-btn').addEventListener('click', refreshReviewIndex);
+$('review-pick-folder-btn').addEventListener('click', pickReviewFolder);
 $('review-provider').addEventListener('change', () => {
     updateReviewCloudNote();
     fillReviewModels(Number($('review-provider').value), null);

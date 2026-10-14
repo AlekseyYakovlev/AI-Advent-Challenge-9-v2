@@ -1381,6 +1381,19 @@ Session only: an API key gets `403`, so a key found in a CI log cannot change th
 
 The reply has the shape of `GET /api/v1/reviews/config`.
 
+### POST /api/v1/reviews/pick-folder
+
+Session only: an API key gets `403`. It needs a JSON content type (send `{}`) and an allowed origin. The route opens a native Windows folder dialog on the computer where the agent runs (local-first: the agent's own desktop) in a separate PowerShell process, so the server is never blocked. At most one dialog is open at a time. The reply is `200 {"path": "C:\\..."}` with the chosen absolute path, or `200 {"path": null}` when the dialog was cancelled.
+
+| Status | Code | Meaning |
+|--------|------|---------|
+| `409` | `FOLDER_PICKER_BUSY` | A dialog is already open |
+| `504` | `FOLDER_PICKER_TIMEOUT` | No choice within 300 seconds; the dialog is closed |
+| `503` | `FOLDER_PICKER_UNAVAILABLE` | PowerShell could not start or failed |
+| `501` | `FOLDER_PICKER_UNSUPPORTED` | The agent is not running on Windows |
+
+The route stores nothing. The path is saved only by `PUT /api/v1/reviews/config`, with its validation.
+
 ### GET /api/v1/reviews/code-index
 
 Returns `{"code_index": <object or null>, "refresh": <object>}`. `code_index` describes the most recently updated code base; `refresh` has the running flag, the phase (`fetch`, `diff`, `embed`, `commit`), the progress counters and the last error text. Cookie session or API key.
