@@ -1,0 +1,249 @@
+{
+  "repo": "AlekseyYakovlev/AI-Advent-Challenge-9-v2",
+  "base": "Day32",
+  "branch_prefix": "review-test/",
+  "prs": [
+    {
+      "id": "smoke",
+      "control": false,
+      "kind": "smoke",
+      "title": "Добавить помощник для сборки подписи",
+      "body": "Небольшая функция, которая склеивает непустые части подписи через разделитель.",
+      "files": [
+        {
+          "path": "agent/review_demo_smoke.py",
+          "source": "tests/fixtures/review/prs/smoke/review_demo_smoke.py.txt"
+        }
+      ],
+      "copies": [],
+      "expected": [],
+      "tolerated": []
+    },
+    {
+      "id": "bug",
+      "control": true,
+      "kind": "obvious_bug",
+      "title": "Добавить постраничный вывод записей базы знаний",
+      "body": "Функции для разбиения списка записей на страницы и подсчёта заполненности страницы.",
+      "files": [
+        {
+          "path": "agent/review_demo_pagination.py",
+          "source": "tests/fixtures/review/prs/bug/review_demo_pagination.py.txt"
+        }
+      ],
+      "copies": [],
+      "expected": [
+        {
+          "key": "B1",
+          "file": "agent/review_demo_pagination.py",
+          "summary": "Срез страницы в slice_page отбрасывает последний элемент каждой страницы (ошибка на единицу в конце среза).",
+          "needs": "diff"
+        },
+        {
+          "key": "B2",
+          "file": "agent/review_demo_pagination.py",
+          "summary": "average_page_fill делит на ноль для пустого списка элементов.",
+          "needs": "diff"
+        },
+        {
+          "key": "B3",
+          "file": "agent/review_demo_pagination.py",
+          "summary": "Вызов _chunk_rows передаёт аргументы в неверном порядке и не соответствует реальной сигнатуре (kb_id, doc, drafts).",
+          "needs": "code"
+        }
+      ],
+      "tolerated": []
+    },
+    {
+      "id": "rules",
+      "control": true,
+      "kind": "documented_rule",
+      "title": "Добавить журнал изменений названия чата",
+      "body": "Функция сохраняет новое название чата и возвращает строку для журнала.",
+      "files": [
+        {
+          "path": "agent/review_demo_audit.py",
+          "source": "tests/fixtures/review/prs/rules/review_demo_audit.py.txt"
+        }
+      ],
+      "copies": [],
+      "expected": [
+        {
+          "key": "R1",
+          "file": "agent/review_demo_audit.py",
+          "summary": "Вместо логгера structlog используется print(), что запрещено правилами проекта.",
+          "needs": "docs"
+        },
+        {
+          "key": "R2",
+          "file": "agent/review_demo_audit.py",
+          "summary": "Используется datetime.utcnow() вместо datetime.now(timezone.utc).",
+          "needs": "docs"
+        },
+        {
+          "key": "R3",
+          "file": "agent/review_demo_audit.py",
+          "summary": "Запись в базу через session.add без await session.commit() и без отката при ошибке.",
+          "needs": "docs"
+        },
+        {
+          "key": "R4",
+          "file": "agent/review_demo_audit.py",
+          "summary": "Голый except: без указания типа исключения.",
+          "needs": "docs"
+        }
+      ],
+      "tolerated": []
+    },
+    {
+      "id": "arch",
+      "control": true,
+      "kind": "architecture",
+      "title": "Добавить страницу состояния и фоновое перестроение сводки",
+      "body": "Данные для страницы состояния в интерфейсе и запуск перестроения сводки чата в фоне.",
+      "files": [
+        {
+          "path": "ui/review_demo_status.py",
+          "source": "tests/fixtures/review/prs/arch/review_demo_status.py.txt"
+        },
+        {
+          "path": "agent/review_demo_worker.py",
+          "source": "tests/fixtures/review/prs/arch/review_demo_worker.py.txt"
+        }
+      ],
+      "copies": [],
+      "expected": [
+        {
+          "key": "A1",
+          "file": "ui/review_demo_status.py",
+          "summary": "Процесс интерфейса импортирует agent.state и читает память агента напрямую, хотя процессы общаются только по HTTP и WebSocket.",
+          "needs": "docs"
+        },
+        {
+          "key": "A2",
+          "file": "agent/review_demo_worker.py",
+          "summary": "Фоновая работа запускается через multiprocessing.Process, что запрещено ограничениями проекта.",
+          "needs": "docs"
+        }
+      ],
+      "tolerated": []
+    },
+    {
+      "id": "large",
+      "control": true,
+      "kind": "large_pr",
+      "title": "Вынести основные модули агента в отдельный пакет",
+      "body": "Копии основных модулей агента собраны в пакете agent/review_demo_big.",
+      "files": [
+        {
+          "path": "agent/review_demo_big/__init__.py",
+          "source": "tests/fixtures/review/prs/large/review_demo_big_init.py.txt"
+        }
+      ],
+      "copies": [
+        {
+          "path": "agent/review_demo_big/kb_indexer.py",
+          "from": "agent/kb_indexer.py",
+          "edits": [
+            {
+              "find": "            await session.commit()\n            committed = True\n            # No await between the commit and the swap: a cold index load must\n            # never see the new counts next to the old file.\n            promote_index(pending, path)\n",
+              "replace": "            promote_index(pending, path)\n            await session.commit()\n            committed = True\n"
+            }
+          ]
+        },
+        {
+          "path": "agent/review_demo_big/rag_pipeline.py",
+          "from": "agent/rag_pipeline.py",
+          "edits": []
+        },
+        {
+          "path": "agent/review_demo_big/mcp_client.py",
+          "from": "agent/mcp_client.py",
+          "edits": []
+        },
+        {
+          "path": "agent/review_demo_big/providers.py",
+          "from": "agent/providers.py",
+          "edits": [
+            {
+              "find": "    if not row.enabled:\n        raise ProviderUnavailableError(row.name)\n",
+              "replace": ""
+            }
+          ]
+        },
+        {
+          "path": "agent/review_demo_big/kb_api.py",
+          "from": "agent/kb_api.py",
+          "edits": []
+        },
+        {
+          "path": "agent/review_demo_big/llm_client.py",
+          "from": "agent/llm_client.py",
+          "edits": []
+        },
+        {
+          "path": "agent/review_demo_big/scheduler.py",
+          "from": "agent/scheduler.py",
+          "edits": []
+        },
+        {
+          "path": "agent/review_demo_big/context_engine.py",
+          "from": "agent/context_engine.py",
+          "edits": []
+        },
+        {
+          "path": "agent/review_demo_big/tools.py",
+          "from": "agent/tools.py",
+          "edits": []
+        },
+        {
+          "path": "agent/review_demo_big/rag_turn.py",
+          "from": "agent/rag_turn.py",
+          "edits": []
+        },
+        {
+          "path": "agent/review_demo_big/scheduler_ops.py",
+          "from": "agent/scheduler_ops.py",
+          "edits": []
+        }
+      ],
+      "expected": [
+        {
+          "key": "L1",
+          "file": "agent/review_demo_big/providers.py",
+          "summary": "В копии get_provider_row убрана проверка, отказывающая отключённому провайдеру.",
+          "needs": "diff"
+        },
+        {
+          "key": "L2",
+          "file": "agent/review_demo_big/kb_indexer.py",
+          "summary": "В копии _commit_addition подмена индекса promote_index выполняется до await session.commit().",
+          "needs": "diff"
+        }
+      ],
+      "tolerated": [
+        "Замечание о дублировании существующих модулей верно и не считается ложным."
+      ]
+    },
+    {
+      "id": "clean",
+      "control": true,
+      "kind": "clean",
+      "title": "Добавить форматирование размеров и длительностей",
+      "body": "Две небольшие функции для вывода размера файла и длительности в удобном виде, с тестами.",
+      "files": [
+        {
+          "path": "agent/review_demo_format.py",
+          "source": "tests/fixtures/review/prs/clean/review_demo_format.py.txt"
+        },
+        {
+          "path": "tests/test_review_demo_format.py",
+          "source": "tests/fixtures/review/prs/clean/test_review_demo_format.py.txt"
+        }
+      ],
+      "copies": [],
+      "expected": [],
+      "tolerated": []
+    }
+  ]
+}
