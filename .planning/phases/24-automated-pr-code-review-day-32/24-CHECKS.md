@@ -30,3 +30,27 @@ Conclusion for agent/review_github.py: rely on the field names listed above as t
 defensively (missing optional fields default to empty/False/0, a missing `head.sha` is a "not understood" error),
 map `401`/`Bad credentials` and `404`/`Not Found` in error text to distinct codes, and treat any non-text content
 item as an unrecognised answer.
+
+## 2. Runner security decision
+
+Date: 2026-10-14 (UTC)
+
+Decision: public-safe-config
+push Day32: yes
+
+The residual risk (approval gating is not airtight; the in-file same-repository condition can be edited by a PR; a private repository is the only complete fix) was shown to the user before the answer.
+
+Branch state checked before the answer was recorded: `Day31` = `origin/Day31` = `main` = `origin/main` = 0b53b7c; `git log Day32..Day31` is empty, so `Day32` already contains all of Day 31.
+
+### Setup checklist (Task 2, steps by the user)
+
+| Step | Status |
+|------|--------|
+| 1. Private repository | skipped (decision is public-safe-config) |
+| 2. Day31 commits missing from Day32 | not needed (0 commits) |
+| 3. Actions settings: approval for all external contributors, read-only token | not done yet |
+| 4. App from Day32 checkout and LM Studio | not done yet |
+| 5. API key github-actions-review, MCP server github, review settings | not done yet |
+| 6. Secret PR_REVIEW_API_KEY | not done yet |
+| 7. Self-hosted runner with label pr-review | not done yet |
+| 8. Environment variables for the control script | not done yet |
