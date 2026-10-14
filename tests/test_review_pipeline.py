@@ -1,14 +1,29 @@
 """Tests for the PR review core: budget, splitting, queries, parsing and sanitising."""
 
 import math
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
+import httpx
 import pytest
 
-from agent.llm_client import count_tokens
+from agent import review_pipeline
+from agent.llm_client import ChatCompletionResult, count_tokens
+from agent.providers import KIND_LM_STUDIO
+from agent.rag import RagFailure
 from agent.review_github import PrFile, PullRequestData
 from agent.review_pipeline import (
     ANSWER_MAX_TOKENS,
+    CODE_EMBEDDER_UNAVAILABLE,
+    CODE_INDEX_UNAVAILABLE,
+    CODE_LLM_ERROR,
+    CODE_LLM_UNREACHABLE,
+    CODE_LM_STUDIO_UNAVAILABLE,
+    CODE_REVIEW_BAD_OUTPUT,
     CODE_PR_TOO_LARGE,
+    CODE_TOP_K,
+    DOCS_TOP_K,
     MAX_PARTS,
     MAX_QUERY_CHARS,
     MAX_SECTION_CHARS,
@@ -20,6 +35,7 @@ from agent.review_pipeline import (
     estimate_tokens,
     parse_review,
     plan_parts,
+    run_review,
     sanitize_markdown,
     split_diff_by_file,
 )
@@ -224,3 +240,243 @@ def test_sanitize_truncates() -> None:
     result = sanitize_markdown("а" * (MAX_SECTION_CHARS + 5000))
     assert len(result) <= MAX_SECTION_CHARS
     assert result.endswith("…текст сокращён.")
+
+
+DOCS_KB = SimpleNamespace(id=1)
+CODE_KB = SimpleNamespace(id=2)
+CONTEXT = 32768
+
+
+def _chunks(kind: str, count: int = 10) -> list[dict[str, Any]]:
+    return [
+        {
+            "chunk_id": index,
+            "source": f"{kind}/file{index}.md" if kind == "docs" else f"src/mod{index}.py",
+            "section": f"Раздел {index}" if kind == "docs" else f"func_{index} (L{index}-{index + 5})",
+            "title": "t",
+            "text": f"Текст фрагмента {kind} {index}",
+            "score": 0.9 - index / 100,
+        }
+        for index in range(count)
+    ]
+
+
+class FakeClient:
+    """Records every completion call and replays scripted replies."""
+
+    def __init__(self, replies: list[Any]) -> None:
+        self.replies = list(replies)
+        self.calls: list[dict[str, Any]] = []
+
+    async def complete_chat_detailed(self, **kwargs: Any) -> ChatCompletionResult:
+        self.calls.append(kwargs)
+        reply = self.replies.pop(0) if len(self.replies) > 1 else self.replies[0]
+        if isinstance(reply, Exception):
+            raise reply
+        return ChatCompletionResult(reply, "stop", False, 10)
+
+
+@pytest.fixture
+def retrieval(monkeypatch: pytest.MonkeyPatch) -> list[tuple[int, Any, str]]:
+    """Replace the retrieval pipeline with a fake that serves the two bases."""
+    calls: list[tuple[int, Any, str]] = []
+
+    async def fake(
+        session: Any, kb: Any, question: str, config: Any, client: Any = None, model: Any = None
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        calls.append((kb.id, config, question))
+        kind = "docs" if kb.id == DOCS_KB.id else "code"
+        return _chunks(kind)[: config.top_k], {}
+
+    monkeypatch.setattr(review_pipeline, "run_retrieval_pipeline", fake)
+    return calls
+
+
+def _http_error(status: int) -> httpx.HTTPStatusError:
+    request = httpx.Request("POST", "http://llm/v1/chat/completions")
+    return httpx.HTTPStatusError("boom", request=request, response=httpx.Response(status, request=request))
+
+
+def _small_pr() -> PullRequestData:
+    return _pr([_file("a.py", _patch(1)), _file("b.py", _patch(2))])
+
+
+def _three_part_pr() -> PullRequestData:
+    return _pr([_file(f"f{i}.py", _patch(i, lines=60)) for i in range(3)])
+
+
+async def test_one_part_review_uses_one_call_with_both_sources(
+    retrieval: list[tuple[int, Any, str]],
+) -> None:
+    client = FakeClient([GOOD])
+    result = await run_review(None, _small_pr(), DOCS_KB, CODE_KB, client, "m", CONTEXT)
+    assert len(client.calls) == 1
+    assert result.parts == 1 and result.docs_used is True
+    user = client.calls[0]["messages"][1]["content"]
+    assert "diff --git a/a.py" in user and "<documentation>" in user and "<code>" in user
+    assert result.sections.bugs.startswith("- `a.py:3`")
+    assert result.sources_docs and all(set(item) == {"file", "section"} for item in result.sources_docs)
+    assert result.sources_code[0]["lines"] == "0-5"
+    assert len(result.sources_docs) <= DOCS_TOP_K and len(result.sources_code) <= CODE_TOP_K
+
+
+async def test_retrieval_uses_separate_quotas_and_no_llm_stages(
+    retrieval: list[tuple[int, Any, str]],
+) -> None:
+    await run_review(None, _small_pr(), DOCS_KB, CODE_KB, FakeClient([GOOD]), "m", CONTEXT)
+    by_kb = {kb_id: config for kb_id, config, _ in retrieval}
+    assert by_kb[DOCS_KB.id].top_k == DOCS_TOP_K and by_kb[DOCS_KB.id].threshold == 0.35
+    assert by_kb[CODE_KB.id].top_k == CODE_TOP_K and by_kb[CODE_KB.id].threshold == 0.0
+    for config in by_kb.values():
+        assert not (config.lexical or config.llm_rerank or config.hybrid or config.rewrite)
+
+
+async def test_three_parts_make_four_calls_and_merge_has_no_diff(
+    retrieval: list[tuple[int, Any, str]],
+) -> None:
+    pr = _three_part_pr()
+    parts, _ = plan_parts(pr, 8000)
+    assert len(parts) == 3
+    client = FakeClient([GOOD])
+    result = await run_review(None, pr, DOCS_KB, CODE_KB, client, "m", 8000)
+    assert result.parts == 3
+    assert len(client.calls) == 4
+    assert len(retrieval) == 6
+    merge_user = client.calls[-1]["messages"][1]["content"]
+    assert "<partial_review>" in merge_user and "diff --git" not in merge_user
+    assert merge_user.count("<partial_review>") == 3
+
+
+async def test_every_model_call_is_tool_less_and_reasoning_off(
+    retrieval: list[tuple[int, Any, str]],
+) -> None:
+    client = FakeClient([GOOD])
+    await run_review(None, _three_part_pr(), DOCS_KB, CODE_KB, client, "m", 8000)
+    for call in client.calls:
+        assert "tools" not in call and "tool_choice" not in call
+        assert call["extra_body"] == {"reasoning_effort": "none"}
+
+
+async def test_without_docs_base_the_review_still_runs(
+    retrieval: list[tuple[int, Any, str]],
+) -> None:
+    client = FakeClient([GOOD])
+    result = await run_review(None, _small_pr(), None, CODE_KB, client, "m", CONTEXT)
+    assert result.docs_used is False
+    assert "Документация не использовалась: база документации не выбрана." in result.notes
+    assert [kb_id for kb_id, _, _ in retrieval] == [CODE_KB.id]
+    assert "<documentation>" not in client.calls[0]["messages"][1]["content"]
+
+
+async def test_docs_failure_continues_without_docs(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake(session: Any, kb: Any, question: str, config: Any, *a: Any) -> Any:
+        if kb.id == DOCS_KB.id:
+            raise RagFailure("kb_not_ready", "x")
+        return _chunks("code"), {}
+
+    monkeypatch.setattr(review_pipeline, "run_retrieval_pipeline", fake)
+    result = await run_review(None, _small_pr(), DOCS_KB, CODE_KB, FakeClient([GOOD]), "m", CONTEXT)
+    assert result.docs_used is False
+    assert "Документация не использовалась: база документации недоступна." in result.notes
+
+
+@pytest.mark.parametrize("failing_kb", [DOCS_KB, CODE_KB])
+async def test_embedder_failure_stops_the_review(
+    monkeypatch: pytest.MonkeyPatch, failing_kb: Any
+) -> None:
+    async def fake(session: Any, kb: Any, question: str, config: Any, *a: Any) -> Any:
+        if kb.id == failing_kb.id:
+            raise RagFailure("embedder_unavailable", "x")
+        return _chunks("code"), {}
+
+    monkeypatch.setattr(review_pipeline, "run_retrieval_pipeline", fake)
+    with pytest.raises(review_pipeline.ReviewError) as caught:
+        await run_review(None, _small_pr(), DOCS_KB, CODE_KB, FakeClient([GOOD]), "m", CONTEXT)
+    assert caught.value.code == CODE_EMBEDDER_UNAVAILABLE
+
+
+async def test_code_index_failure_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake(session: Any, kb: Any, question: str, config: Any, *a: Any) -> Any:
+        if kb.id == CODE_KB.id:
+            raise RagFailure("index_corrupt", "x")
+        return _chunks("docs"), {}
+
+    monkeypatch.setattr(review_pipeline, "run_retrieval_pipeline", fake)
+    with pytest.raises(review_pipeline.ReviewError) as caught:
+        await run_review(None, _small_pr(), DOCS_KB, CODE_KB, FakeClient([GOOD]), "m", CONTEXT)
+    assert caught.value.code == CODE_INDEX_UNAVAILABLE
+
+
+@pytest.mark.parametrize(
+    ("error", "kind", "code"),
+    [
+        (httpx.ConnectError("no"), KIND_LM_STUDIO, CODE_LM_STUDIO_UNAVAILABLE),
+        (httpx.ConnectError("no"), "deepseek", CODE_LLM_UNREACHABLE),
+        (httpx.ReadTimeout("slow"), None, CODE_LLM_UNREACHABLE),
+        (_http_error(500), None, CODE_LLM_ERROR),
+    ],
+)
+async def test_model_errors_are_mapped(
+    retrieval: list[tuple[int, Any, str]], error: Exception, kind: str | None, code: str
+) -> None:
+    with pytest.raises(review_pipeline.ReviewError) as caught:
+        await run_review(
+            None, _small_pr(), DOCS_KB, CODE_KB, FakeClient([error]), "m", CONTEXT, kind
+        )
+    assert caught.value.code == code
+    assert "boom" not in caught.value.detail and "no" != caught.value.detail
+
+
+async def test_http_error_detail_holds_status_only(
+    retrieval: list[tuple[int, Any, str]],
+) -> None:
+    with pytest.raises(review_pipeline.ReviewError) as caught:
+        await run_review(None, _small_pr(), DOCS_KB, CODE_KB, FakeClient([_http_error(503)]), "m", CONTEXT)
+    assert "503" in caught.value.detail and "boom" not in caught.value.detail
+
+
+async def test_rejected_reasoning_control_is_retried_without_it(
+    retrieval: list[tuple[int, Any, str]],
+) -> None:
+    client = FakeClient([_http_error(400), GOOD])
+    await run_review(None, _small_pr(), DOCS_KB, CODE_KB, client, "m", CONTEXT)
+    assert [call["extra_body"] for call in client.calls] == [{"reasoning_effort": "none"}, None]
+
+
+async def test_bad_reply_gets_one_repair_call_then_fails(
+    retrieval: list[tuple[int, Any, str]],
+) -> None:
+    client = FakeClient(["просто текст", GOOD])
+    result = await run_review(None, _small_pr(), DOCS_KB, CODE_KB, client, "m", CONTEXT)
+    assert len(client.calls) == 2
+    assert "трёх разделов" in client.calls[1]["messages"][-1]["content"]
+    assert result.sections.bugs
+
+    failing = FakeClient(["плохо", None])
+    with pytest.raises(review_pipeline.ReviewError) as caught:
+        await run_review(None, _small_pr(), DOCS_KB, CODE_KB, failing, "m", CONTEXT)
+    assert caught.value.code == CODE_REVIEW_BAD_OUTPUT
+    assert len(failing.calls) == 2
+
+
+async def test_unreviewed_files_are_named(retrieval: list[tuple[int, Any, str]]) -> None:
+    files = [_file(f"f{i}.py", _patch(i, lines=60)) for i in range(2)]
+    files.append(_file("image.png", None))
+    result = await run_review(None, _pr(files), DOCS_KB, CODE_KB, FakeClient([GOOD]), "m", 8000)
+    assert result.unreviewed_files == ["image.png"]
+    assert any("image.png" in note for note in result.notes)
+
+
+async def test_output_is_sanitised(retrieval: list[tuple[int, Any, str]]) -> None:
+    reply = GOOD.replace("ошибка", "ошибка @octocat ![i](http://e/i.png) <img src=x>")
+    result = await run_review(None, _small_pr(), DOCS_KB, CODE_KB, FakeClient([reply]), "m", CONTEXT)
+    assert f"@{ZWSP}octocat" in result.sections.bugs
+    assert "![" not in result.sections.bugs and "<img" not in result.sections.bugs
+
+
+def test_review_pipeline_does_not_import_tool_modules() -> None:
+    source = Path(review_pipeline.__file__).read_text(encoding="utf-8")
+    code_lines = [line for line in source.splitlines() if not line.lstrip().startswith("#")]
+    text = "\n".join(code_lines)
+    for forbidden in ("agent.headless", "agent.tools", "agent.mcp_tools", "agent.ws"):
+        assert forbidden not in text

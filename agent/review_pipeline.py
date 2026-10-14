@@ -2,18 +2,33 @@
 
 import math
 import re
+import time
 from dataclasses import dataclass, field
+from typing import Any
 
-from agent.llm_client import count_tokens
-from agent.rag import CYRILLIC_SAFETY
+import httpx
+from sqlmodel.ext.asyncio.session import AsyncSession
+
+from agent.code_chunking import parse_line_range
+from agent.limits import generation_gate
+from agent.llm_client import ChatCompletionResult, count_tokens
+from agent.providers import KIND_LM_STUDIO
+from agent.rag import CYRILLIC_SAFETY, RagFailure, build_rag_block, sources_from_chunks
+from agent.rag_llm import REJECTED_STATUS_CODES, STAGE_REASONING_EFFORT
+from agent.rag_pipeline import PipelineConfig, run_retrieval_pipeline
 from agent.review_github import PrFile, PullRequestData
 from agent.review_prompts import (
+    FRAGMENTS_INSTRUCTION,
     HEADING_ARCHITECTURE,
     HEADING_BUGS,
     HEADING_RECOMMENDATIONS,
     NO_REMARKS,
+    REPAIR_REMINDER,
+    build_merge_messages,
+    build_review_messages,
 )
 from shared.logger import get_logger
+from shared.models import KnowledgeBase
 
 logger = get_logger(__name__)
 
@@ -45,6 +60,16 @@ DOCS_QUERY_PHRASE: str = "правила проекта, архитектура,
 KIND_DOCS: str = "docs"
 KIND_CODE: str = "code"
 ZERO_WIDTH_SPACE: str = "​"
+
+MSG_MODEL_UNREACHABLE: str = "Модель недоступна."
+MSG_MODEL_HTTP_ERROR: str = "Модель вернула ошибку HTTP {status}."
+MSG_BAD_OUTPUT: str = "Модель вернула ответ не в ожидаемом формате."
+MSG_EMBEDDER_UNAVAILABLE: str = "LM Studio недоступен для эмбеддингов."
+MSG_CODE_INDEX_UNAVAILABLE: str = "Индекс кода недоступен."
+NOTE_DOCS_NOT_SELECTED: str = "Документация не использовалась: база документации не выбрана."
+NOTE_DOCS_UNAVAILABLE: str = "Документация не использовалась: база документации недоступна."
+NOTE_UNREVIEWED: str = "Не проанализированы (нет текста изменений): {names}."
+FAILURE_EMBEDDER: str = "embedder_unavailable"
 
 MAX_TITLE_QUERY_CHARS: int = 300
 MAX_ADDED_LINES_IN_QUERY: int = 40
@@ -389,3 +414,284 @@ def sanitize_markdown(text: str) -> str:
     if cut.count("```") % 2 == 1:
         cut += "\n```"
     return f"{cut}\n{TRUNCATION_LINE}"
+
+
+@dataclass
+class _CallStats:
+    """Counts model calls of one review run."""
+
+    model_calls: int = 0
+
+
+def _render_sections(sections: ReviewSections) -> str:
+    """Render the three sections as Markdown with the canonical headings."""
+    return (
+        f"{HEADING_BUGS}\n{sections.bugs}\n\n"
+        f"{HEADING_ARCHITECTURE}\n{sections.architecture}\n\n"
+        f"{HEADING_RECOMMENDATIONS}\n{sections.recommendations}"
+    )
+
+
+def _sanitize_sections(sections: ReviewSections) -> ReviewSections:
+    """Sanitise every section; a section that became empty reads as no remarks."""
+    return ReviewSections(
+        bugs=sanitize_markdown(sections.bugs).strip() or NO_REMARKS,
+        architecture=sanitize_markdown(sections.architecture).strip() or NO_REMARKS,
+        recommendations=sanitize_markdown(sections.recommendations).strip() or NO_REMARKS,
+    )
+
+
+async def _complete_once(
+    client: Any, messages: list[dict[str, str]], model: str
+) -> ChatCompletionResult:
+    """Call the model without tools and with reasoning off; repeat once on HTTP 400/422."""
+    try:
+        return await client.complete_chat_detailed(
+            messages=messages,
+            model=model,
+            temperature=REVIEW_TEMPERATURE,
+            max_tokens=ANSWER_MAX_TOKENS,
+            extra_body={"reasoning_effort": STAGE_REASONING_EFFORT},
+        )
+    except httpx.HTTPStatusError as exc:
+        status_code = exc.response.status_code
+        if status_code not in REJECTED_STATUS_CODES:
+            raise
+        logger.info("review_reasoning_control_rejected", model=model, status_code=status_code)
+    return await client.complete_chat_detailed(
+        messages=messages,
+        model=model,
+        temperature=REVIEW_TEMPERATURE,
+        max_tokens=ANSWER_MAX_TOKENS,
+        extra_body=None,
+    )
+
+
+async def _call_model(
+    client: Any, messages: list[dict[str, str]], model: str, provider_kind: str | None
+) -> ChatCompletionResult:
+    """Run one tool-less model call inside the generation gate and map transport errors."""
+    try:
+        async with generation_gate.slot():
+            return await _complete_once(client, messages, model)
+    except httpx.HTTPStatusError as exc:
+        status_code = exc.response.status_code
+        logger.error("review_model_http_error", model=model, status_code=status_code)
+        raise ReviewError(
+            CODE_LLM_ERROR, MSG_MODEL_HTTP_ERROR.format(status=status_code)
+        ) from None
+    except httpx.TransportError as exc:
+        logger.error("review_model_unreachable", model=model, error=type(exc).__name__)
+        code = (
+            CODE_LM_STUDIO_UNAVAILABLE if provider_kind == KIND_LM_STUDIO else CODE_LLM_UNREACHABLE
+        )
+        raise ReviewError(code, MSG_MODEL_UNREACHABLE) from None
+
+
+def _with_reminder(messages: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Copy the messages with the format reminder appended to the last user message."""
+    copy = [dict(message) for message in messages]
+    copy[-1]["content"] = copy[-1]["content"] + REPAIR_REMINDER
+    return copy
+
+
+async def _generate(
+    client: Any,
+    messages: list[dict[str, str]],
+    model: str,
+    provider_kind: str | None,
+    stats: _CallStats,
+) -> ReviewSections:
+    """Call the model and parse the reply; one repair attempt on a malformed reply."""
+    for attempt in range(2):
+        prompt = messages if attempt == 0 else _with_reminder(messages)
+        result = await _call_model(client, prompt, model, provider_kind)
+        stats.model_calls += 1
+        sections = parse_review(result.content)
+        if sections is not None:
+            return sections
+        logger.warning(
+            "review_bad_output",
+            model=model,
+            attempt=attempt,
+            finish_reason=result.finish_reason,
+            has_content=result.content is not None,
+        )
+    raise ReviewError(CODE_REVIEW_BAD_OUTPUT, MSG_BAD_OUTPUT)
+
+
+def _add_sources(target: list[dict], kept: list[dict[str, Any]], with_lines: bool) -> None:
+    """Append metadata of used fragments, skipping ones already listed."""
+    seen = {(item["file"], item["section"]) for item in target}
+    for item in sources_from_chunks(kept):
+        key = (item["file"], item["section"])
+        if key in seen:
+            continue
+        seen.add(key)
+        entry: dict[str, Any] = {"file": item["file"], "section": item["section"]}
+        if with_lines:
+            line_range = parse_line_range(item["section"])
+            entry["lines"] = f"{line_range[0]}-{line_range[1]}" if line_range else None
+        target.append(entry)
+
+
+async def _retrieve_docs(
+    session: AsyncSession, kb: KnowledgeBase, query: str
+) -> list[dict[str, Any]] | None:
+    """Search the documentation base; None when it cannot be used, error on a dead embedder."""
+    config = PipelineConfig(candidate_k=CANDIDATE_K, top_k=DOCS_TOP_K, threshold=DOCS_THRESHOLD)
+    try:
+        chunks, _trace = await run_retrieval_pipeline(session, kb, query, config)
+    except RagFailure as failure:
+        if failure.code == FAILURE_EMBEDDER:
+            raise ReviewError(CODE_EMBEDDER_UNAVAILABLE, MSG_EMBEDDER_UNAVAILABLE) from None
+        logger.warning("review_docs_unavailable", code=failure.code)
+        return None
+    return chunks
+
+
+async def _retrieve_code(
+    session: AsyncSession, kb: KnowledgeBase, query: str
+) -> list[dict[str, Any]]:
+    """Search the code base; any failure stops the review."""
+    config = PipelineConfig(candidate_k=CANDIDATE_K, top_k=CODE_TOP_K, threshold=CODE_THRESHOLD)
+    try:
+        chunks, _trace = await run_retrieval_pipeline(session, kb, query, config)
+    except RagFailure as failure:
+        if failure.code == FAILURE_EMBEDDER:
+            raise ReviewError(CODE_EMBEDDER_UNAVAILABLE, MSG_EMBEDDER_UNAVAILABLE) from None
+        logger.warning("review_code_unavailable", code=failure.code)
+        raise ReviewError(CODE_INDEX_UNAVAILABLE, MSG_CODE_INDEX_UNAVAILABLE) from None
+    return chunks
+
+
+def _top_score(chunks: list[dict[str, Any]]) -> float | None:
+    """Best raw cosine among fragments, or None when there are none."""
+    return max((float(chunk["score"]) for chunk in chunks), default=None)
+
+
+def _part_note(part: ReviewPart, index: int, total: int) -> str | None:
+    """Tell the model which part of a large PR it is looking at."""
+    if total == 1:
+        return part.note
+    intro = f"Это часть {index} из {total} большого Pull Request; анализируй только эту часть."
+    return f"{intro} {part.note}" if part.note else intro
+
+
+async def _merge_sections(
+    client: Any,
+    model: str,
+    provider_kind: str | None,
+    title: str,
+    partials: list[ReviewSections],
+    available: int,
+    stats: _CallStats,
+) -> ReviewSections:
+    """Merge partial reviews into one, level by level when they do not fit one call."""
+    current = list(partials)
+    while len(current) > 1:
+        total = sum(estimate_tokens(_render_sections(item)) for item in current)
+        if total <= available:
+            groups = [current]
+        else:
+            groups = [current[start : start + 2] for start in range(0, len(current), 2)]
+        merged: list[ReviewSections] = []
+        for group in groups:
+            if len(group) == 1:
+                merged.append(group[0])
+                continue
+            messages = build_merge_messages(title, [_render_sections(item) for item in group])
+            merged.append(await _generate(client, messages, model, provider_kind, stats))
+        current = merged
+    return current[0]
+
+
+async def run_review(
+    session: AsyncSession,
+    pr: PullRequestData,
+    docs_kb: KnowledgeBase | None,
+    code_kb: KnowledgeBase,
+    client: Any,
+    model: str,
+    context_length: int,
+    provider_kind: str | None = None,
+) -> ReviewResult:
+    """Review a PR with documentation and code retrieval; merge parts for a large diff."""
+    parts, unreviewed = plan_parts(pr, context_length)
+    stats = _CallStats()
+    notes: list[str] = []
+    sources_docs: list[dict] = []
+    sources_code: list[dict] = []
+    docs_active = docs_kb is not None
+    docs_used = False
+    if docs_kb is None:
+        notes.append(NOTE_DOCS_NOT_SELECTED)
+    fragments_budget = int(context_length * RAG_SHARE) // 2
+    partials: list[ReviewSections] = []
+
+    for index, part in enumerate(parts, start=1):
+        started = time.perf_counter()
+        docs_chunks: list[dict[str, Any]] = []
+        if docs_active and docs_kb is not None:
+            found = await _retrieve_docs(session, docs_kb, build_query(pr, part, KIND_DOCS))
+            if found is None:
+                docs_active = False
+                notes.append(NOTE_DOCS_UNAVAILABLE)
+            else:
+                docs_used = True
+                docs_chunks = found
+        code_chunks = await _retrieve_code(session, code_kb, build_query(pr, part, KIND_CODE))
+        docs_block, docs_kept, _ = build_rag_block(
+            docs_chunks, fragments_budget, instruction=FRAGMENTS_INSTRUCTION
+        )
+        code_block, code_kept, _ = build_rag_block(
+            code_chunks, fragments_budget, instruction=FRAGMENTS_INSTRUCTION
+        )
+        _add_sources(sources_docs, docs_kept, with_lines=False)
+        _add_sources(sources_code, code_kept, with_lines=True)
+        messages = build_review_messages(
+            pr.title,
+            pr.body,
+            part.diff_text,
+            docs_block,
+            code_block,
+            _part_note(part, index, len(parts)),
+        )
+        partials.append(await _generate(client, messages, model, provider_kind, stats))
+        logger.info(
+            "review_part_done",
+            pr_number=pr.number,
+            part=index,
+            files=len(part.files),
+            docs_fragments=len(docs_kept),
+            code_fragments=len(code_kept),
+            top_docs_score=_top_score(docs_chunks),
+            top_code_score=_top_score(code_chunks),
+            prompt_tokens_estimate=sum(estimate_tokens(m["content"]) for m in messages),
+            seconds=round(time.perf_counter() - started, 2),
+        )
+
+    if not partials:
+        sections = ReviewSections(NO_REMARKS, NO_REMARKS, NO_REMARKS)
+    else:
+        sections = await _merge_sections(
+            client,
+            model,
+            provider_kind,
+            pr.title,
+            partials,
+            _available_tokens(context_length),
+            stats,
+        )
+    if unreviewed:
+        notes.append(NOTE_UNREVIEWED.format(names=", ".join(unreviewed)))
+    logger.info("review_done", pr_number=pr.number, parts=len(parts), model_calls=stats.model_calls)
+    return ReviewResult(
+        sections=_sanitize_sections(sections),
+        sources_docs=sources_docs,
+        sources_code=sources_code,
+        docs_used=docs_used,
+        parts=len(parts),
+        unreviewed_files=unreviewed,
+        notes=notes,
+    )
