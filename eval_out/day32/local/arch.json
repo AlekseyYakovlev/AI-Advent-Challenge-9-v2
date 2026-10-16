@@ -1,0 +1,12 @@
+{
+  "id": "arch",
+  "pr_number": 4,
+  "head_sha": "2b694ed8bdfc0bdd2a9abee8d98341759ab1c1c2",
+  "status": "ok",
+  "reason": "",
+  "provider_model": "LM Studio/qwen/qwen3.5-9b",
+  "comment_id": 6226128622,
+  "updated_at": "2026-10-16T22:47:22Z",
+  "workflow_conclusion": null,
+  "seconds": null
+}

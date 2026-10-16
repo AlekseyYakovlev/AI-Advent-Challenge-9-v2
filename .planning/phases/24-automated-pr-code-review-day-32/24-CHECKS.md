@@ -84,3 +84,26 @@ After `rerun` the PR head is bb09d53. `smoke2.json` has the same `comment_id` 62
 ### 3.5 Fallbacks
 
 None needed (no 403, no size rejection, no job failure). `python -m pytest tests/test_pr_review_ci.py -q`: 34 passed.
+
+## 4. Control run
+
+### 4.1 Preconditions (2026-10-17)
+
+- `Day32` = `origin/Day32` = 44680c7; section 2 holds `push Day32: yes`.
+- `GET /api/v1/reviews/config`: `effective.provider_kind` = `lm_studio`, provider LM Studio, model `qwen/qwen3.5-9b`, context_length 65536.
+- Runner: Idle after the smoke runs; it picked up all five jobs.
+- Manifest `tests/fixtures/review/control_set.json` last changed in commit fd72730da1e4954ac4c9fe787a41d217d48ca1a6 (frozen from here on).
+
+### 4.2 Local-model run (run `local`)
+
+Provider/model in force: LM Studio / `qwen/qwen3.5-9b`. Base of every PR: `Day32`.
+
+| id | PR | status | model line | parts note | reason |
+|----|----|--------|------------|------------|--------|
+| bug | #2 | ok | LM Studio/qwen/qwen3.5-9b | no | - |
+| rules | #3 | ok | LM Studio/qwen/qwen3.5-9b | no | - |
+| arch | #4 | ok | LM Studio/qwen/qwen3.5-9b | no | - |
+| large | #5 | ok | LM Studio/qwen/qwen3.5-9b | Ревью выполнено по частям: 2. | - |
+| clean | #6 | ok | LM Studio/qwen/qwen3.5-9b | no | - |
+
+Duration per PR was not captured (`seconds` and `workflow_conclusion` are `null` in the records, as in the smoke run). The `large` PR was reviewed in 2 parts (per-file path confirmed). Review texts are saved in `eval_out/day32/local/`.

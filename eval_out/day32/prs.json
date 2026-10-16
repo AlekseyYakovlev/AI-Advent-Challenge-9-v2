@@ -4,5 +4,35 @@
     "branch": "review-test/smoke",
     "head_sha": "bb09d5343f7d57896e872f7a2bfd0444c8772598",
     "url": "https://github.com/AlekseyYakovlev/AI-Advent-Challenge-9-v2/pull/1"
+  },
+  "bug": {
+    "number": 2,
+    "branch": "review-test/bug",
+    "head_sha": "64a4ac4f321dca82b161294440af662cd83be9ba",
+    "url": "https://github.com/AlekseyYakovlev/AI-Advent-Challenge-9-v2/pull/2"
+  },
+  "rules": {
+    "number": 3,
+    "branch": "review-test/rules",
+    "head_sha": "58eaf96c5b3e38183554b29af9537d91f7bbc03b",
+    "url": "https://github.com/AlekseyYakovlev/AI-Advent-Challenge-9-v2/pull/3"
+  },
+  "arch": {
+    "number": 4,
+    "branch": "review-test/arch",
+    "head_sha": "2b694ed8bdfc0bdd2a9abee8d98341759ab1c1c2",
+    "url": "https://github.com/AlekseyYakovlev/AI-Advent-Challenge-9-v2/pull/4"
+  },
+  "large": {
+    "number": 5,
+    "branch": "review-test/large",
+    "head_sha": "6b7c24150e95864a7a0a54f44767099a5f851a32",
+    "url": "https://github.com/AlekseyYakovlev/AI-Advent-Challenge-9-v2/pull/5"
+  },
+  "clean": {
+    "number": 6,
+    "branch": "review-test/clean",
+    "head_sha": "4b596e08a003e9105766e9d1ee07ea43f548463d",
+    "url": "https://github.com/AlekseyYakovlev/AI-Advent-Challenge-9-v2/pull/6"
   }
 }
