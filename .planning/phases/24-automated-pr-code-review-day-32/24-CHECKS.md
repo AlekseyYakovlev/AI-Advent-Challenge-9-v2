@@ -48,9 +48,9 @@ Branch state checked before the answer was recorded: `Day31` = `origin/Day31` = 
 |------|--------|
 | 1. Private repository | skipped (decision is public-safe-config) |
 | 2. Day31 commits missing from Day32 | not needed (0 commits) |
-| 3. Actions settings: approval for all external contributors, read-only token | not done yet |
-| 4. App from Day32 checkout and LM Studio | not done yet |
-| 5. API key github-actions-review, MCP server github, review settings | not done yet |
-| 6. Secret PR_REVIEW_API_KEY | not done yet |
-| 7. Self-hosted runner with label pr-review | not done yet |
-| 8. Environment variables for the control script | not done yet |
+| 3. Actions settings: approval for all external contributors, read-only token | done (user) |
+| 4. App from Day32 checkout and LM Studio | done (user); /health 200 |
+| 5. API key github-actions-review, MCP server github, review settings | done (user); /api/v1/reviews/config: repo_configured true, docs_kb 2, LM Studio, model qwen/qwen3.5-9b; github_server_id null |
+| 6. Secret PR_REVIEW_API_KEY | done (user) |
+| 7. Self-hosted runner with label pr-review | pending user confirmation (Idle) |
+| 8. Environment variables for the control script | done: PR_REVIEW_API_KEY and GITHUB_PERSONAL_ACCESS_TOKEN set in session, DEEPSEEK_API_KEY set in .env |
