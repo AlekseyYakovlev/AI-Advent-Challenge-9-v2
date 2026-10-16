@@ -52,7 +52,7 @@ Branch state checked before the answer was recorded: `Day31` = `origin/Day31` = 
 | 4. App from Day32 checkout and LM Studio | done (user); /health 200 |
 | 5. API key github-actions-review, MCP server github, review settings | done (user); /api/v1/reviews/config: repo_configured true, docs_kb 2, LM Studio, model qwen/qwen3.5-9b; github_server_id null |
 | 6. Secret PR_REVIEW_API_KEY | done (user) |
-| 7. Self-hosted runner with label pr-review | pending user confirmation (Idle) |
+| 7. Self-hosted runner with label pr-review | done (user); Idle, served the smoke runs |
 | 8. Environment variables for the control script | done: PR_REVIEW_API_KEY and GITHUB_PERSONAL_ACCESS_TOKEN set in session, DEEPSEEK_API_KEY set in .env |
 
 ## 3. Smoke run on a real PR
@@ -60,3 +60,27 @@ Branch state checked before the answer was recorded: `Day31` = `origin/Day31` = 
 ### 3.1 Test suite before push (2026-10-17)
 
 `python -m pytest tests/ -q`: 3539 passed, 12 skipped, 1 failed (685 s). The failure is `tests/test_kb_api.py::test_create_happy_path` (knowledge-base API from an earlier phase, not touched by Phase 24); the same test passes when run alone (1 passed), so it is an order-dependent flake in the full run. Reported to the user before the push.
+
+### 3.2 Documentation base
+
+`python scripts/review_control.py prepare-docs` exit 0: 6 files sent, 7 in the base; `eval_out/day32/docs_kb_files.json` lists `CLAUDE.md`, `README.md`, `docs/API_SPEC.md`, `docs/ARCHITECTURE.md`, `docs/TESTING_GUIDE.md`, `docs/USER_GUIDE.md` and the existing file.
+
+### 3.3 Smoke PR (run `smoke`)
+
+- Push: `git push -u origin Day32` (normal push), pushed commit b4cfe1d.
+- PR #1 (branch `review-test/smoke`, head 6f670f0). Result `ok`.
+- Comment exists with the `<!-- ai-pr-review -->` marker, the three headings, `Коммит: 6f670f0` (equals PR head) and `Модель: LM Studio/qwen/qwen3.5-9b`.
+- Sources listed: 4 documentation sections, 6 code ranges (neither list empty).
+- Comment length: 1756 characters (A4: подтверждено, far below any limit).
+- A3: подтверждено — workflow `permissions` hold only `contents: read` and `pull-requests: write`, and the comment was posted.
+- A6: python was found on the runner (the job ran and posted the comment).
+- `workflow_conclusion` and `seconds` are `null` in `smoke.json` (not returned by the control script's collect); recorded as not captured.
+- The review found the planted `›` instead of `->` typo.
+
+### 3.4 Replacement check (D-14, run `smoke2`)
+
+After `rerun` the PR head is bb09d53. `smoke2.json` has the same `comment_id` 6225967607 as `smoke.json`, `Коммит: bb09d53`, the marker appears once. The comment was replaced, not duplicated.
+
+### 3.5 Fallbacks
+
+None needed (no 403, no size rejection, no job failure). `python -m pytest tests/test_pr_review_ci.py -q`: 34 passed.

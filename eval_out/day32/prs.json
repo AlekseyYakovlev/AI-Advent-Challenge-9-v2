@@ -1,0 +1,8 @@
+{
+  "smoke": {
+    "number": 1,
+    "branch": "review-test/smoke",
+    "head_sha": "bb09d5343f7d57896e872f7a2bfd0444c8772598",
+    "url": "https://github.com/AlekseyYakovlev/AI-Advent-Challenge-9-v2/pull/1"
+  }
+}
