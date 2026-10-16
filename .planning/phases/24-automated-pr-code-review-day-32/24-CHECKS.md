@@ -107,3 +107,21 @@ Provider/model in force: LM Studio / `qwen/qwen3.5-9b`. Base of every PR: `Day32
 | clean | #6 | ok | LM Studio/qwen/qwen3.5-9b | no | - |
 
 Duration per PR was not captured (`seconds` and `workflow_conclusion` are `null` in the records, as in the smoke run). The `large` PR was reviewed in 2 parts (per-file path confirmed). Review texts are saved in `eval_out/day32/local/`.
+
+### 4.3 Switch to DeepSeek (Task 2)
+
+User answer: "switched". `GET /api/v1/reviews/config` (read-only): `effective.provider_kind` = `openai`, provider DeepSeek (id 2), model `deepseek-flash`.
+
+### 4.4 DeepSeek run (run `deepseek`)
+
+Provider/model in force: DeepSeek / `deepseek-flash`. Re-run via `rerun --after-run local` (one new commit with unchanged tree per test branch).
+
+| id | PR | status | model line | comment_id same as local | new head_sha | parts note |
+|----|----|--------|------------|--------------------------|--------------|------------|
+| bug | #2 | ok | DeepSeek/deepseek-flash | yes | 530eef5 | no |
+| rules | #3 | ok | DeepSeek/deepseek-flash | yes | f399dd4 | no |
+| arch | #4 | ok | DeepSeek/deepseek-flash | yes | cd3c65f | no |
+| large | #5 | ok | DeepSeek/deepseek-flash | yes | 045bcc1 | Ревью выполнено по частям: 2. |
+| clean | #6 | ok | DeepSeek/deepseek-flash | yes | 3d37e0a | no |
+
+Duration per PR not captured (`seconds` null). No `.md` is byte-identical to the local run. Secret grep over `eval_out/day32`: nothing found.
