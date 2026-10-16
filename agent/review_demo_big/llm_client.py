@@ -1,0 +1,418 @@
+"""HTTP clients for OpenAI-compatible LLM APIs and LM Studio control."""
+
+import asyncio
+import json
+from collections.abc import AsyncGenerator
+from dataclasses import dataclass
+from typing import Any
+
+import httpx
+import tiktoken
+
+from agent.schemas import ModelLoadResult, ModelLoadStatus, normalize_base_url
+from shared.config import settings
+from shared.logger import get_logger
+
+logger = get_logger(__name__)
+
+_ENCODING = tiktoken.get_encoding("cl100k_base")
+
+LOAD_TIMEOUT = 120.0
+UNLOAD_TIMEOUT = 10.0
+EMERGENCY_UNLOAD_TIMEOUT = 5.0
+
+
+def count_tokens(text: str) -> int:
+    """Count tokens with cl100k_base; provider-independent."""
+    return len(_ENCODING.encode(text))
+
+
+@dataclass(frozen=True)
+class ChatCompletionResult:
+    """Content and metadata of a non-streaming chat completion."""
+
+    content: str | None
+    finish_reason: str | None
+    has_reasoning: bool
+    completion_tokens: int | None
+
+
+class LLMClient:
+    """OpenAI-compatible streaming chat client."""
+
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str = "",
+        timeout: float | None = None,
+    ) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._api_key = api_key
+        self._timeout = timeout or settings.LLM_TIMEOUT
+
+    def count_tokens(self, text: str) -> int:
+        """Count tokens using the cl100k_base encoding."""
+        return count_tokens(text)
+
+    async def _post_chat_completion(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """POST a non-streaming chat completion and return the decoded JSON body."""
+        url = f"{self._base_url}/v1/chat/completions"
+        headers = {"Content-Type": "application/json"}
+        if self._api_key:
+            headers["Authorization"] = f"Bearer {self._api_key}"
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            response = await client.post(url, json=payload, headers=headers)
+            response.raise_for_status()
+            return response.json()
+
+    async def complete_chat(
+        self,
+        messages: list[dict[str, str]],
+        model: str,
+        temperature: float = 0.0,
+        max_tokens: int = 1024,
+    ) -> str:
+        """Return a full non-streaming chat completion."""
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": False,
+        }
+        body = await self._post_chat_completion(payload)
+        return body["choices"][0]["message"]["content"]
+
+    async def complete_chat_detailed(
+        self,
+        messages: list[dict[str, str]],
+        model: str,
+        temperature: float = 0.0,
+        max_tokens: int = 1024,
+        extra_body: dict[str, Any] | None = None,
+    ) -> ChatCompletionResult:
+        """Non-streaming completion with optional extra body fields and response metadata."""
+        payload: dict[str, Any] = dict(extra_body or {})
+        payload.update(
+            {
+                "model": model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "stream": False,
+            }
+        )
+        body = await self._post_chat_completion(payload)
+        choices = body.get("choices")
+        choice = choices[0] if isinstance(choices, list) and choices else {}
+        message = choice.get("message") or {}
+        content = message.get("content")
+        usage = body.get("usage") or {}
+        tokens = usage.get("completion_tokens")
+        return ChatCompletionResult(
+            content=content if isinstance(content, str) else None,
+            finish_reason=choice.get("finish_reason"),
+            has_reasoning=bool(message.get("reasoning_content") or message.get("reasoning")),
+            completion_tokens=tokens if isinstance(tokens, int) else None,
+        )
+
+    async def stream_chat(
+        self,
+        messages: list[dict[str, str]],
+        model: str,
+        temperature: float,
+        max_tokens: int,
+        context_length: int | None = None,
+        tools: list[dict[str, Any]] | None = None,
+    ) -> AsyncGenerator[str | dict[str, Any], None]:
+        """Stream chat completion tokens via SSE.
+
+        Yields plain `str` content tokens when `tools` is falsy (the contract
+        every existing caller relies on). When `tools` is non-empty, yields
+        discriminated dicts instead: `{"type": "content", "content": ...}` and
+        `{"type": "tool_calls", "tool_calls": [...]}`, with fragmented
+        `function.arguments` deltas reassembled by index.
+        """
+        url = f"{self._base_url}/v1/chat/completions"
+        headers = {"Content-Type": "application/json"}
+        if self._api_key:
+            headers["Authorization"] = f"Bearer {self._api_key}"
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": True,
+        }
+        if tools:
+            payload["tools"] = tools
+        logger.debug(
+            "stream_chat_start",
+            context_length=context_length,
+            message_count=len(messages),
+        )
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                async with client.stream(
+                    "POST",
+                    url,
+                    json=payload,
+                    headers=headers,
+                ) as response:
+                    response.raise_for_status()
+                    try:
+                        if tools:
+                            async for event in self._parse_sse_stream_with_tools(response):
+                                yield event
+                        else:
+                            async for token in self._parse_sse_stream(response):
+                                yield token
+                    except asyncio.CancelledError:
+                        await response.aclose()
+                        raise
+        except httpx.TimeoutException as exc:
+            logger.warning("llm_stream_timeout", error=str(exc))
+            raise
+
+    async def _parse_sse_stream(
+        self,
+        response: httpx.Response,
+    ) -> AsyncGenerator[str, None]:
+        """Parse Server-Sent Events from a streaming chat response."""
+        async for line in response.aiter_lines():
+            if not line.startswith("data: "):
+                continue
+            data = line[6:].strip()
+            if data == "[DONE]":
+                break
+            chunk = json.loads(data)
+            delta = chunk.get("choices", [{}])[0].get("delta", {})
+            content = delta.get("content")
+            if content:
+                yield content
+
+    async def _parse_sse_stream_with_tools(
+        self,
+        response: httpx.Response,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """Parse SSE, accumulating tool_calls deltas by index across chunks."""
+        tool_calls_acc: dict[int, dict[str, Any]] = {}
+        tool_calls_emitted: bool = False
+        async for line in response.aiter_lines():
+            if not line.startswith("data: "):
+                continue
+            data = line[6:].strip()
+            if data == "[DONE]":
+                break
+            chunk = json.loads(data)
+            choice = chunk.get("choices", [{}])[0]
+            delta = choice.get("delta", {})
+            content = delta.get("content")
+            if content:
+                yield {"type": "content", "content": content}
+            for tc_delta in delta.get("tool_calls", []) or []:
+                idx = tc_delta["index"]
+                acc = tool_calls_acc.setdefault(
+                    idx,
+                    {"id": None, "type": "function", "function": {"name": None, "arguments": ""}},
+                )
+                if tc_delta.get("id"):
+                    acc["id"] = tc_delta["id"]
+                if fn := tc_delta.get("function"):
+                    if fn.get("name"):
+                        acc["function"]["name"] = fn["name"]
+                    if fn.get("arguments"):
+                        acc["function"]["arguments"] += fn["arguments"]
+            if choice.get("finish_reason") == "tool_calls":
+                tool_calls_emitted = True
+                yield {"type": "tool_calls", "tool_calls": list(tool_calls_acc.values())}
+        # Some local models end a tool-call turn with finish_reason "stop" or just [DONE];
+        # the accumulated deltas would otherwise be silently lost.
+        if tool_calls_acc and not tool_calls_emitted:
+            logger.info("tool_calls_flushed_at_stream_end", count=len(tool_calls_acc))
+            yield {"type": "tool_calls", "tool_calls": list(tool_calls_acc.values())}
+
+
+class LMStudioClient:
+    """LM Studio control and OpenAI-compatible model listing."""
+
+    def __init__(self, base_url: str | None = None) -> None:
+        self._base_url = (base_url or settings.LM_STUDIO_BASE_URL).rstrip("/")
+        self._openai_base = f"{self._base_url}/v1"
+        self._control_base = self._base_url
+        self._model_switch_lock = asyncio.Lock()
+        self._current_loaded_model: str | None = None
+        self._instance_ids: dict[str, str] = {}
+
+    @property
+    def model_switch_lock(self) -> asyncio.Lock:
+        """Lock serializing model load/unload requests against this LM Studio host."""
+        return self._model_switch_lock
+
+    async def list_models(self) -> list[dict[str, Any]]:
+        """Return available models from the OpenAI-compatible endpoint."""
+        url = f"{self._openai_base}/models"
+        async with httpx.AsyncClient(timeout=settings.LLM_TIMEOUT) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            payload = response.json()
+            return payload.get("data", [])
+
+    async def is_model_loaded(self, model_id: str) -> bool:
+        """Check whether the given model is currently loaded."""
+        models = await self.list_models()
+        for model in models:
+            if model.get("id") == model_id:
+                return bool(model.get("loaded", False))
+        return False
+
+    async def load_model(
+        self,
+        model_id: str,
+        gpu_offload: int,
+        context_length: int | None,
+    ) -> ModelLoadResult:
+        """Load a model via the LM Studio control API."""
+        async with self._model_switch_lock:
+            return await self._load_model_locked(
+                model_id,
+                gpu_offload,
+                context_length,
+            )
+
+    async def _load_model_locked(
+        self,
+        model_id: str,
+        gpu_offload: int,
+        context_length: int | None,
+    ) -> ModelLoadResult:
+        """Perform model load while holding the switch lock."""
+        if (
+            self._current_loaded_model is not None
+            and self._current_loaded_model != model_id
+        ):
+            await self._unload_model_http(self._current_loaded_model)
+
+        url = f"{self._control_base}/api/v1/models/load"
+        body: dict[str, Any] = {"model": model_id}
+        if gpu_offload or context_length is not None:
+            logger.info(
+                "lm_studio_load_params_ignored",
+                model_id=model_id,
+                gpu_offload=gpu_offload,
+                context_length=context_length,
+            )
+
+        try:
+            async with httpx.AsyncClient(timeout=LOAD_TIMEOUT) as client:
+                response = await client.post(url, json=body)
+                response.raise_for_status()
+                response_body = response.json()
+        except httpx.TimeoutException:
+            logger.error("lm_studio_load_timeout", model_id=model_id)
+            await self._emergency_unload(model_id)
+            return ModelLoadResult(
+                status=ModelLoadStatus.ERROR,
+                message=f"Model load timed out for {model_id}",
+                model_id=model_id,
+            )
+        except httpx.ConnectError:
+            logger.warning("lm_studio_unreachable")
+            return ModelLoadResult(
+                status=ModelLoadStatus.UNREACHABLE,
+                message="LM Studio is not running",
+                model_id=model_id,
+            )
+        except (httpx.HTTPError, json.JSONDecodeError) as exc:
+            logger.error("lm_studio_load_error", model_id=model_id, error=str(exc))
+            return ModelLoadResult(
+                status=ModelLoadStatus.ERROR,
+                message=str(exc),
+                model_id=model_id,
+            )
+
+        instance_id = response_body.get("instance_id")
+        if instance_id is not None:
+            self._instance_ids[model_id] = instance_id
+        self._current_loaded_model = model_id
+        return ModelLoadResult(
+            status=ModelLoadStatus.LOADED,
+            message=f"Model {model_id} loaded successfully",
+            model_id=model_id,
+        )
+
+    async def unload_model(self, model_id: str) -> ModelLoadResult:
+        """Unload a model via the LM Studio control API."""
+        async with self._model_switch_lock:
+            return await self._unload_model_locked(model_id)
+
+    async def _unload_model_locked(self, model_id: str) -> ModelLoadResult:
+        """Perform model unload while holding the switch lock."""
+        try:
+            await self._unload_model_http(model_id)
+        except httpx.ConnectError:
+            logger.warning("lm_studio_unreachable")
+            return ModelLoadResult(
+                status=ModelLoadStatus.UNREACHABLE,
+                message="LM Studio is not running",
+                model_id=model_id,
+            )
+        except httpx.HTTPError as exc:
+            logger.error("lm_studio_unload_error", model_id=model_id, error=str(exc))
+            return ModelLoadResult(
+                status=ModelLoadStatus.ERROR,
+                message=str(exc),
+                model_id=model_id,
+            )
+
+        if self._current_loaded_model == model_id:
+            self._current_loaded_model = None
+        self._instance_ids.pop(model_id, None)
+        return ModelLoadResult(
+            status=ModelLoadStatus.IDLE,
+            message=f"Model {model_id} unloaded",
+            model_id=model_id,
+        )
+
+    async def _unload_model_http(self, model_id: str) -> None:
+        """Send an unload request to LM Studio."""
+        url = f"{self._control_base}/api/v1/models/unload"
+        instance_id = self._instance_ids.get(model_id, model_id)
+        async with httpx.AsyncClient(timeout=UNLOAD_TIMEOUT) as client:
+            response = await client.post(url, json={"instance_id": instance_id})
+            response.raise_for_status()
+
+    async def _emergency_unload(self, model_id: str) -> None:
+        """Force-unload a model with a hard 5-second timeout."""
+        try:
+            await asyncio.wait_for(
+                self._unload_model_http(model_id),
+                timeout=EMERGENCY_UNLOAD_TIMEOUT,
+            )
+        except (asyncio.TimeoutError, httpx.HTTPError) as exc:
+            logger.error(
+                "lm_studio_emergency_unload_failed",
+                model_id=model_id,
+                error=str(exc),
+            )
+        if self._current_loaded_model == model_id:
+            self._current_loaded_model = None
+        self._instance_ids.pop(model_id, None)
+
+
+# One instance per LM Studio host so all provider rows and users share one model-switch lock.
+_lm_studio_clients: dict[str, LMStudioClient] = {}
+
+
+def get_lm_studio_client(base_url: str) -> LMStudioClient:
+    """Return the shared LMStudioClient for a normalized base URL, creating it on first use."""
+    normalized = normalize_base_url(base_url)
+    client = _lm_studio_clients.get(normalized)
+    if client is None:
+        client = LMStudioClient(base_url=normalized)
+        _lm_studio_clients[normalized] = client
+    return client
+
+
+# Token-counting alias only: every LLM call resolves a per-provider client via agent.providers.
+llm_client = LLMClient(base_url=settings.LM_STUDIO_BASE_URL)
