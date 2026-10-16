@@ -54,3 +54,9 @@ Branch state checked before the answer was recorded: `Day31` = `origin/Day31` = 
 | 6. Secret PR_REVIEW_API_KEY | done (user) |
 | 7. Self-hosted runner with label pr-review | pending user confirmation (Idle) |
 | 8. Environment variables for the control script | done: PR_REVIEW_API_KEY and GITHUB_PERSONAL_ACCESS_TOKEN set in session, DEEPSEEK_API_KEY set in .env |
+
+## 3. Smoke run on a real PR
+
+### 3.1 Test suite before push (2026-10-17)
+
+`python -m pytest tests/ -q`: 3539 passed, 12 skipped, 1 failed (685 s). The failure is `tests/test_kb_api.py::test_create_happy_path` (knowledge-base API from an earlier phase, not touched by Phase 24); the same test passes when run alone (1 passed), so it is an order-dependent flake in the full run. Reported to the user before the push.
