@@ -125,3 +125,38 @@ Provider/model in force: DeepSeek / `deepseek-flash`. Re-run via `rerun --after-
 | clean | #6 | ok | DeepSeek/deepseek-flash | yes | 3d37e0a | no |
 
 Duration per PR not captured (`seconds` null). No `.md` is byte-identical to the local run. Secret grep over `eval_out/day32`: nothing found.
+
+## 5. Judge
+
+Date: 2026-10-17
+
+### 5.1 Preflight
+
+- `python scripts/review_judge.py --check` (default model `deepseek-chat`): `check: model deepseek-chat is not available; available: ['deepseek-flash', 'deepseek-v4-pro']`, exit code 2. The default judge model id no longer exists on the DeepSeek API, so the model was passed explicitly with `--model`.
+- `python scripts/review_judge.py --check --model deepseek-v4-pro`: `check: ok model=deepseek-v4-pro`, exit 0.
+- `python scripts/review_judge.py --check --model deepseek-flash`: `check: ok model=deepseek-flash`, exit 0.
+
+### 5.2 Judging passes
+
+- Pass 1 with `deepseek-v4-pro`: 9 of 10 records `ошибка разбора`, pass 2 with `deepseek-flash`: 6 of 10 `ошибка разбора`. Cause found with a one-off debug call (not kept): with `JUDGE_MAX_TOKENS = 900` the reasoning DeepSeek models spend the whole budget on reasoning and return an empty reply, so the parser had nothing to parse. This is a defect of the judge script, not a verdict of the judge.
+- Fix: `JUDGE_MAX_TOKENS` in `scripts/review_judge.py` raised from 900 to 8000. The whole judging pass was then repeated once for both runs (all ten PR records, not selected ones), judge model `deepseek-flash`. Result: all ten records `judge_status: ok`. The earlier passes were overwritten; no record was re-judged to improve a verdict.
+- The judge and the author of the DeepSeek run are the same provider and even the same model id (`deepseek-flash`); the sentence about it is in `tables.md`.
+
+### 5.3 Spot-check (reading the review texts, verdicts not changed)
+
+| Run | PR | Key | Judge | Executor reading |
+|-----|----|-----|-------|------------------|
+| local | bug | B1 | найден | agree (end = start + page_size - 1 named, fix given) |
+| local | arch | A2 | найден | agree (multiprocessing.Process named as wrong for the async server) |
+| local | bug | B3 | не найден | agree (no mention of `_chunk_rows` arguments) |
+| local | arch | A1 | не найден | agree (no mention of the `ui` -> `agent.state` import) |
+| deepseek | bug | B3 | найден | agree (swapped `_chunk_rows` arguments named) |
+| deepseek | arch | A1 | найден | agree (`ui` imports `agent.state`) |
+| deepseek | arch | A2 | не найден | agree with reservation: `multiprocessing.Process` is mentioned, but only for the garbage-collection and join problem, not as a project-forbidden mechanism |
+| deepseek | large | L1 | не найден | agree (nothing about the removed disabled-provider check) |
+
+No disagreement with the judge on the sampled items. Note on the local B2: the review text puts the empty-list division in the recommendations section with a wrong explanation (`len/len` gives 1.0); the judge counted it as found, which is generous.
+
+### 5.4 Observation on false remarks
+
+Most false remarks of the DeepSeek run (and several of the local run) claim a syntax error from the symbols `-›`, `‹`, `›` in the changed code. The code has `->`, `<`, `>`. `agent/review_prompts.py` (line 65) replaces `<` and `>` with `‹` and `›` in every text put into the prompt, so the models saw the substituted symbols. This is a property of the pipeline prompt-injection guard and is shown in the report; it is not changed by this plan.

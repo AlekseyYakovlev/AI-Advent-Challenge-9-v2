@@ -43,7 +43,7 @@ from scripts.rag_judge import (  # noqa: E402
 DEFAULT_MANIFEST: Path = REPO_ROOT / "tests" / "fixtures" / "review" / "control_set.json"
 DEFAULT_OUT: Path = REPO_ROOT / "eval_out" / "day32"
 DEFAULT_RUNS: tuple[str, ...] = ("local", "deepseek")
-JUDGE_MAX_TOKENS: int = 900
+JUDGE_MAX_TOKENS: int = 8000
 PARSE_ATTEMPTS: int = 2
 
 STATUS_OK: str = "ok"
