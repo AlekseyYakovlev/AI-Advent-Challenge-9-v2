@@ -59,7 +59,7 @@ Requirements for milestone v5.0. Each maps to exactly one roadmap phase.
 - [ ] **REV-04**: A code knowledge base is built from the files tracked by git at the base branch tip and refreshed incrementally before each review and on demand.
 - [ ] **REV-05**: Retrieval runs once per base with separate quotas; the model writes a Russian review; oversized PRs go through the per-file path plus a merge call.
 - [ ] **REV-06**: Per-user review settings (repository path, documentation base, provider, model) with a Settings section.
-- [ ] **REV-07**: A frozen set of 4-5 real PRs, two model runs, a DeepSeek judge and `Day32_report.md`. The GitHub REST calls in `scripts/pr_review_ci.py` (PR comment) and `scripts/review_control.py` (opening, reading and closing the test PRs) are CI and verification tooling outside the app; the app itself has no GitHub API client and reads GitHub only through `github-mcp-server`, so the Out of Scope row "Own GitHub API client" is unchanged.
+- [x] **REV-07**: A frozen set of 4-5 real PRs, two model runs, a DeepSeek judge and `Day32_report.md`. The GitHub REST calls in `scripts/pr_review_ci.py` (PR comment) and `scripts/review_control.py` (opening, reading and closing the test PRs) are CI and verification tooling outside the app; the app itself has no GitHub API client and reads GitHub only through `github-mcp-server`, so the Out of Scope row "Own GitHub API client" is unchanged.
 - [ ] **REV-08**: pytest coverage and documentation, including the safe configuration of the self-hosted runner.
 
 ## Future Requirements
@@ -124,7 +124,7 @@ Deferred to later days of Week 7. Tracked but not in the current roadmap.
 | REV-04 | Phase 24 | Pending |
 | REV-05 | Phase 24 | Pending |
 | REV-06 | Phase 24 | Pending |
-| REV-07 | Phase 24 | Pending |
+| REV-07 | Phase 24 | Complete |
 | REV-08 | Phase 24 | Pending |
 
 **Coverage:**
