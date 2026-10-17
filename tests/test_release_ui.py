@@ -110,7 +110,7 @@ def test_plan_switch_case() -> None:
     case: str = _case_body("release_plan")
     _needles(
         case,
-        ["setStreaming(false)", "removeLoadingBubble()", "unblockInput()", "buildReleasePlanCard"],
+        ["setStreaming(false)", "removeLoadingBubble()", "unblockInput()", "appendReleasePlanCard"],
         "case release_plan",
     )
 
