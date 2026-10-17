@@ -1,7 +1,8 @@
 ---
 phase: 27
 slug: ai-release-pipeline-day-35
-status: draft
+status: approved
+reviewed_at: 2026-10-17
 shadcn_initialized: false
 preset: none
 created: 2026-10-17
@@ -42,7 +43,7 @@ Sources: 27-CONTEXT.md (D-02, D-03, D-05, D-07, D-09, D-11, D-13, D-14, D-19), `
    **Visual hierarchy and scan order.** Focal point: the facts block plus the version input at the top of the card (what is being released and as which version). The accent «Подтвердить релиз» button is the action anchor at the bottom, the only filled accent element in the card. Intended scan order: header status, facts, warnings, version/title form, rationale, changelog draft (collapsed), write steps, action row.
 3. **Version/title override.** Edits are local to the card until confirm; confirm sends the current input values. Changing the version re-validates immediately on `input` (format `^v\d+\.\d+$`, greater than last tag, not taken) using the facts delivered with the plan; the server re-validates and is authoritative. While invalid, the confirm button is disabled and the message is shown (`aria-describedby` links input and message).
 4. **Result state (same card, updated in place).** After confirm the form fields become read-only text, the confirm button is replaced by the per-step report. The step list rows are filled with outcomes (Step Status). Below the list: link to the draft Release (`<a target="_blank" rel="noopener noreferrer">`, `text-indigo-400 underline`) when step 4 succeeded; the tag name and commit SHA (short, `font-mono`).
-5. **Partial failure (D-05).** If steps 1-3 succeeded and step 4 failed: card shows a red-bordered failure block with the English tool reason as returned (`text-red-300`, `font-mono`, `whitespace-pre-wrap break-words`), the ready release text in a collapsed `<details>` «Текст релиза для ручной публикации» with a «Скопировать» button, and the manual instruction line. The confirm button returns with label «Повторить оставшиеся шаги»; the already-done rows stay marked done and are skipped.
+5. **Partial failure (D-05).** If steps 1-3 succeeded and step 4 failed: card shows a red-bordered failure block with the English tool reason as returned (`text-red-300`, `font-mono`, `whitespace-pre-wrap break-words`), the ready release text in a collapsed `<details>` «Текст релиза для ручной публикации» with a «Скопировать текст релиза» button, and the manual instruction line. The confirm button returns with label «Повторить оставшиеся шаги»; the already-done rows stay marked done and are skipped.
 6. **Tool-call cards for writes.** Each write MCP call renders as an ordinary tool-call card via `appendToolCallCard` (D-03), in call order, between the plan card and the final result update. No change to the card.
 7. **`/release confirm` typed in chat** produces the same state transitions on the latest plan card as the button (card updates in place). If there is no pending plan: ephemeral notice «Нет плана релиза. Сначала введите /release.» (help-notice style).
 8. **Persistence.** The plan card is a command-turn notice like `/help`: it is rendered live from the WS event; it is not stored as a chat message. A small footnote `text-xs text-slate-500` «План хранится до подтверждения или перезапуска агента.» replaces the help notice's «Это сообщение не сохраняется в чате.» Reloading the chat does not restore the card (the user re-runs `/release`). The tool-call cards reload through the existing history path as today.
@@ -178,11 +179,11 @@ CDN libraries stay as-is (Tailwind, Marked.js, DOMPurify 3.1.6). No new library.
 
 ## Checker Sign-Off
 
-- [ ] Dimension 1 Copywriting: PASS
-- [ ] Dimension 2 Visuals: PASS
-- [ ] Dimension 3 Color: PASS
-- [ ] Dimension 4 Typography: PASS
-- [ ] Dimension 5 Spacing: PASS
-- [ ] Dimension 6 Registry Safety: PASS
+- [x] Dimension 1 Copywriting: PASS
+- [x] Dimension 2 Visuals: PASS
+- [x] Dimension 3 Color: PASS
+- [x] Dimension 4 Typography: PASS
+- [x] Dimension 5 Spacing: PASS
+- [x] Dimension 6 Registry Safety: PASS
 
 **Approval:** pending
