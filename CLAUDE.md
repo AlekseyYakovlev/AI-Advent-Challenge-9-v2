@@ -8,8 +8,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Run the app (starts UI on :8000, which auto-spawns the Agent subprocess on :8001)
 python run.py
 
-# Run the full test suite
+# Run the full test suite (parallel by default via pytest.ini: -n 6 --dist loadfile, ~4 min vs ~12 sequential)
 pytest tests/ -v
+
+# Single test / debugging: skip xdist workers (faster startup, readable output)
+pytest tests/test_x.py -n0
 
 # Run a single test file / test
 pytest tests/test_context_engine.py -v

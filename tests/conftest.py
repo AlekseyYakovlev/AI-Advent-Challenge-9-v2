@@ -11,7 +11,10 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from starlette.testclient import TestClient
 
-os.environ.setdefault("DB_PATH", "test_app.db")
+# One DB (and KB storage dir, derived from it) per test process, so pytest-xdist workers
+# never delete each other's files. Assigned unconditionally: the xdist controller imports
+# this module too, and workers inherit its environment, so setdefault would share one DB.
+os.environ["DB_PATH"] = f"test_app_{os.getpid()}.db"
 os.environ.setdefault("SCHEDULER_ENABLED", "false")
 # Never let a developer's real DeepSeek key (from .env) seed a provider or leave the machine.
 os.environ["DEEPSEEK_API_KEY"] = ""
