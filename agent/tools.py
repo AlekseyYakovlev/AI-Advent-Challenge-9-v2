@@ -322,6 +322,15 @@ async def _dispatch_mcp_call(
     }
 
 
+async def dispatch_mcp_call(
+    binding: McpToolBinding,
+    tool_call_id: str | None,
+    raw_arguments: str,
+) -> dict[str, Any]:
+    """Run one MCP call from application code with the same shape, timeout and cap as a model tool call."""
+    return await _dispatch_mcp_call(binding, tool_call_id, raw_arguments)
+
+
 @register_tool(
     "save_working_memory",
     SaveWorkingMemoryArgs,
