@@ -375,27 +375,32 @@ candidates = [f"v{last[0]+1}.0", f"v{last[0]}.{last[1]+1}"]
 | A6 | `MCP_TOOL_CALL_TIMEOUT` (30 s per mcp_tools) is too short for push over SSH on slow links | Pattern 2 | Push shows a timeout error although it succeeded; mitigate by direct session call with 120 s |
 | A7 | User will create the scratch GitHub repository and token for the sandbox (D-15) | Environment | Scenarios 1-2 cannot be run against GitHub; record as not run |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **D-04 cannot be met literally (no create-release tool).**
    - Known: verified against v2.0.2, `--toolsets=all`, 91 tools.
    - Unclear: user acceptance of the own REST tool in `project_git.py` (adds network + token to that file, which today is local-only and self-contained).
    - Recommendation: take the own-tool route behind `--allow-release`; call it out in PLAN objective, docs and `Day35_report.md`. Alternative: record Release as non-working by design (weaker demo).
+   - **RESOLVED:** D-20 — own narrow `github_create_draft_release` tool in `project_git.py` behind `--allow-release` (user-confirmed); implemented in 27-01 Task 3, deviation documented in 27-07 and `Day35_report.md` (27-08).
 
 2. **Does an untracked file count as "dirty"?**
    - Known: D-09 says blocked on dirty tree; current tree has modified tracked files and an untracked file.
    - Unclear: untracked-only handling.
    - Recommendation: block on staged/unstaged tracked changes and on untracked files that are not ignored (strict, matches D-09); the message lists the paths. Revisit only if the user complains.
+   - **RESOLVED:** D-21 — strict: untracked (non-ignored) files block the release and the message lists the paths (27-01 `release_context.dirty`, 27-02 `dirty_paths`, enforced in 27-03/27-04).
 
 3. **Execution order and `ws.py` conflicts with Phases 25/26.**
    - Known: Phase 25 (executing, `Day33`) edits `ws.py`/`command_turn`; Phase 26 plans exist but nothing is implemented (no `--allow-write` in the code; no read/search tools). Phase 27 depends on 26 per ROADMAP, but nothing in the recommended design needs Phase 26 code except the tool-card diff view and the flag convention.
    - Recommendation: implement Phase 27 server tools in their own `register_release_tools()` and flag, so they do not depend on 26; plan `Day35` from whatever branch holds Phases 25/26 once merged (or from `Day33` plus a merge of `Day34`); verify `parse_args` still passes both flags.
+   - **RESOLVED:** separate `--allow-release` flag and `register_release_tools()` (27-01), independent of Phase 26; a thin `ws.py` hook (27-06). Executed on branch `Day35` created from `Day33` (holds the Phase 25 `ws.py` hooks) by the execute-phase orchestrator before wave 1.
 
 4. **How is the UI "Пересоздать план"/button wired to the server?**
    - Recommendation: a typed WS control frame `{"type": "release_confirm", "version": "...", "title": "..."}` handled in `ws_chat` before `MessagePayload.model_validate` (same place as `is_help_command`), plus the typed `/release confirm [version] [title]` equivalent; both call one handler.
+   - **RESOLVED:** `release_confirm` WS frame plus typed `/release confirm` through one handler (frame contract in 27-02, wiring in 27-06, button in 27-05).
 
 5. **Which repository path does the pipeline use?**
    - The `release-git` MCP server's `--root` defines it (CONTEXT D-10: no new settings). The agent finds the server by name; default name `release-git`, fallback error "Сервер release-git не настроен" with docs pointer. The scratch/e2e copy simply points `--root` at the isolated clone.
+   - **RESOLVED:** per D-10, the `release-git` server's `--root` defines the repository (no new settings). Control runs use a scratch GitHub repo and a token the user supplies at the 27-08 checkpoint; without them the runs are recorded as «не запускалось» (D-19). Related: the minor-version tag message format (Assumption A1) is fixed explicitly in 27-02 `tag_message` and reported in `Day35_report.md` (27-08).
 
 ## Environment Availability
 
