@@ -2,11 +2,31 @@
 
 ## 1. GitHub MCP live check (A1, A2, A7)
 
-Status: не запускалось
+Status: passed
 
-Date: 2026-10-13
+Date: 2026-10-17 (re-run during verify-work)
 
-Reason: the environment variable `GITHUB_PERSONAL_ACCESS_TOKEN` is not set in the executor session (the binary
+Binary `C:\Users\Aleksey\go\bin\github-mcp-server.exe` version 2.0.2, args `stdio --read-only
+--toolsets=repos,pull_requests`, read-only token from `GITHUB_PERSONAL_ACCESS_TOKEN` in `.env`.
+Target: control PR #5 (`review-test/large`, closed, 12 changed files).
+
+| Call | isError | items | chars | keys |
+|------|---------|-------|-------|------|
+| `list_pull_requests` (state all, perPage 5) | false | 5 | 4226 | base, body, closed_at, created_at, draft, head, html_url, merged, number, state, title, updated_at, user |
+| `pull_request_read` `get` (#5) | false | - | 922 | additions, base, body, changed_files, closed_at, comments, commits, created_at, draft, head (ref, repo, sha), html_url, mergeable_state, merged, number, state, title, updated_at, user |
+| `pull_request_read` `get_files` (page 1, perPage 100) | false | 12 | 231481 | additions, changes, filename, patch, status |
+| `pull_request_read` `get_diff` | false | - | 221860 | one text item starting with `diff --git` |
+| `pull_request_read` `get` for 999999 (not found) | true | - | 132 | text `failed to get pull request: GET .../pulls/999999: 404 ...` |
+
+Confirmed: A1 (field names of `get` and `get_files` match the parser; `changed_files` equals the `get_files`
+count), A2 (a missing PR is `isError` with `404` in the text), A7 (a diff of 221 860 characters arrives complete,
+far over the 20 000-character tool-result cut). No `previous_filename` in this PR (no renames); the parser treats
+it as optional. Real-binary test `tests/test_review_github.py::test_real_binary_reads_a_pull_request` with
+`GITHUB_REVIEW_TEST_PR=5`: 1 passed.
+
+### Earlier record (2026-10-13, superseded)
+
+Status then: не запускалось. Reason: the environment variable `GITHUB_PERSONAL_ACCESS_TOKEN` is not set in the executor session (the binary
 `C:\Users\Aleksey\go\bin\github-mcp-server.exe` exists, version not queried). The token is taken only from the
 environment and is never read from the user's running app database, so no live call was made. No process was
 started, so none is left running. Nothing below is confirmed.

@@ -10,10 +10,10 @@
 
 ## Phases
 
-- [ ] **Phase 21: Project docs in RAG (Day 31)** - README plus folder upload, accumulated selections and addition to an existing knowledge base
-- [ ] **Phase 22: Project MCP servers (Day 31)** - Own read-only git MCP server and the official GitHub server connected read-only
-- [ ] **Phase 23: /help command, verification and report (Day 31)** - `/help` in the chat and over HTTP, tests, end-to-end script and `Day31_report.md`
-- [ ] **Phase 24: Automated PR code review (Day 32)** - Pipeline on every Pull Request: diff plus changed files, RAG over docs and code, review text
+- [x] **Phase 21: Project docs in RAG (Day 31)** - README plus folder upload, accumulated selections and addition to an existing knowledge base
+- [x] **Phase 22: Project MCP servers (Day 31)** - Own read-only git MCP server and the official GitHub server connected read-only
+- [x] **Phase 23: /help command, verification and report (Day 31)** - `/help` in the chat and over HTTP, tests, end-to-end script and `Day31_report.md`
+- [x] **Phase 24: Automated PR code review (Day 32)** - Pipeline on every Pull Request: diff plus changed files, RAG over docs and code, review text
 
 ### Phase 21: Project docs in RAG (Day 31)
 
@@ -212,6 +212,7 @@ Full details: [milestones/v4.0-ROADMAP.md](milestones/v4.0-ROADMAP.md)
 | 21. Project docs in RAG (Day 31) | v5.0 | 7/7 | Complete   | 2026-10-13 |
 | 22. Project MCP servers (Day 31) | v5.0 | 6/6 | Complete   | 2026-10-13 |
 | 23. /help command, verification and report (Day 31) | v5.0 | 8/8 | Complete    | 2026-10-13 |
+| 24. Automated PR code review (Day 32) | v5.0 | 14/14 | Complete    | 2026-10-17 |
 
 ## Backlog
 
