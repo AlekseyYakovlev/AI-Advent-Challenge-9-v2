@@ -393,7 +393,7 @@ Plans:
 **Goal:** An assistant that works with project files on its own: given a goal (not "open file X"), it reads, searches across several files, analyses them and creates or changes files, with changes saved or shown as a diff and the run reproducible. Scenarios: find every usage of a component/API, and generate a new file (README / ADR / changelog). Branch `Day34`; deliverable video + code.
 **Requirements**: PFILE-01, PFILE-02, PFILE-03, PFILE-04, PFILE-05, PFILE-06, PFILE-07, PFILE-08, PFILE-09, PFILE-10
 **Depends on:** Phase 22 (project git MCP server); independent of Phase 25
-**Plans:** 8/9 plans complete
+**Plans:** 9/9 plans complete
 
 Plans:
 **Wave 1**
@@ -421,7 +421,7 @@ Plans:
 
 **Gap closure**
 
-- [ ] 26-09-PLAN.md — Gap closure CR-01/WR-01: realpath containment for find_usages/search_text, read-side .env*/.git deny, symlink leak tests (real + simulated)
+- [x] 26-09-PLAN.md — Gap closure CR-01/WR-01: realpath containment for find_usages/search_text, read-side .env*/.git deny, symlink leak tests (real + simulated)
 
 ### Phase 27: AI release pipeline (Day 35)
 

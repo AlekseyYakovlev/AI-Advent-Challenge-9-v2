@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v5.0
 milestone_name: "Week 7: Pipeline"
 status: executing
-last_updated: "2026-10-17T14:51:08.691Z"
+last_updated: "2026-10-17T15:03:46.783Z"
 last_activity: 2026-10-17 -- Phase 26 execution started
 progress:
   total_phases: 15
-  completed_phases: 5
+  completed_phases: 6
   total_plans: 63
-  completed_plans: 54
-  percent: 33
+  completed_plans: 55
+  percent: 40
 ---
 
 # Project State
@@ -63,6 +63,7 @@ No phases executed yet — metrics will populate after Phase 1 completes.
 - [Phase 23]: Phase 23-05: /help default threshold stays 0.45 (docs 0.56-0.67, outside 0.39); combined prompt works on qwen/qwen3.5-9b and deepseek-flash
 - [Phase 25]: help_command injects its own build_mcp_toolset into command_turn.select_tools to keep the monkeypatch seam
 - [Phase 25]: 25-05: direct support lookup never raises; server resolved by fixed name support among caller's rows
+- [Phase 26]: [26-09] Read path shares _is_protected_path with write gate; listed files resolved via resolve_inside_root
 
 ### Roadmap Evolution
 
@@ -134,6 +135,7 @@ None.
 | Phase 25 P07 | 25min | 2 tasks | 6 files |
 | Phase 25 P11 | 25min | 2 tasks | 6 files |
 | Phase 26 P03 | 15min | 2 tasks | 2 files |
+| Phase 26 P09 | 40min | 3 tasks | 6 files |
 
 ## Deferred Items
 
@@ -163,7 +165,7 @@ Items acknowledged and deferred at milestone close on 2026-10-12:
 
 ## Session Continuity
 
-**Last session:** 2026-10-17T14:35:12.852Z
+**Last session:** 2026-10-17T15:03:43.151Z
 **Next action:** Phase 21 is planned (7 plans, 5 waves). Run `/bm:execute-phase 21` on branch Day31.
 
 ---
