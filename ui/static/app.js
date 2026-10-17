@@ -183,8 +183,13 @@ function renderMessages() {
         const content = document.createElement('div');
         content.className = 'message-content prose prose-invert prose-sm max-w-none';
         content.innerHTML = isUser ? DOMPurify.sanitize(msg.content) : renderMarkdown(msg.content);
-        const helpInfo = !isUser && msg.rag_sources ? msg.rag_sources.help : null;
-        if (helpInfo) bubble.appendChild(buildHelpLabel(helpInfo));
+        const supportInfo = !isUser && msg.rag_sources ? msg.rag_sources.support : null;
+        const helpInfo = !isUser && msg.rag_sources ? (msg.rag_sources.help || supportInfo) : null;
+        if (helpInfo) {
+            bubble.appendChild(supportInfo
+                ? buildHelpLabel(helpInfo, String(helpInfo.label || 'Поддержка'))
+                : buildHelpLabel(helpInfo));
+        }
         bubble.appendChild(content);
         if (msg.token_count && msg.token_count > 0) {
             const tokenInfo = document.createElement('div');
@@ -206,7 +211,7 @@ function renderMessages() {
         }
         container.appendChild(wrapper);
         const rag = msg.rag_sources;
-        if (helpInfo) buildHelpNotes(rag).forEach((note) => container.appendChild(wrapToolCard(note)));
+        if (helpInfo) buildHelpNotes(rag, helpInfo).forEach((note) => container.appendChild(wrapToolCard(note)));
         const quotesBlock = isUser ? null : buildRagQuotesBlock(rag);
         if (quotesBlock) container.appendChild(wrapToolCard(quotesBlock));
         if (!isUser && rag && rag.mode === 'rag' && !rag.warning
@@ -230,8 +235,8 @@ function renderMessages() {
     renderStatsPanel();
 }
 
-function buildHelpLabel(help) {
-    const text = 'Справка по проекту · ' + String(help.kb_name || '');
+function buildHelpLabel(help, labelText) {
+    const text = labelText || ('Справка по проекту · ' + String(help.kb_name || ''));
     const holder = mcpEl('div', 'mb-1');
     const chip = mcpEl('span', RAG_CHIP_NEUTRAL + ' text-xs inline-block truncate max-w-[16rem]', text);
     chip.title = text;
@@ -239,9 +244,10 @@ function buildHelpLabel(help) {
     return holder;
 }
 
-function buildHelpNotes(rag) {
+function buildHelpNotes(rag, info) {
     const notes = [];
-    const warnings = Array.isArray(rag.help.warnings) ? rag.help.warnings : [];
+    const source = info || rag.help || rag.support;
+    const warnings = Array.isArray(source.warnings) ? source.warnings : [];
     warnings.forEach((item) => {
         const line = mcpEl('div', 'text-xs text-yellow-500 max-w-[75%] self-start', String(item.text || ''));
         line.setAttribute('role', 'status');
@@ -253,10 +259,10 @@ function buildHelpNotes(rag) {
     return notes;
 }
 
-function buildHelpNotice(data) {
+function buildHelpNotice(data, title) {
     const box = mcpEl('div', 'help-notice rounded-lg border border-slate-700 bg-slate-900 text-sm text-slate-300 px-3 py-2 max-w-[75%] self-start');
     box.setAttribute('role', 'status');
-    box.appendChild(mcpEl('span', RAG_CHIP_NEUTRAL + ' text-xs', 'Справка по проекту'));
+    box.appendChild(mcpEl('span', RAG_CHIP_NEUTRAL + ' text-xs', title || 'Справка по проекту'));
     String(data.text || '').split('\n').forEach((line) => {
         box.appendChild(mcpEl('div', '', line));
     });
@@ -1831,7 +1837,7 @@ function handleWsMessage(data) {
             unblockInput();
             state.lastFailedMessage = null;
             const messagesEl = $('messages');
-            messagesEl.appendChild(buildHelpNotice(data));
+            messagesEl.appendChild(buildHelpNotice(data, data.command === 'support' ? 'Поддержка' : 'Справка по проекту'));
             messagesEl.scrollTop = messagesEl.scrollHeight;
             break;
         }
@@ -5698,7 +5704,7 @@ function buildRagMeta(rag) {
 }
 
 function buildRagThresholdLine(rag) {
-    if (!rag || rag.help || rag.verdict !== 'below_threshold' || !rag.search) return null;
+    if (!rag || rag.help || rag.support || rag.verdict !== 'below_threshold' || !rag.search) return null;
     if (!Number.isFinite(rag.search.best_cosine)) return null;
     const best = Number(rag.search.best_cosine).toFixed(2);
     const threshold = Number((rag.search.config || {}).threshold).toFixed(2);
