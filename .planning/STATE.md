@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v5.0
 milestone_name: "Week 7: Pipeline"
-status: completed
-last_updated: "2026-10-17T01:07:25.088Z"
-last_activity: 2026-10-17
+status: executing
+last_updated: "2026-10-17T08:40:22.419Z"
+last_activity: 2026-10-17 -- Phase 25 execution started
 progress:
   total_phases: 10
   completed_phases: 4
-  total_plans: 35
-  completed_plans: 35
+  total_plans: 52
+  completed_plans: 36
   percent: 40
 ---
 
@@ -21,14 +21,14 @@ See: .planning/PROJECT.md (updated 2026-10-13)
 
 **Project:** AiAdventAgentV2
 **Core value:** The agent must demonstrably separate and manage distinct kinds of state — short-term dialog, working task data, long-term profile/knowledge, and task lifecycle — making explicit, inspectable decisions about what goes where.
-**Current focus:** Milestone complete
+**Current focus:** Phase 25 — support-assistant-day-33
 
 ## Current Position
 
-Phase: 24
-Plan: Not started
-Status: Milestone complete
-Last activity: 2026-10-17
+Phase: 25 (support-assistant-day-33) — EXECUTING
+Plan: 2 of 11
+Status: Executing Phase 25
+Last activity: 2026-10-17 -- Phase 25 execution started
 
 ## Performance Metrics
 
@@ -61,6 +61,7 @@ No phases executed yet — metrics will populate after Phase 1 completes.
 - [Phase 22-05]: 22-CHECKS.md is the evidence file for D-19; PGIT-04 browser run recorded as not run (LM Studio unavailable)
 - [Phase 23-03]: UI-SPEC rule 2 amended: label, sources, quotes and warning survive reload; tool-call cards are live-only
 - [Phase 23]: Phase 23-05: /help default threshold stays 0.45 (docs 0.56-0.67, outside 0.39); combined prompt works on qwen/qwen3.5-9b and deepseek-flash
+- [Phase 25]: help_command injects its own build_mcp_toolset into command_turn.select_tools to keep the monkeypatch seam
 
 ### Roadmap Evolution
 
@@ -126,6 +127,7 @@ None.
 | Phase 23 P03 | 25min | 2 tasks | 4 files |
 | Phase 23 P05 | 75min | 3 tasks | 7 files |
 | Phase 23 P08 | 50min | 2 tasks | 9 files |
+| Phase 25 P01 | 25min | 2 tasks | 3 files |
 
 ## Deferred Items
 
@@ -155,7 +157,7 @@ Items acknowledged and deferred at milestone close on 2026-10-12:
 
 ## Session Continuity
 
-**Last session:** 2026-10-17T01:07:25.080Z
+**Last session:** 2026-10-17T08:40:19.025Z
 **Next action:** Phase 21 is planned (7 plans, 5 waves). Run `/bm:execute-phase 21` on branch Day31.
 
 ---

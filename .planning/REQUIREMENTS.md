@@ -65,7 +65,7 @@ Requirements for milestone v5.0. Each maps to exactly one roadmap phase.
 ### Support Assistant
 
 - [ ] **SUP-01**: `/support [#T-NNNN | @login] <question>` is recognised on the server for WebSocket and the plain HTTP chat endpoint; an empty question gives the usage notice (not stored, no model call); a message that is not `/support` behaves exactly as before.
-- [ ] **SUP-02**: `/support` and `/help` share one command-turn mechanism extracted from `agent/help_command.py` (`agent/command_turn.py`); `/help` behaves exactly as before and its existing tests pass unchanged.
+- [x] **SUP-02**: `/support` and `/help` share one command-turn mechanism extracted from `agent/help_command.py` (`agent/command_turn.py`); `/help` behaves exactly as before and its existing tests pass unchanged.
 - [ ] **SUP-03**: Per-user `/support` settings (top-K, candidate count, threshold, four stage switches, whole-server MCP choice, three built-in tool groups; by default only the MCP server named `support` is on) are stored, exposed through `GET/PUT /api/v1/support/config`, and edited in a Settings section «Поддержка (/support)» next to the `/help` section.
 - [ ] **SUP-04**: `/support` searches the knowledge base marked for `/help`; when no base is marked or the base is not ready, `/support` answers with a service notice that points to the `/help` section and makes no model call.
 - [ ] **SUP-05**: `mcp_servers/support_desk.py` is a self-contained read-only stdio MCP server started with `--data <path>`, with the tools `get_ticket`, `get_user`, `list_user_tickets`, `search_tickets`; rejected calls return `isError` with an English reason and fix; results are never empty and stay under 20 000 characters.
@@ -75,9 +75,22 @@ Requirements for milestone v5.0. Each maps to exactly one roadmap phase.
 - [ ] **SUP-09**: A missing ticket or user, or a support server that is not added, disabled or not connecting, never refuses or breaks the turn: the answer is given from the documentation with a warning under the answer and in the HTTP body.
 - [ ] **SUP-10**: A `/support` turn sends the earlier `/support` question/answer pairs of the current branch (bounded) to the model; ordinary messages and `/help` pairs are not sent.
 - [ ] **SUP-11**: The label («Поддержка · T-1001»), sources, verified quotes and warnings are stored in the assistant message payload under an additive `support` key and survive a reload; the HTTP JSON body carries the same (`support`, `rag`, `tool_calls`).
-- [ ] **SUP-12**: pytest covers the support server tools (found, not found, bad arguments, re-read on change, invalid JSON), command parsing with and without identifiers, the direct lookup, every warning path, the `/support` history rule, the shared mechanism keeping `/help` unchanged, the settings routes, the UI source guard and `/support` over WebSocket and HTTP.
+- [x] **SUP-12**: pytest covers the support server tools (found, not found, bad arguments, re-read on change, invalid JSON), command parsing with and without identifiers, the direct lookup, every warning path, the `/support` history rule, the shared mechanism keeping `/help` unchanged, the settings routes, the UI source guard and `/support` over WebSocket and HTTP.
 - [ ] **SUP-13**: An isolated-copy end-to-end script (ports 18000/18001, scratch database) adds the support server through the real «MCP серверы» form, marks the documentation base and runs `/support #T-… Почему не работает авторизация?` for two tickets in the browser and over HTTP; the live-model part is recorded as not run when LM Studio is down.
 - [ ] **SUP-14**: `docs/API_SPEC.md`, `docs/ARCHITECTURE.md`, `docs/USER_GUIDE.md`, `docs/TESTING_GUIDE.md` and `README.md` describe `/support`, the support server with exact form values, and the new tests as built, guarded by a docs test.
+
+### Project Files Assistant
+
+- [ ] **PFILE-01**: The own git MCP server `mcp_servers/project_git.py` offers the read tools `read_file`, `search_text` and `find_usages` over git-visible files (tracked plus untracked files git does not ignore), with and without `--allow-write`; results are never empty, stay under `--max-chars` and carry the explicit truncation marker when cut.
+- [ ] **PFILE-02**: The write tools `write_file` and `edit_file` are registered only when the server is started with `--allow-write`; without the flag the tool list has no writer and a direct call is refused, so the existing `local-git` entry and `/help` stay read-only with no configuration change.
+- [ ] **PFILE-03**: `write_file` and `edit_file` save to disk immediately and return the unified diff of the change (a new file is an all-added diff); `edit_file` replaces `old_text` only when it occurs exactly once and otherwise refuses with the reason and a fix.
+- [ ] **PFILE-04**: Writes are refused with `isError`, an English reason and a fix for paths outside the root, anything under `.git/` (including NTFS aliases), `.env*` files, paths git ignores, Windows device names, binary files or content, and content above the size limit.
+- [ ] **PFILE-05**: A goal typed as an ordinary chat message makes the model list, search, read and write project files through these tools in the existing tool loop; every call is visible as a tool-call card and the final answer lists the created or changed files.
+- [ ] **PFILE-06**: A tool-call card whose successful result is a unified diff renders a coloured diff (added green, removed red, hunk headers marked) built with `createElement`/`textContent` only; other cards render as before.
+- [ ] **PFILE-07**: `scripts/files_task.py` sends a goal to the plain HTTP chat endpoint with an API key, refuses a dirty target root and the script's own repository, runs at temperature 0, and saves a run log (goal, commit, provider/model, settings, MCP servers, tool calls, answer) and the resulting `git diff` as a `.patch`.
+- [ ] **PFILE-08**: pytest covers the read tools, the write gate, every forbidden write target, diff results and the run script against a mocked endpoint; an isolated-copy end-to-end script (ports 18000/18001, scratch database, a clone as the write root) shows the diff card in the browser.
+- [ ] **PFILE-09**: `Day34_report.md` (Russian) records the four fixed scenarios (API usages, ADR, CHANGELOG, folder README) run on the local LM Studio model through the scenario driver, each with its run log and `.patch`; a run that could not be made is recorded as not run and a failed scenario stays visible.
+- [ ] **PFILE-10**: `docs/USER_GUIDE.md` (exact `project-files` form values), `docs/ARCHITECTURE.md`, `docs/TESTING_GUIDE.md` and `README.md` describe the file tools, the `--allow-write` gate, the diff card and the run scripts as built, guarded by `tests/test_docs_mcp_servers.py`.
 
 ## Future Requirements
 
@@ -144,7 +157,7 @@ Deferred to later days of Week 7. Tracked but not in the current roadmap.
 | REV-07 | Phase 24 | Complete |
 | REV-08 | Phase 24 | Complete |
 | SUP-01 | Phase 25 | Pending |
-| SUP-02 | Phase 25 | Pending |
+| SUP-02 | Phase 25 | Complete |
 | SUP-03 | Phase 25 | Pending |
 | SUP-04 | Phase 25 | Pending |
 | SUP-05 | Phase 25 | Pending |
@@ -154,15 +167,25 @@ Deferred to later days of Week 7. Tracked but not in the current roadmap.
 | SUP-09 | Phase 25 | Pending |
 | SUP-10 | Phase 25 | Pending |
 | SUP-11 | Phase 25 | Pending |
-| SUP-12 | Phase 25 | Pending |
+| SUP-12 | Phase 25 | Complete |
 | SUP-13 | Phase 25 | Pending |
 | SUP-14 | Phase 25 | Pending |
+| PFILE-01 | Phase 26 | Pending |
+| PFILE-02 | Phase 26 | Pending |
+| PFILE-03 | Phase 26 | Pending |
+| PFILE-04 | Phase 26 | Pending |
+| PFILE-05 | Phase 26 | Pending |
+| PFILE-06 | Phase 26 | Pending |
+| PFILE-07 | Phase 26 | Pending |
+| PFILE-08 | Phase 26 | Pending |
+| PFILE-09 | Phase 26 | Pending |
+| PFILE-10 | Phase 26 | Pending |
 
 **Coverage:**
-- v5.0 requirements: 46 total
-- Mapped to phases: 46
+- v5.0 requirements: 56 total
+- Mapped to phases: 56
 - Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-10-13*
-*Last updated: 2026-10-17 — SUP-01..SUP-14 added for Phase 25 (Day 33)*
+*Last updated: 2026-10-17 — PFILE-01..PFILE-10 added for Phase 26 (Day 34); earlier: SUP-01..SUP-14 added for Phase 25 (Day 33)*
