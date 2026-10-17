@@ -9,6 +9,9 @@ registered and write files inside the root. With --allow-release the release too
 registered: release_context, release_range_commits, release_commit_changelog,
 release_create_tag, release_push and github_create_draft_release.
 
+The server is local-only by default. Under --allow-release it also makes HTTPS calls to
+api.github.com (github_create_draft_release) with the token from its own environment.
+
 This file is self-contained on purpose. It does not use the application logger or
 settings modules from the shared package: that logger writes JSON to stdout, and stdout is
 the MCP protocol channel here. Diagnostics go to stderr through ``sys.stderr.write``. This
@@ -31,6 +34,7 @@ import time
 from dataclasses import dataclass
 from typing import NoReturn
 
+import httpx
 import psutil
 from mcp.server.fastmcp import FastMCP
 
@@ -68,6 +72,17 @@ RELEASE_NETWORK_TIMEOUT: float = 90.0
 MAX_RELEASE_PAGES: int = 40
 MAX_COMMIT_DIRS: int = 10
 MAX_SECTION_CHARS: int = 100000
+GITHUB_API: str = "https://api.github.com"
+GITHUB_TOKEN_ENV: str = "GITHUB_PERSONAL_ACCESS_TOKEN"
+GITHUB_TIMEOUT: float = 30.0
+MAX_RELEASE_BODY_CHARS: int = 125000
+MAX_RELEASE_NAME_CHARS: int = 200
+GITHUB_HEADERS: dict[str, str] = {
+    "Accept": "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+}
+_GITHUB_NAME = re.compile(r"[A-Za-z0-9_.-]+")
+_FULL_SHA = re.compile(r"[0-9a-f]{40}")
 MAX_TAG_MESSAGE_CHARS: int = 200
 CHANGELOG_HEADER: str = (
     "# Changelog\n\n"
@@ -1520,6 +1535,95 @@ async def release_push(branch: str, tag: str) -> str:
     return f"Pushed {branch} and {tag} to origin"
 
 
+def _github_failure(status: int, owner: str, repo: str, token: str, payload: object) -> ToolInputError:
+    """Map a GitHub error status to an English reason without echoing credentials."""
+    if status == 401:
+        return ToolInputError("GitHub rejected the token (401)")
+    if status in (403, 404):
+        return ToolInputError(
+            f"no write access to {owner}/{repo} ({status}): the token needs Contents: write"
+        )
+    if status == 422:
+        message = payload.get("message") if isinstance(payload, dict) else None
+        text = str(message) if message else "unknown"
+        return ToolInputError(
+            f"GitHub validation failed (422): {text.replace(token, '***')[:300]}"
+        )
+    return ToolInputError(f"GitHub answered {status}")
+
+
+def _json_or_none(response: httpx.Response) -> object:
+    """Decode a JSON body, or None when it is not JSON."""
+    try:
+        return response.json()
+    except ValueError:
+        return None
+
+
+def _release_answer(verb: str, item: dict[str, object]) -> str:
+    """Compose the result text for a draft release."""
+    return f"{verb}: {item.get('html_url')}\n" + json.dumps(
+        {"html_url": item.get("html_url"), "id": item.get("id"), "draft": True}
+    )
+
+
+async def github_create_draft_release(
+    owner: str, repo: str, tag: str, name: str, body: str, commit: str
+) -> str:
+    """GitHub REMOTE: create a DRAFT release for an existing tag. Never publishes.
+
+    Parameters: `owner` and `repo` name the GitHub repository; `tag` such as v1.2; `name` is the
+    one-line title; `body` is the Markdown notes; `commit` is the 40-character hash the tag points
+    at. A draft that already exists for the tag is returned instead of a duplicate.
+    """
+    for label, value in (("owner", owner), ("repo", repo)):
+        if not _GITHUB_NAME.fullmatch(value) or value in (".", ".."):
+            raise ToolInputError(f"{label} must be a plain GitHub name such as octocat")
+    _check_version(tag)
+    if not name.strip() or "\r" in name or "\n" in name or len(name) > MAX_RELEASE_NAME_CHARS:
+        raise ToolInputError("name must be one non-empty line of at most 200 characters")
+    if len(body) > MAX_RELEASE_BODY_CHARS:
+        raise ToolInputError("body is larger than 125000 characters; shorten the release notes")
+    if not _FULL_SHA.fullmatch(commit):
+        raise ToolInputError("commit must be a full 40-character lowercase hash")
+    token = os.environ.get(GITHUB_TOKEN_ENV, "").strip()
+    if not token:
+        raise ToolInputError(
+            f"{GITHUB_TOKEN_ENV} is not set in this server's environment; "
+            "add it in the MCP server form"
+        )
+    headers = {**GITHUB_HEADERS, "Authorization": f"Bearer {token}"}
+    url = f"{GITHUB_API}/repos/{owner}/{repo}/releases"
+    try:
+        async with httpx.AsyncClient(timeout=GITHUB_TIMEOUT) as client:
+            listed = await client.get(url, params={"per_page": 100}, headers=headers)
+            if listed.status_code in (401, 403, 404):
+                raise _github_failure(listed.status_code, owner, repo, token, None)
+            if listed.status_code == 200:
+                items = _json_or_none(listed)
+                for item in items if isinstance(items, list) else []:
+                    if isinstance(item, dict) and item.get("tag_name") == tag:
+                        return _release_answer("Draft release already exists", item)
+            created = await client.post(
+                url,
+                headers=headers,
+                json={
+                    "tag_name": tag,
+                    "target_commitish": commit,
+                    "name": name,
+                    "body": body,
+                    "draft": True,
+                    "prerelease": False,
+                },
+            )
+    except httpx.HTTPError as exc:
+        raise ToolInputError(f"GitHub request failed: {type(exc).__name__}") from None
+    payload = _json_or_none(created)
+    if created.status_code == 201 and isinstance(payload, dict):
+        return _release_answer("Draft release created", payload)
+    raise _github_failure(created.status_code, owner, repo, token, payload)
+
+
 def register_release_tools() -> None:
     """Expose the release tools; called only when the server starts with --allow-release."""
     global _release_registered
@@ -1531,6 +1635,7 @@ def register_release_tools() -> None:
         release_commit_changelog,
         release_create_tag,
         release_push,
+        github_create_draft_release,
     ):
         server.tool(structured_output=False)(tool)
     _release_registered = True

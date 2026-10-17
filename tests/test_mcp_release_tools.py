@@ -134,7 +134,7 @@ async def test_stdio_listing_without_flag_has_no_release_tools(release_repo: Pat
 async def test_stdio_listing_with_flag_adds_six_release_tools(release_repo: Path) -> None:
     plain = await _listed([f"--root={release_repo}"])
     flagged = await _listed([f"--root={release_repo}", "--allow-release"])
-    assert flagged - plain <= set(RELEASE_TOOLS)
+    assert flagged - plain == set(RELEASE_TOOLS)
     assert {"release_context", "release_range_commits"} <= flagged - plain
     assert plain <= flagged
 
