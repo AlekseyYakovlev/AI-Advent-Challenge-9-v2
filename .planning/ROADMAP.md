@@ -307,7 +307,7 @@ Plans:
 **Goal:** A mini support service: the assistant answers product questions from a FAQ/product-docs knowledge base (existing RAG) and takes the user's or ticket's context from an own read-only stdio MCP server over a JSON file of users and tickets, so "Почему не работает авторизация?" is answered with that ticket's data. Branch `Day33`; deliverable video + code.
 **Requirements**: SUP-01, SUP-02, SUP-03, SUP-04, SUP-05, SUP-06, SUP-07, SUP-08, SUP-09, SUP-10, SUP-11, SUP-12, SUP-13, SUP-14
 **Depends on:** Phase 21 (knowledge base from docs), Phase 22 (own stdio MCP server pattern)
-**Plans:** 9/11 plans executed
+**Plans:** 10/11 plans executed
 
 Plans:
 **Wave 1**
@@ -330,7 +330,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 25-10-PLAN.md — Isolated-copy e2e script (browser + HTTP, two tickets) and recorded run
+- [x] 25-10-PLAN.md — Isolated-copy e2e script (browser + HTTP, two tickets) and recorded run
 - [ ] 25-11-PLAN.md — Docs: API spec, architecture, user guide (form values), testing guide, README
 
 ### Phase 26: Project files assistant (Day 34)
