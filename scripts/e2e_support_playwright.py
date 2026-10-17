@@ -229,6 +229,15 @@ async def check_support_section(page: Any, expect_base: bool) -> None:
         }"""
     )
     report("support section: support checked", checked is True, f"checked={checked}")
+    if expect_base:
+        # the section is first drawn from the cached config, then redrawn with the fresh one
+        try:
+            await page.wait_for_function(
+                "name => document.getElementById('support-kb-info').textContent.includes(name)",
+                arg=KB_NAME, timeout=10000,
+            )
+        except Exception:  # noqa: BLE001 - playwright raises its own TimeoutError type
+            pass
     info = (await page.locator("#support-kb-info").inner_text()).strip()
     if expect_base:
         report("support section: base named", KB_NAME in info, info[:140])
@@ -341,8 +350,15 @@ async def drive_browser(
 
     lm_up = bool(state["lm_up"])
     async with async_playwright() as playwright:
-        browser = await playwright.chromium.launch(headless=True)
-        page = await (await browser.new_context()).new_page()
+        video_dir = os.environ.get("SUPPORT_E2E_VIDEO_DIR", "")
+        slow_mo = int(os.environ.get("SUPPORT_E2E_SLOW_MO_MS", "0"))
+        browser = await playwright.chromium.launch(headless=not video_dir, slow_mo=slow_mo)
+        context = await browser.new_context(
+            viewport={"width": 1366, "height": 850},
+            **({"record_video_dir": video_dir, "record_video_size": {"width": 1366, "height": 850}}
+               if video_dir else {}),
+        )
+        page = await context.new_page()
         page.set_default_timeout(STEP_TIMEOUT_MS)
         page.on("pageerror", lambda exc: page_errors.append(str(exc)))
         try:
@@ -377,7 +393,10 @@ async def drive_browser(
             report("scenario run aborted", False, f"{type(exc).__name__}: {exc}")
             await page.screenshot(path=str(scratch / "failure.png"))
         finally:
+            await context.close()
             await browser.close()
+            if video_dir and page.video:
+                print(f"video saved: {await page.video.path()}", flush=True)
 
 
 async def create_chat_without_model(page: Any) -> int:
@@ -390,6 +409,22 @@ async def create_chat_without_model(page: Any) -> int:
     return int(await page.evaluate("() => state.currentChatId"))
 
 
+async def create_api_key(password: str) -> str:
+    """Log in as the support scratch user and create an API key; the key is never printed."""
+    headers = {"Origin": UI_URL}
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        login = await client.post(
+            f"{AGENT_URL}/api/v1/auth/login",
+            json={"username": USERNAME, "password": password}, headers=headers,
+        )
+        login.raise_for_status()
+        created = await client.post(
+            f"{AGENT_URL}/api/v1/api-keys", json={"name": "e2e-support"}, headers=headers,
+        )
+        created.raise_for_status()
+        return str(created.json()["key"])
+
+
 async def http_checks(password: str) -> None:
     """Run the HTTP part: the same two questions with an API key."""
     if not state["lm_up"]:
@@ -397,7 +432,7 @@ async def http_checks(password: str) -> None:
             record_live(label, False)
         return
     try:
-        key = await helpe2e.create_api_key(password)
+        key = await create_api_key(password)
         async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_S) as client:
             for question, label, facts, tag in (
                 (Q_T1, LABEL_T1, T1_FACTS, "http: T-1001"),
