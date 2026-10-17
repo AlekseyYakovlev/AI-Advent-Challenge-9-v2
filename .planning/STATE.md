@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v5.0
 milestone_name: "Week 7: Pipeline"
-status: milestone_complete
-last_updated: 2026-10-17T00:19:26.367Z
-last_activity: 2026-10-17 -- Plan 24-14 complete (14 of 14 plans done)
+status: ready_to_plan
+last_updated: 2026-10-17T13:51:43.326Z
+last_activity: 2026-10-17 -- Phase 25 execution started
 progress:
-  total_phases: 7
-  completed_phases: 4
-  total_plans: 35
-  completed_plans: 35
-  percent: 57
-stopped_at: Milestone complete (Phase 24 was final phase)
+  total_phases: 10
+  completed_phases: 5
+  total_plans: 62
+  completed_plans: 46
+  percent: 50
+stopped_at: Phase 25 complete (11/11) — ready to discuss Phase 26
 ---
 
 # Project State
@@ -22,13 +22,13 @@ See: .planning/PROJECT.md (updated 2026-10-13)
 
 **Project:** AiAdventAgentV2
 **Core value:** The agent must demonstrably separate and manage distinct kinds of state — short-term dialog, working task data, long-term profile/knowledge, and task lifecycle — making explicit, inspectable decisions about what goes where.
-**Current focus:** Milestone complete
+**Current focus:** Phase 26 — project files assistant day 34
 
 ## Current Position
 
-Phase: 24
+Phase: 26
 Plan: Not started
-Status: Milestone complete
+Status: Ready to plan
 Last activity: 2026-10-17
 
 ## Performance Metrics
@@ -62,6 +62,8 @@ No phases executed yet — metrics will populate after Phase 1 completes.
 - [Phase 22-05]: 22-CHECKS.md is the evidence file for D-19; PGIT-04 browser run recorded as not run (LM Studio unavailable)
 - [Phase 23-03]: UI-SPEC rule 2 amended: label, sources, quotes and warning survive reload; tool-call cards are live-only
 - [Phase 23]: Phase 23-05: /help default threshold stays 0.45 (docs 0.56-0.67, outside 0.39); combined prompt works on qwen/qwen3.5-9b and deepseek-flash
+- [Phase 25]: help_command injects its own build_mcp_toolset into command_turn.select_tools to keep the monkeypatch seam
+- [Phase 25]: 25-05: direct support lookup never raises; server resolved by fixed name support among caller's rows
 
 ### Roadmap Evolution
 
@@ -74,6 +76,7 @@ No phases executed yet — metrics will populate after Phase 1 completes.
 - Phase 24 added (2026-10-13): Automated PR code review (Day 32) — added to the current v5.0 roadmap next to the still-open Phase 23 by user decision, not as a new milestone
 
 - v4.0 roadmap created 2026-10-12: Phases 18-20 (Day 30, single branch Day30); no research, 26/26 requirements mapped; VER-06 pytest coverage is written alongside each phase but tracked in Phase 20
+- Phases 25-27 added (2026-10-17): Support assistant (Day 33, own JSON-backed MCP + FAQ RAG), Project files assistant (Day 34, scenarios: find API usages + generate README/ADR/changelog), AI release pipeline (Day 35, changelog + version + tag + draft GitHub Release); branches `Day33`..`Day35`
 
 ### Open Questions (flagged by research, need resolution during phase planning)
 
@@ -126,6 +129,11 @@ None.
 | Phase 23 P03 | 25min | 2 tasks | 4 files |
 | Phase 23 P05 | 75min | 3 tasks | 7 files |
 | Phase 23 P08 | 50min | 2 tasks | 9 files |
+| Phase 25 P01 | 25min | 2 tasks | 3 files |
+| Phase 25 P05 | 15min | 2 tasks | 3 files |
+| Phase 25 P06 | 10min | 2 tasks | 3 files |
+| Phase 25 P07 | 25min | 2 tasks | 6 files |
+| Phase 25 P11 | 25min | 2 tasks | 6 files |
 
 ## Deferred Items
 
@@ -155,7 +163,7 @@ Items acknowledged and deferred at milestone close on 2026-10-12:
 
 ## Session Continuity
 
-**Last session:** 2026-10-16T23:27:31.248Z
+**Last session:** 2026-10-17T13:40:03.442Z
 **Next action:** Phase 21 is planned (7 plans, 5 waves). Run `/bm:execute-phase 21` on branch Day31.
 
 ---

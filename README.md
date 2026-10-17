@@ -14,11 +14,13 @@ AiAdventAgentV2 is a local-first AI chat application made of two Python processe
 - Knowledge bases with RAG answers and source citations.
 - API keys and an HTTP chat endpoint for calling the agent from scripts.
 - LAN mode: the app can be made reachable from the local network over plain HTTP.
+- The `/support` command: a support assistant that answers from the project docs (including `docs/FAQ.md`) and from ticket and user data read through the support MCP server.
 - Automated review of GitHub Pull Requests: a workflow asks the app for a review that uses the project docs and code.
 
 ## Directory structure
 
 - `agent/` - the Agent process: REST API, WebSocket chat, LLM clients, context engine, memory, tasks, scheduler, MCP client and the RAG pipeline.
+- `mcp_servers/` - bundled MCP servers started as subprocesses: `project_git.py` and the support desk server `support_desk.py` with its sample data `support_data.json`.
 - `ui/` - the UI process: serves the static frontend (`ui/static/`) and supervises the Agent subprocess.
 - `shared/` - code used by both processes: configuration, database, models, logging.
 - `scripts/` - command-line helpers: browser end-to-end scripts (`e2e_*_playwright.py`), RAG evaluation and dialog runners, MCP tool listing.
@@ -106,4 +108,5 @@ Tests use a separate database (`test_app.db`), and the browser scripts in `scrip
 - [docs/USER_GUIDE.md](docs/USER_GUIDE.md) - how to use the chat, settings and statistics.
 - [docs/API_SPEC.md](docs/API_SPEC.md) - the REST and WebSocket API.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) - the process model, data model and context strategies.
+- [docs/FAQ.md](docs/FAQ.md) - frequently asked questions and fixes, also used as documentation for `/support`.
 - [docs/TESTING_GUIDE.md](docs/TESTING_GUIDE.md) - the test scenarios each test file must cover.

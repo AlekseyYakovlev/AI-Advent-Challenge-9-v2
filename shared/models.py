@@ -812,6 +812,34 @@ class HelpConfig(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class SupportConfig(SQLModel, table=True):
+    """Per-user /support settings: search settings and tool choice.
+
+    The documentation base is the one marked in HelpConfig. A None threshold means the
+    calibrated value of that base's embedding model. A None mcp_servers_json means the
+    default tool choice (only the server named support).
+    """
+
+    user_id: int = Field(
+        sa_column=Column(
+            Integer, ForeignKey("user.id", ondelete="CASCADE"), primary_key=True
+        )
+    )
+    top_k: int = Field(default=5)
+    candidate_k: int = Field(default=20)
+    # No column-level default: an explicit None must be stored as NULL (calibrated value).
+    threshold: float | None = Field(default=0.45, sa_column=Column(Float, nullable=True))
+    lexical: bool = Field(default=False)
+    llm_rerank: bool = Field(default=False)
+    hybrid: bool = Field(default=False)
+    rewrite: bool = Field(default=False)
+    mcp_servers_json: str | None = Field(default=None)
+    tools_memory: bool = Field(default=False)
+    tools_tasks: bool = Field(default=False)
+    tools_scheduler: bool = Field(default=False)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
 class ReviewConfig(SQLModel, table=True):
     """Per-user settings of the automated Pull Request review."""
 

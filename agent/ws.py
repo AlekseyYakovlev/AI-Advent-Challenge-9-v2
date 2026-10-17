@@ -21,7 +21,8 @@ from agent.context_engine import (
     serialize_tool_trace,
 )
 from agent.dependencies import get_current_user_ws
-from agent import help_command, invariants, limits, tasks
+from agent import command_turn, help_command, invariants, limits, support_command, support_lookup, tasks
+from agent.command_turn import NOTICE_NO_BASE
 from agent.llm_client import LLMClient, count_tokens
 from agent.mcp_tools import McpToolset, build_mcp_toolset
 from agent.rag import MODE_RAG
@@ -1093,6 +1094,109 @@ async def _run_help_turn(
     )
 
 
+async def _run_support_turn(
+    websocket: WebSocket,
+    session: AsyncSession,
+    chat: Chat,
+    chat_id: int,
+    payload: MessagePayload,
+    command: support_command.SupportCommand,
+    client: LLMClient,
+    provider_row: Any,
+) -> None:
+    """Run a /support turn: documentation search with the /support settings, the direct ticket/user lookup, earlier /support pairs, chosen tools."""
+    user_id: int = chat.user_id
+    config = await support_command.load_support_config(session, user_id)
+    help_config = await help_command.load_help_config(session, user_id)
+    kb = await help_command.load_help_kb(session, user_id, help_config)
+    if kb is None:
+        await websocket.send_json(
+            command_turn.notice_frame(
+                NOTICE_NO_BASE, support_command.SUPPORT_NO_BASE_TEXT, "support",
+            ),
+        )
+        return
+
+    user_msg = await _persist_user_message(session, chat, payload.content)
+    user_msg_id: int = user_msg.id
+    user_parent_id: int | None = user_msg.parent_id
+    history = await support_command.load_support_history(session, user_parent_id)
+
+    effective = await get_effective_settings(session, chat_id)
+    temperature = effective.temperature
+    max_tokens = effective.max_tokens
+
+    lookup = await support_lookup.direct_lookup(
+        session, user_id, ticket=command.ticket, user=command.user,
+    )
+    if lookup.result is not None:
+        await websocket.send_json(_tool_call_frame(lookup.result))
+
+    tools = await support_command.build_support_tools(session, user_id, config)
+    tool_schemas = tools.schemas or None
+    warnings = list(tools.warnings) + ([lookup.warning] if lookup.warning else [])
+    llm_messages = support_command.build_support_messages(
+        command.question, bool(tool_schemas), datetime.now(timezone.utc).astimezone(), history,
+    )
+    schema_tokens = (
+        count_tokens(json.dumps(tool_schemas, ensure_ascii=False)) if tool_schemas else 0
+    )
+    rag_turn: RagTurn = await support_command.prepare_support_turn(
+        session, chat, kb, config, command.question, llm_messages,
+        effective.context_length, max_tokens, schema_tokens,
+        client=client, model=payload.model, warnings=warnings,
+        context_block=lookup.block,
+        retrieval_query=support_lookup.retrieval_query(command.question, lookup.ticket_text),
+        payload_extra=support_command.support_payload_extra(command, lookup.info),
+    )
+
+    middle = await _run_turn_middle(
+        websocket, session, chat, chat_id, payload, llm_messages, tool_schemas,
+        tools.toolset, temperature, max_tokens, client, provider_row, user_msg_id,
+        user_parent_id, allowed_tools=tools.allowed_tools, user_text=command.question,
+    )
+    if middle is None:
+        return
+
+    direct: list[dict[str, Any]] = [lookup.result] if lookup.result is not None else []
+    assistant_text, rag_turn = await asyncio.to_thread(
+        support_command.finalize_support_turn,
+        rag_turn, command.question, middle.assistant_text, direct + middle.tool_results,
+    )
+    # A /support turn changes nothing besides its two messages: no side jobs run here.
+    assistant_msg = await _persist_assistant_message(
+        session,
+        chat,
+        user_msg_id,
+        assistant_text,
+        tool_trace=(
+            serialize_tool_trace(direct + middle.tool_results) if direct else middle.tool_trace
+        ),
+        rag_sources=rag_turn.sources_json,
+    )
+    stats = await compute_chat_stats(session, chat_id, payload.model)
+    logger.info(
+        "support_turn_done",
+        chat_id=chat_id,
+        message_id=assistant_msg.id,
+        sources=len(rag_turn.payload.get("sources") or []),
+        tool_calls=len(direct) + len(middle.tool_results),
+        warnings=len(warnings),
+        lookup=(lookup.info.get("reason") or "ok") if lookup.info else None,
+    )
+    await websocket.send_json(
+        {
+            "type": "done",
+            "message_id": assistant_msg.id,
+            "stats": stats,
+            "memory_writes": middle.memory_writes,
+            "task_writes": middle.task_writes,
+            "invariant_conflict": None,
+            "rag": rag_turn.done_payload,
+        },
+    )
+
+
 async def _run_chat_turn(
     websocket: WebSocket,
     chat_id: int,
@@ -1116,6 +1220,15 @@ async def _run_chat_turn(
                 await websocket.send_json(notice)
                 return
 
+        support = support_command.parse_support(payload.content) if question is None else None
+        if support is not None:
+            notice = await support_command.resolve_support_notice(
+                session, chat.user_id, support.question,
+            )
+            if notice is not None:
+                await websocket.send_json(notice)
+                return
+
         try:
             client, provider_row = await resolve_client(chat.user_id, payload.provider_id)
         except ProviderUnavailableError as exc:
@@ -1132,6 +1245,12 @@ async def _run_chat_turn(
         if question is not None:
             await _run_help_turn(
                 websocket, session, chat, chat_id, payload, question, client, provider_row,
+            )
+            return
+
+        if support is not None:
+            await _run_support_turn(
+                websocket, session, chat, chat_id, payload, support, client, provider_row,
             )
             return
 
@@ -1463,16 +1582,27 @@ async def ws_chat(websocket: WebSocket, chat_id: int) -> None:
                 await websocket.close(code=1000, reason="Idle timeout")
                 break
 
-            if help_command.is_help_command(raw):
+            if help_command.is_help_command(raw) or support_command.is_support_command(raw):
                 try:
                     payload = MessagePayload.model_validate(raw)
                 except ValidationError as exc:
                     await websocket.send_json({"type": "error", "detail": exc.errors()})
                     continue
                 async with async_session_factory() as db:
-                    notice = await help_command.resolve_help_notice(
-                        db, user.id, help_command.parse_help(payload.content) or "",
-                    )
+                    help_question = help_command.parse_help(payload.content)
+                    if help_question is not None:
+                        notice = await help_command.resolve_help_notice(
+                            db, user.id, help_question,
+                        )
+                    else:
+                        support_cmd = support_command.parse_support(payload.content)
+                        notice = (
+                            await support_command.resolve_support_notice(
+                                db, user.id, support_cmd.question,
+                            )
+                            if support_cmd is not None
+                            else None
+                        )
                 if notice is not None:
                     await websocket.send_json(notice)
                     continue

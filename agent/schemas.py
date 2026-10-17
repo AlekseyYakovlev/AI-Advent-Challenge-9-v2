@@ -392,6 +392,7 @@ class HttpChatResponse(BaseModel):
     invariant_conflict: dict[str, Any] | None
     rag: dict[str, Any] | None
     help: dict[str, Any] | None = None
+    support: dict[str, Any] | None = None
 
 
 class ToolCallEvent(BaseModel):

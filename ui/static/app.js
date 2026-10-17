@@ -183,8 +183,13 @@ function renderMessages() {
         const content = document.createElement('div');
         content.className = 'message-content prose prose-invert prose-sm max-w-none';
         content.innerHTML = isUser ? DOMPurify.sanitize(msg.content) : renderMarkdown(msg.content);
-        const helpInfo = !isUser && msg.rag_sources ? msg.rag_sources.help : null;
-        if (helpInfo) bubble.appendChild(buildHelpLabel(helpInfo));
+        const supportInfo = !isUser && msg.rag_sources ? msg.rag_sources.support : null;
+        const helpInfo = !isUser && msg.rag_sources ? (msg.rag_sources.help || supportInfo) : null;
+        if (helpInfo) {
+            bubble.appendChild(supportInfo
+                ? buildHelpLabel(helpInfo, String(helpInfo.label || 'Поддержка'))
+                : buildHelpLabel(helpInfo));
+        }
         bubble.appendChild(content);
         if (msg.token_count && msg.token_count > 0) {
             const tokenInfo = document.createElement('div');
@@ -206,7 +211,7 @@ function renderMessages() {
         }
         container.appendChild(wrapper);
         const rag = msg.rag_sources;
-        if (helpInfo) buildHelpNotes(rag).forEach((note) => container.appendChild(wrapToolCard(note)));
+        if (helpInfo) buildHelpNotes(rag, helpInfo).forEach((note) => container.appendChild(wrapToolCard(note)));
         const quotesBlock = isUser ? null : buildRagQuotesBlock(rag);
         if (quotesBlock) container.appendChild(wrapToolCard(quotesBlock));
         if (!isUser && rag && rag.mode === 'rag' && !rag.warning
@@ -230,8 +235,8 @@ function renderMessages() {
     renderStatsPanel();
 }
 
-function buildHelpLabel(help) {
-    const text = 'Справка по проекту · ' + String(help.kb_name || '');
+function buildHelpLabel(help, labelText) {
+    const text = labelText || ('Справка по проекту · ' + String(help.kb_name || ''));
     const holder = mcpEl('div', 'mb-1');
     const chip = mcpEl('span', RAG_CHIP_NEUTRAL + ' text-xs inline-block truncate max-w-[16rem]', text);
     chip.title = text;
@@ -239,9 +244,10 @@ function buildHelpLabel(help) {
     return holder;
 }
 
-function buildHelpNotes(rag) {
+function buildHelpNotes(rag, info) {
     const notes = [];
-    const warnings = Array.isArray(rag.help.warnings) ? rag.help.warnings : [];
+    const source = info || rag.help || rag.support;
+    const warnings = Array.isArray(source.warnings) ? source.warnings : [];
     warnings.forEach((item) => {
         const line = mcpEl('div', 'text-xs text-yellow-500 max-w-[75%] self-start', String(item.text || ''));
         line.setAttribute('role', 'status');
@@ -253,10 +259,10 @@ function buildHelpNotes(rag) {
     return notes;
 }
 
-function buildHelpNotice(data) {
+function buildHelpNotice(data, title) {
     const box = mcpEl('div', 'help-notice rounded-lg border border-slate-700 bg-slate-900 text-sm text-slate-300 px-3 py-2 max-w-[75%] self-start');
     box.setAttribute('role', 'status');
-    box.appendChild(mcpEl('span', RAG_CHIP_NEUTRAL + ' text-xs', 'Справка по проекту'));
+    box.appendChild(mcpEl('span', RAG_CHIP_NEUTRAL + ' text-xs', title || 'Справка по проекту'));
     String(data.text || '').split('\n').forEach((line) => {
         box.appendChild(mcpEl('div', '', line));
     });
@@ -1831,7 +1837,7 @@ function handleWsMessage(data) {
             unblockInput();
             state.lastFailedMessage = null;
             const messagesEl = $('messages');
-            messagesEl.appendChild(buildHelpNotice(data));
+            messagesEl.appendChild(buildHelpNotice(data, data.command === 'support' ? 'Поддержка' : 'Справка по проекту'));
             messagesEl.scrollTop = messagesEl.scrollHeight;
             break;
         }
@@ -4055,6 +4061,161 @@ function bindHelpUi() {
     });
 }
 
+state.supportConfig = null;
+const SUPPORT_DEFAULT_SERVER_NAME = 'support';
+const SUPPORT_SAVE_ERROR = 'Не удалось сохранить настройки /support. Проверьте соединение и попробуйте снова.';
+let supportSaveStatusTimer = null;
+
+async function fetchSupportConfig(silent) {
+    try {
+        state.supportConfig = await apiFetch('/api/v1/support/config');
+    } catch (err) {
+        if (!silent) showToast(err.message, 'error');
+    }
+}
+
+async function loadSupportConfig(silent = false) {
+    if (state.lastKbs === null) await loadKbList(true);
+    await fetchSupportConfig(silent);
+    renderSupportSection();
+}
+
+function renderSupportSearchFields(cfg) {
+    $('support-top-k').value = String(cfg.top_k || 5);
+    const candidate = $('support-candidate-k');
+    candidate.min = String(cfg.top_k || 1);
+    candidate.value = String(cfg.candidate_k || 20);
+    const threshold = $('support-threshold');
+    const note = $('support-threshold-note');
+    const hasOverride = typeof cfg.threshold === 'number';
+    if (hasOverride) {
+        threshold.value = cfg.threshold.toFixed(2);
+        note.textContent = '';
+    } else if (typeof cfg.calibrated_threshold === 'number') {
+        threshold.value = cfg.calibrated_threshold.toFixed(2);
+        note.textContent = '(калибр.)';
+    } else {
+        threshold.value = '0.00';
+        note.textContent = '(нет калибровки)';
+    }
+    $('support-threshold-reset').classList.toggle('hidden', !hasOverride);
+    $('support-stage-lexical').checked = Boolean(cfg.lexical);
+    $('support-stage-llm').checked = Boolean(cfg.llm_rerank);
+    $('support-stage-hybrid').checked = Boolean(cfg.hybrid);
+    $('support-stage-rewrite').checked = Boolean(cfg.rewrite);
+}
+
+function renderSupportMcpList(cfg) {
+    const list = $('support-mcp-list');
+    const hint = $('support-mcp-hint');
+    const servers = state.mcpServers || [];
+    const chosen = new Set(Array.isArray(cfg.mcp_server_ids) ? cfg.mcp_server_ids : []);
+    list.replaceChildren();
+    servers.forEach((server) => {
+        const row = mcpEl('div', 'flex items-center justify-between gap-2');
+        const left = mcpEl('div', 'flex items-center gap-2 min-w-0');
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.id = `support-mcp-${server.id}`;
+        box.className = 'rounded';
+        box.dataset.serverId = String(server.id);
+        box.checked = chosen.has(server.id);
+        const label = mcpEl('label', 'text-sm truncate', server.name);
+        label.htmlFor = box.id;
+        left.append(box, label);
+        row.append(left, mcpEl('span', 'text-xs text-slate-500 shrink-0', MCP_STATUS_LABELS[server.status] || ''));
+        list.appendChild(row);
+    });
+    const missing = Array.isArray(cfg.mcp_missing) ? cfg.mcp_missing : [];
+    if (!cfg.support_server_present && !servers.some((s) => s.name === SUPPORT_DEFAULT_SERVER_NAME)) {
+        hint.className = 'text-xs text-yellow-500';
+        hint.textContent = 'Сервер поддержки не добавлен. Добавьте его в разделе «MCP серверы» (имя support).';
+    } else if (missing.length) {
+        hint.className = 'text-xs text-yellow-500';
+        hint.textContent = 'Не найдены серверы: ' + missing.join(', ');
+    } else {
+        hint.className = 'text-xs';
+        hint.textContent = '';
+    }
+}
+
+function renderSupportSection() {
+    const cfg = state.supportConfig;
+    if (!cfg || !$('support-section')) return;
+    const kbName = cfg.help_kb_name ? String(cfg.help_kb_name) : 'не выбрана';
+    $('support-kb-info').textContent = 'База документации: та же, что отмечена для /help (' + kbName
+        + '). Выбрать её можно в разделе «Справка по проекту (/help)».';
+    renderSupportSearchFields(cfg);
+    renderSupportMcpList(cfg);
+    $('support-tools-memory').checked = Boolean(cfg.tools_memory);
+    $('support-tools-tasks').checked = Boolean(cfg.tools_tasks);
+    $('support-tools-scheduler').checked = Boolean(cfg.tools_scheduler);
+}
+
+async function saveSupportSetting(patch) {
+    const previous = state.supportConfig;
+    try {
+        state.supportConfig = await apiFetch('/api/v1/support/config', {
+            method: 'PUT',
+            body: JSON.stringify(patch),
+        });
+    } catch (err) {
+        state.supportConfig = previous;
+        renderSupportSection();
+        showToast(SUPPORT_SAVE_ERROR, 'error');
+        return;
+    }
+    renderSupportSection();
+    const status = $('support-save-status');
+    status.textContent = 'Сохранено';
+    clearTimeout(supportSaveStatusTimer);
+    supportSaveStatusTimer = setTimeout(() => { status.textContent = ''; }, 2000);
+}
+
+function bindSupportUi() {
+    const clampInt = (value, low, high, fallback) => (
+        Math.min(high, Math.max(low, parseInt(value, 10) || fallback))
+    );
+    $('support-top-k').addEventListener('change', (e) => {
+        const clamped = clampInt(e.target.value, 1, 20, 5);
+        e.target.value = String(clamped);
+        saveSupportSetting({ top_k: clamped });
+    });
+    $('support-candidate-k').addEventListener('change', (e) => {
+        const low = (state.supportConfig && state.supportConfig.top_k) || 1;
+        const clamped = clampInt(e.target.value, low, 50, low);
+        e.target.value = String(clamped);
+        saveSupportSetting({ candidate_k: clamped });
+    });
+    $('support-threshold').addEventListener('change', (e) => {
+        if (e.target.value.trim() === '') {
+            saveSupportSetting({ threshold: null });
+            return;
+        }
+        const parsed = parseFloat(e.target.value);
+        const value = Number.isFinite(parsed) ? Math.round(Math.min(1, Math.max(0, parsed)) * 100) / 100 : 0;
+        saveSupportSetting({ threshold: value });
+    });
+    $('support-threshold-reset').addEventListener('click', () => saveSupportSetting({ threshold: null }));
+    [
+        ['support-stage-lexical', 'lexical'],
+        ['support-stage-llm', 'llm_rerank'],
+        ['support-stage-hybrid', 'hybrid'],
+        ['support-stage-rewrite', 'rewrite'],
+        ['support-tools-memory', 'tools_memory'],
+        ['support-tools-tasks', 'tools_tasks'],
+        ['support-tools-scheduler', 'tools_scheduler'],
+    ].forEach(([id, field]) => {
+        $(id).addEventListener('change', (e) => saveSupportSetting({ [field]: e.target.checked }));
+    });
+    $('support-mcp-list').addEventListener('change', () => {
+        const ids = [...$('support-mcp-list').querySelectorAll('input[type="checkbox"]')]
+            .filter((box) => box.checked)
+            .map((box) => Number(box.dataset.serverId));
+        saveSupportSetting({ mcp_server_ids: ids });
+    });
+}
+
 const REVIEW_LM_STUDIO_KIND = 'lm_studio';
 const REVIEW_LM_STUDIO_DOWN_TEXT = 'LM Studio недоступен, индекс не обновлён. Запустите LM Studio и повторите.';
 const REVIEW_POLL_INTERVAL_MS = 2000;
@@ -4285,7 +4446,7 @@ async function openSettingsModal() {
     $('settings-max-tokens').value = settings.max_tokens;
     $('settings-system-prompt').value = settings.system_prompt;
     $('settings-modal').classList.remove('hidden');
-    loadMcpServers().then(() => loadHelpConfig()).catch((err) => showToast(err.message, 'error'));
+    loadMcpServers().then(() => loadHelpConfig()).then(() => loadSupportConfig()).catch((err) => showToast(err.message, 'error'));
     loadLlmProviders().catch((err) => showToast(err.message, 'error'));
     loadReviewSettings();
     loadApiKeys();
@@ -4417,6 +4578,7 @@ function bindEvents() {
     });
     bindRagSearchUi();
     bindHelpUi();
+    bindSupportUi();
     $('rag-k-input').addEventListener('change', (e) => {
         const clamped = Math.min(20, Math.max(1, parseInt(e.target.value, 10) || 5));
         e.target.value = String(clamped);
@@ -4518,6 +4680,8 @@ async function loadKbList(silent = false) {
     }
     await fetchHelpConfig(true);
     renderHelpSection();
+    await fetchSupportConfig(true);
+    renderSupportSection();
     renderKbPanel();
 }
 
@@ -5540,7 +5704,7 @@ function buildRagMeta(rag) {
 }
 
 function buildRagThresholdLine(rag) {
-    if (!rag || rag.help || rag.verdict !== 'below_threshold' || !rag.search) return null;
+    if (!rag || rag.help || rag.support || rag.verdict !== 'below_threshold' || !rag.search) return null;
     if (!Number.isFinite(rag.search.best_cosine)) return null;
     const best = Number(rag.search.best_cosine).toFixed(2);
     const threshold = Number((rag.search.config || {}).threshold).toFixed(2);

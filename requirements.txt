@@ -58,4 +58,5 @@ python-multipart==0.0.32  # Загрузка файлов (multipart/form-data)
 # ==============================================================================
 pytest>=8.3.0
 pytest-asyncio>=0.24.0    # Асинхронная поддержка для pytest
+pytest-xdist>=3.5.0       # Параллельный запуск тестов: pytest -n auto --dist loadfile
 respx>=0.21.0             # Мокирование HTTP-запросов (httpx) для тестов LM Studio/DeepSeek

@@ -713,6 +713,93 @@ Automation cannot prove reachability from another machine, so the live run is ma
 - Exit 0 done, 1 aborted, 2 blocked by the preflight. A model that could not run is recorded as `not run`.
 - Results are written to `eval_out/day31/` (`threshold.json`, `spike.json`, `CALIBRATION.md`, the run records).
 
+## /support command (Day 33)
+
+### Coverage map for Day 33
+
+| Area | Test files |
+|------|-----------|
+| Shared command-turn mechanism (`/help` and `/support`) | `test_command_turn.py`, `test_help_command.py`, `test_help_turn.py` |
+| Support MCP server | `test_mcp_support_desk.py` |
+| Grammar, notices, history, prompts | `test_support_command.py` |
+| Direct lookup, data fence, ticket-aware query | `test_support_lookup.py` |
+| Settings routes | `test_support_api.py` |
+| `/support` over WebSocket and HTTP | `test_support_ws.py`, `test_support_http.py` |
+| Settings section of the frontend | `test_support_ui.py` |
+| FAQ and documentation guards | `test_docs_faq.py`, `test_docs_support.py` |
+| Retrieval probe and end-to-end script helpers | `test_support_probe.py`, `test_e2e_support_script.py` |
+
+### test_command_turn.py
+- the notice frame carries the `command` key; usage and no-base notices resolve for a spec
+- tool selection warns when the default server is missing; a toolset builder failure becomes a warning
+- the outbound message list with history; the context block comes after the fragments block, also below the threshold; the retrieval query override is used
+
+### test_mcp_support_desk.py
+- `get_ticket`: found, id normalisation (`T-1001`, `t1001`, `#1001`), not found and malformed ids
+- `get_user` by login and by client id, unknown user; `list_user_tickets` with and without a status, unknown status
+- `search_tickets`: hits and filters, zero hits is not an empty reply, text length 1 to 100; echoed input is truncated
+- the size cap truncates with a marker; an edit of the data file is picked up and invalid JSON recovers; a missing file after start
+- startup refusals: missing file, invalid JSON, oversized file, missing `--data`; stdio round trip; exactly four read tools
+
+### test_support_command.py
+- grammar: plain question, ticket forms, user, an invalid identifier stays in the question, identifier only right after the command, case-insensitive command, other text rejected, empty question
+- label; the default threshold equals `DEFAULT_SUPPORT_THRESHOLD`
+- notices: usage, no base, base not ready, none for a ready base
+- settings defaults; default tools are only the `support` server, a missing server warns
+- history: only `/support` pairs, pairs without the payload skipped, limits of pairs and answer length, token budget, no parent
+- outbound messages have no profile; payload extra; retrieval with fragments and context; below the threshold the model is still called with a note
+
+### test_support_lookup.py
+- the fence wraps data, neutralises inner tags and caps long data
+- the ticket-aware query adds subject and error lines, is capped, and can be switched off
+- no identifier makes no call; ticket and user found; ticket and user not found
+- server not added, disabled, cannot start, dispatch failure each give a warning and no exception
+- hostile ticket text stays inside the fence; server rows are per user
+
+### test_support_api.py
+- defaults of `GET /api/v1/support/config`, default server is `support`; the `/help` base fields follow the `/help` mark and another user's base is hidden
+- PUT: partial update keeps other fields, threshold `null` versus unchanged, `candidate_k` raised to `top_k`, validation 422, server choice, foreign or unknown server is 404, a deleted server is reported missing
+- `Content-Type` is required, a cross-origin PUT is rejected, 401 without a session; `/help` settings are untouched; deleting the user cascades
+
+### test_support_ws.py
+- the ticket card arrives before tokens; an unknown ticket and a missing server warn and still answer
+- usage and no-base notices store nothing and take no rate slot
+- history carries only `/support` pairs; side jobs do not run; a `/help` turn is unchanged
+
+### test_support_http.py
+- the success body with `support`; usage and no-base notice bodies (`200`, `stored: false`)
+- `kb_id` is ignored for `/support`; the unknown ticket warning is in the body
+- notices take no rate slot; a busy chat is `409`; ordinary and `/help` bodies have `support: null`
+
+### test_support_ui.py (frontend source guard)
+- the Settings section, its element ids and position; no base selector; numeric ranges; stage labels equal the `/help` labels
+- the required Russian strings; the `support` payload feeds the label and the threshold line; builders use `textContent` only; saving uses PUT with a rollback; sending does not inspect the command; app.js is balanced
+
+### test_support_probe.py and test_e2e_support_script.py
+- the FAQ rank is one-based or absent; the ticket-aware query stays enabled only when it is not worse; the written record contains the table and the decisions, and a `not run` reason
+- the server arguments are one per line; the keyword check is case-insensitive; the live verdict is `NOT RUN` when LM Studio is down; the scratch ticket status edit changes only the copy
+
+### test_docs_faq.py and test_docs_support.py (documentation source guards)
+- the FAQ values equal the code, sections start from the symptom, no keys, no seed data copied into the docs
+- heading order of the `/support` sections, the form values of the support server, the usage example, the default threshold, the four tool names, every test file and script named here exists, no key-shaped string in `docs/`, no video script under `docs/`
+
+### scripts/support_probe.py (not part of pytest)
+- `python scripts/support_probe.py [--out eval_out/day33]` copies the tree to a scratch directory, starts it on :18000 / :18001, indexes the README and `docs/` (with `FAQ.md`) and records the best score and best source of support questions, ticket-aware queries and outside questions.
+- It decides whether the threshold stays and whether the ticket-aware query is kept; the result is in `25-RETRIEVAL-PROBE.md`. Exit 0 done, 1 a step aborted, 2 blocked by the preflight (recorded as `not run`).
+
+### scripts/e2e_support_playwright.py (isolated copy, not part of pytest)
+- `python scripts/e2e_support_playwright.py` starts an isolated copy at UI :18000 / Agent :18001 with a scratch database and a scratch copy of `support_data.json`; it never touches :8000/:8001. It adds the support server through the «MCP серверы» form, checks the «Поддержка (/support)» section, the usage notice, the ticket card and label of `T-1001` and `T-1002`, the label after a reload, the HTTP body, a follow-up and a status change in the scratch JSON.
+- Exit 0 all checks passed, 1 a check failed, 2 blocked (ports busy), 4 Playwright missing. Checks that need a chat model are recorded as `NOT RUN`, never as passed, when LM Studio has no loaded chat model.
+- The recorded run (`25-E2E.md`) passed its non-model checks and left seven model-dependent checks as NOT RUN because no chat model was loaded; they have not been verified.
+
+### Regression gate for /help
+
+The shared command-turn mechanism must keep `/help` unchanged. Run before and after any change to it:
+
+```bash
+pytest tests/test_command_turn.py tests/test_help_command.py tests/test_help_api.py tests/test_help_turn.py tests/test_help_ws.py tests/test_help_http.py tests/test_help_ui.py tests/test_docs_help.py -q
+```
+
 ## Automated PR review (Day 32)
 
 ### Coverage map for Day 32

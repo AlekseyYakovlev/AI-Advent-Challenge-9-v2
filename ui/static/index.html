@@ -439,6 +439,54 @@
                 </fieldset>
                 <div id="help-save-status" role="status" class="text-xs text-slate-500"></div>
             </section>
+            <section id="support-section" class="border-t border-slate-700 p-5 space-y-4" aria-labelledby="support-section-title">
+                <div>
+                    <h3 id="support-section-title" class="text-lg font-semibold">Поддержка (/support)</h3>
+                    <p class="text-xs text-slate-500">Команда /support [#T-1042 или @login] &lt;вопрос&gt; отвечает по документации и данным тикета или пользователя из сервера поддержки. Вы выступаете как сотрудник поддержки и можете спрашивать о любом тикете.</p>
+                </div>
+                <p id="support-kb-info" class="text-xs text-slate-500"></p>
+                <fieldset class="space-y-2">
+                    <legend class="text-sm text-slate-400">Поиск</legend>
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label for="support-top-k" class="block text-xs text-slate-300 mb-1" title="Сколько фрагментов передавать в модель (1–20)">Top-K</label>
+                            <input id="support-top-k" type="number" min="1" max="20" step="1" value="5" class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        </div>
+                        <div>
+                            <label for="support-candidate-k" class="block text-xs text-slate-300 mb-1" title="Сколько фрагментов отобрать на первом этапе, до отсечения по порогу и реранка (K–50)">Кандидатов</label>
+                            <input id="support-candidate-k" type="number" min="1" max="50" step="1" value="20" class="w-full rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                        </div>
+                        <div class="col-span-2">
+                            <label for="support-threshold" class="block text-xs text-slate-300 mb-1" title="Минимальная косинусная близость. Фрагменты ниже порога не попадают в ответ. Применяется до реранка.">Порог</label>
+                            <div class="flex items-center gap-2">
+                                <input id="support-threshold" type="number" min="0" max="1" step="0.01" class="w-28 rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                                <span id="support-threshold-note" class="text-xs text-slate-500"></span>
+                                <button type="button" id="support-threshold-reset" class="hidden text-xs text-slate-400 hover:text-white">Сбросить</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="space-y-1">
+                        <label class="flex items-center gap-2 text-sm cursor-pointer" title="Переупорядочивает прошедшие порог фрагменты по совпадению слов запроса, включая номера статей"><input id="support-stage-lexical" type="checkbox" class="rounded"><span>Лексич. реранк</span></label>
+                        <label class="flex items-center gap-2 text-sm cursor-pointer" title="Модель чата оценивает 10 лучших фрагментов. Один дополнительный запрос к модели"><input id="support-stage-llm" type="checkbox" class="rounded"><span>LLM-реранк</span></label>
+                        <label class="flex items-center gap-2 text-sm cursor-pointer" title="Добавляет поиск по ключевым словам и объединяет его с векторным. Находки по ключевым словам проходят порог"><input id="support-stage-hybrid" type="checkbox" class="rounded"><span>Гибрид (FTS5)</span></label>
+                        <label class="flex items-center gap-2 text-sm cursor-pointer" title="Модель чата переформулирует вопрос; ищем по исходному и переписанному. Один дополнительный запрос к модели"><input id="support-stage-rewrite" type="checkbox" class="rounded"><span>Переписывание запроса</span></label>
+                    </div>
+                </fieldset>
+                <fieldset class="space-y-2">
+                    <legend class="text-sm text-slate-400">Инструменты</legend>
+                    <div class="text-sm text-slate-400">MCP серверы</div>
+                    <div id="support-mcp-list" class="max-h-40 overflow-y-auto space-y-1"></div>
+                    <p id="support-mcp-hint" class="text-xs"></p>
+                    <div class="text-sm text-slate-400">Встроенные</div>
+                    <div class="space-y-1">
+                        <div class="flex items-center gap-2"><input type="checkbox" id="support-tools-memory" class="rounded"><label for="support-tools-memory" class="text-sm">Память</label></div>
+                        <div class="flex items-center gap-2"><input type="checkbox" id="support-tools-tasks" class="rounded"><label for="support-tools-tasks" class="text-sm">Задачи</label></div>
+                        <div class="flex items-center gap-2"><input type="checkbox" id="support-tools-scheduler" class="rounded"><label for="support-tools-scheduler" class="text-sm">Планировщик</label></div>
+                    </div>
+                    <p class="text-xs text-slate-500">Включённые встроенные инструменты могут изменять данные: память, задачи, расписание. По умолчанию выключены.</p>
+                </fieldset>
+                <div id="support-save-status" role="status" class="text-xs text-slate-500"></div>
+            </section>
             <section id="llm-providers-section" class="border-t border-slate-700 p-4 space-y-4">
                 <div class="flex items-center justify-between">
                     <h3 class="text-lg font-semibold">Провайдеры LLM</h3>

@@ -6,7 +6,7 @@
 - ✅ **v2.0 Week 4: MCP Integration** — Phases 7-9, 12 (shipped 2026-10-02)
 - ✅ **v3.0 Week 5: RAG** — Phases 10-11, 13-17 (shipped 2026-10-10)
 - ✅ **v4.0 Week 6: Local LLM as a Private Service** — Phases 18-20 (shipped 2026-10-12)
-- 🚧 **v5.0 Week 7: Pipeline** — Phases 21-23 (in progress)
+- 🚧 **v5.0 Week 7: Pipeline** — Phases 21-27 (in progress)
 
 ## Phases
 
@@ -14,6 +14,9 @@
 - [x] **Phase 22: Project MCP servers (Day 31)** - Own read-only git MCP server and the official GitHub server connected read-only
 - [x] **Phase 23: /help command, verification and report (Day 31)** - `/help` in the chat and over HTTP, tests, end-to-end script and `Day31_report.md`
 - [x] **Phase 24: Automated PR code review (Day 32)** - Pipeline on every Pull Request: diff plus changed files, RAG over docs and code, review text
+- [ ] **Phase 25: Support assistant (Day 33)** - FAQ/docs RAG plus user and ticket context from an own JSON-backed MCP server
+- [ ] **Phase 26: Project files assistant (Day 34)** - Goal-level tasks over project files: find API usages, generate README/ADR/changelog, diff output
+- [ ] **Phase 27: AI release pipeline (Day 35)** - Changelog, version proposal, tag and draft GitHub Release prepared with AI
 
 ### Phase 21: Project docs in RAG (Day 31)
 
@@ -299,6 +302,99 @@ Plans:
 
 - [x] 24-14-PLAN.md — Judge both runs, Day32_report.md, close test PRs
 
+### Phase 25: Support assistant (Day 33)
+
+**Goal:** A mini support service: the assistant answers product questions from a FAQ/product-docs knowledge base (existing RAG) and takes the user's or ticket's context from an own read-only stdio MCP server over a JSON file of users and tickets, so "Почему не работает авторизация?" is answered with that ticket's data. Branch `Day33`; deliverable video + code.
+**Requirements**: SUP-01, SUP-02, SUP-03, SUP-04, SUP-05, SUP-06, SUP-07, SUP-08, SUP-09, SUP-10, SUP-11, SUP-12, SUP-13, SUP-14
+**Depends on:** Phase 21 (knowledge base from docs), Phase 22 (own stdio MCP server pattern)
+**Plans:** 11/11 plans complete
+
+Plans:
+**Wave 1**
+
+- [x] 25-01-PLAN.md — Shared command-turn mechanism (agent/command_turn.py), /help as facade, /help regression gate
+- [x] 25-02-PLAN.md — Read-only support MCP server (mcp_servers/support_desk.py) and seed JSON with tests
+- [x] 25-03-PLAN.md — Russian docs/FAQ.md true to the code, with a docs guard
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [x] 25-04-PLAN.md — SupportConfig, /support grammar, notices, tools, history, prepare/finalize
+- [x] 25-05-PLAN.md — Direct in-code ticket/user lookup, warning paths, <support_data> fence
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [x] 25-06-PLAN.md — GET/PUT /api/v1/support/config routes
+- [x] 25-07-PLAN.md — /support over WebSocket and HTTP (_run_support_turn, seams, support field)
+- [x] 25-08-PLAN.md — «Поддержка (/support)» Settings section, label, notes, notice chip
+- [x] 25-09-PLAN.md — FAQ retrieval probe on the real embedder; /support threshold and hint decision
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [x] 25-10-PLAN.md — Isolated-copy e2e script (browser + HTTP, two tickets) and recorded run
+- [x] 25-11-PLAN.md — Docs: API spec, architecture, user guide (form values), testing guide, README
+
+### Phase 26: Project files assistant (Day 34)
+
+**Goal:** An assistant that works with project files on its own: given a goal (not "open file X"), it reads, searches across several files, analyses them and creates or changes files, with changes saved or shown as a diff and the run reproducible. Scenarios: find every usage of a component/API, and generate a new file (README / ADR / changelog). Branch `Day34`; deliverable video + code.
+**Requirements**: PFILE-01, PFILE-02, PFILE-03, PFILE-04, PFILE-05, PFILE-06, PFILE-07, PFILE-08, PFILE-09, PFILE-10
+**Depends on:** Phase 22 (project git MCP server); independent of Phase 25
+**Plans:** 8 plans
+
+Plans:
+**Wave 1**
+
+- [ ] 26-01-PLAN.md — Day34 branch cut; read tools read_file / search_text / find_usages in the own git server, tests, five-tool pins relaxed
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 26-02-PLAN.md — Coloured unified-diff view in tool-call cards (textContent only) with source guards
+- [ ] 26-03-PLAN.md — scripts/files_task.py: goal over the HTTP chat endpoint at temperature 0, run.json + run.patch + answer.md
+- [ ] 26-04-PLAN.md — --allow-write gate, write_file / edit_file with diff results, forbidden write targets, tests
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 26-05-PLAN.md — Isolated-copy browser e2e: project-files entry on a clone, write card with diff, render checks
+- [ ] 26-06-PLAN.md — scripts/files_eval.py scenario driver for the four D-15 scenarios with automatic checks
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 26-07-PLAN.md — Scenario runs on the local model, rounds measurement, Day34_report.md
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [ ] 26-08-PLAN.md — Docs: project-files form values, architecture, testing guide, README, docs guards; full-suite count in Day34_report.md
+
+### Phase 27: AI release pipeline (Day 35)
+
+**Goal:** A real task automated end to end: release preparation for this repository. The AI drafts the changelog from commits and merged PRs, proposes the next version, and prepares a tag and a draft GitHub Release; the report states the task and where the AI takes part. May be partly non-working where keys or write access are missing. Branch `Day35`; deliverable video + code.
+**Requirements**: TBD
+**Depends on:** Phase 22 (git and GitHub MCP), Phase 26 (file generation)
+**Plans:** 8 plans
+
+Plans:
+**Wave 1**
+
+- [ ] 27-01-PLAN.md — Release tools in mcp_servers/project_git.py behind --allow-release (context, range, commit CHANGELOG.md, tag, push, draft Release)
+- [ ] 27-02-PLAN.md — Pure core: /release grammar, plan/step types, frame contract, versions, noise filter, prompts, parsers
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 27-03-PLAN.md — Plan phase: chat-model changelog and version decision, build_plan over MCP reads
+- [ ] 27-04-PLAN.md — Confirm phase: ReleaseMcp caller with tool cards, step state machine with retry
+- [ ] 27-05-PLAN.md — Release plan card in app.js per 27-UI-SPEC
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 27-06-PLAN.md — WS wiring (release_handler, thin ws.py hook, state cleanup) + WS integration test
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 27-07-PLAN.md — Isolated-copy e2e scenario script and documentation
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [ ] 27-08-PLAN.md — Sandbox control runs and Day35_report.md
+
 ---
 *Roadmap created: 2026-09-19*
-*Last updated: 2026-10-13 — v5.0 roadmap: Phases 21-23 (Day 31); earlier: 2026-10-12 — v4.0 shipped and archived; earlier: 2026-10-12 — v4.0 roadmap: Phases 18-20 (Day 30); earlier: 2026-10-03 — v3.0 roadmap: Phases 13-17 (RAG, Days 21-25) added; earlier: 2026-10-02 — Phase 9 planned (4 plans, TITLE-01..06); backlog 999.4/999.5/999.6/999.11 promoted to Phases 9-12 (Day 21)*
+*Last updated: 2026-10-17 — Phases 25-27 added (Days 33-35); earlier: 2026-10-13 — v5.0 roadmap: Phases 21-23 (Day 31); earlier: 2026-10-12 — v4.0 shipped and archived; earlier: 2026-10-12 — v4.0 roadmap: Phases 18-20 (Day 30); earlier: 2026-10-03 — v3.0 roadmap: Phases 13-17 (RAG, Days 21-25) added; earlier: 2026-10-02 — Phase 9 planned (4 plans, TITLE-01..06); backlog 999.4/999.5/999.6/999.11 promoted to Phases 9-12 (Day 21)*
