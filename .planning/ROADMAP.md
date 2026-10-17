@@ -6,7 +6,7 @@
 - ✅ **v2.0 Week 4: MCP Integration** — Phases 7-9, 12 (shipped 2026-10-02)
 - ✅ **v3.0 Week 5: RAG** — Phases 10-11, 13-17 (shipped 2026-10-10)
 - ✅ **v4.0 Week 6: Local LLM as a Private Service** — Phases 18-20 (shipped 2026-10-12)
-- 🚧 **v5.0 Week 7: Pipeline** — Phases 21-23 (in progress)
+- 🚧 **v5.0 Week 7: Pipeline** — Phases 21-27 (in progress)
 
 ## Phases
 
@@ -14,6 +14,9 @@
 - [x] **Phase 22: Project MCP servers (Day 31)** - Own read-only git MCP server and the official GitHub server connected read-only
 - [x] **Phase 23: /help command, verification and report (Day 31)** - `/help` in the chat and over HTTP, tests, end-to-end script and `Day31_report.md`
 - [x] **Phase 24: Automated PR code review (Day 32)** - Pipeline on every Pull Request: diff plus changed files, RAG over docs and code, review text
+- [ ] **Phase 25: Support assistant (Day 33)** - FAQ/docs RAG plus user and ticket context from an own JSON-backed MCP server
+- [ ] **Phase 26: Project files assistant (Day 34)** - Goal-level tasks over project files: find API usages, generate README/ADR/changelog, diff output
+- [ ] **Phase 27: AI release pipeline (Day 35)** - Changelog, version proposal, tag and draft GitHub Release prepared with AI
 
 ### Phase 21: Project docs in RAG (Day 31)
 
@@ -299,6 +302,36 @@ Plans:
 
 - [x] 24-14-PLAN.md — Judge both runs, Day32_report.md, close test PRs
 
+### Phase 25: Support assistant (Day 33)
+
+**Goal:** A mini support service: the assistant answers product questions from a FAQ/product-docs knowledge base (existing RAG) and takes the user's or ticket's context from an own read-only stdio MCP server over a JSON file of users and tickets, so "Почему не работает авторизация?" is answered with that ticket's data. Branch `Day33`; deliverable video + code.
+**Requirements**: TBD
+**Depends on:** Phase 21 (knowledge base from docs), Phase 22 (own stdio MCP server pattern)
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /bm:plan-phase 25 to break down)
+
+### Phase 26: Project files assistant (Day 34)
+
+**Goal:** An assistant that works with project files on its own: given a goal (not "open file X"), it reads, searches across several files, analyses them and creates or changes files, with changes saved or shown as a diff and the run reproducible. Scenarios: find every usage of a component/API, and generate a new file (README / ADR / changelog). Branch `Day34`; deliverable video + code.
+**Requirements**: TBD
+**Depends on:** Phase 22 (project git MCP server); independent of Phase 25
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /bm:plan-phase 26 to break down)
+
+### Phase 27: AI release pipeline (Day 35)
+
+**Goal:** A real task automated end to end: release preparation for this repository. The AI drafts the changelog from commits and merged PRs, proposes the next version, and prepares a tag and a draft GitHub Release; the report states the task and where the AI takes part. May be partly non-working where keys or write access are missing. Branch `Day35`; deliverable video + code.
+**Requirements**: TBD
+**Depends on:** Phase 22 (git and GitHub MCP), Phase 26 (file generation)
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /bm:plan-phase 27 to break down)
+
 ---
 *Roadmap created: 2026-09-19*
-*Last updated: 2026-10-13 — v5.0 roadmap: Phases 21-23 (Day 31); earlier: 2026-10-12 — v4.0 shipped and archived; earlier: 2026-10-12 — v4.0 roadmap: Phases 18-20 (Day 30); earlier: 2026-10-03 — v3.0 roadmap: Phases 13-17 (RAG, Days 21-25) added; earlier: 2026-10-02 — Phase 9 planned (4 plans, TITLE-01..06); backlog 999.4/999.5/999.6/999.11 promoted to Phases 9-12 (Day 21)*
+*Last updated: 2026-10-17 — Phases 25-27 added (Days 33-35); earlier: 2026-10-13 — v5.0 roadmap: Phases 21-23 (Day 31); earlier: 2026-10-12 — v4.0 shipped and archived; earlier: 2026-10-12 — v4.0 roadmap: Phases 18-20 (Day 30); earlier: 2026-10-03 — v3.0 roadmap: Phases 13-17 (RAG, Days 21-25) added; earlier: 2026-10-02 — Phase 9 planned (4 plans, TITLE-01..06); backlog 999.4/999.5/999.6/999.11 promoted to Phases 9-12 (Day 21)*

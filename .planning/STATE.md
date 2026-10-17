@@ -74,6 +74,7 @@ No phases executed yet — metrics will populate after Phase 1 completes.
 - Phase 24 added (2026-10-13): Automated PR code review (Day 32) — added to the current v5.0 roadmap next to the still-open Phase 23 by user decision, not as a new milestone
 
 - v4.0 roadmap created 2026-10-12: Phases 18-20 (Day 30, single branch Day30); no research, 26/26 requirements mapped; VER-06 pytest coverage is written alongside each phase but tracked in Phase 20
+- Phases 25-27 added (2026-10-17): Support assistant (Day 33, own JSON-backed MCP + FAQ RAG), Project files assistant (Day 34, scenarios: find API usages + generate README/ADR/changelog), AI release pipeline (Day 35, changelog + version + tag + draft GitHub Release); branches `Day33`..`Day35`
 
 ### Open Questions (flagged by research, need resolution during phase planning)
 
