@@ -177,3 +177,98 @@ def test_sanitize_title() -> None:
     long = " ".join(["слово"] * 40)
     cut = rp.sanitize_title(long)
     assert cut is not None and len(cut) <= 80 and cut.endswith("слово")
+
+
+# --- prompts, LLM output parsing, coverage, section ---------------------------
+
+GROUPS = {"25": ["feat(25-01): a", "fix(25-02): b"], "quick": ["docs(quick-x): c"],
+          "other": ["refactor: d"]}
+
+
+def test_build_changelog_messages_layout() -> None:
+    messages, shrunk = rp.build_changelog_messages(GROUPS, ["Day32"], ["PR #5: Title"])
+    assert shrunk == 0
+    assert messages[0]["role"] == "system" and messages[1]["role"] == "user"
+    system = messages[0]["content"]
+    for heading in rp.ALLOWED_HEADINGS:
+        assert heading in system
+    assert "<commits>" in system
+    user = messages[1]["content"]
+    assert "<commits>" in user and "</commits>" in user
+    assert "Фаза 25:" in user and "Быстрые задачи:" in user and "Прочее:" in user
+    assert "- feat(25-01): a" in user and "Day32" in user and "PR #5: Title" in user
+
+
+def test_build_changelog_messages_shrinks() -> None:
+    groups = {"25": [f"feat(25-01): item {i}" for i in range(40)] + ["test(25-01): t1"]}
+    messages, shrunk = rp.build_changelog_messages(groups, [], [], budget_chars=700)
+    user = messages[1]["content"]
+    assert "test(25-01): t1" not in user
+    assert "… и ещё" in user
+    assert shrunk == 1 + (40 - rp.GROUP_SUBJECT_CAP)
+    assert user.count("- feat(25-01): item") == rp.GROUP_SUBJECT_CAP
+
+
+def test_parse_changelog_accepts_and_strips() -> None:
+    raw = (
+        "<think>hm</think>\n```markdown\nПредисловие\n### Добавлено\n- one\n"
+        "### Исправлено\n- two\n```"
+    )
+    assert rp.parse_changelog(raw) == "### Добавлено\n- one\n### Исправлено\n- two"
+    assert rp.parse_changelog("reasoning</think>\n### Изменено\n- x") == "### Изменено\n- x"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [None, "", "just text", "### Прочее\n- x", "### Добавлено\n- a\n## Release\n- b",
+     "### Добавлено\nno items here"],
+)
+def test_parse_changelog_rejects(raw: str | None) -> None:
+    assert rp.parse_changelog(raw) is None
+
+
+def test_changelog_coverage() -> None:
+    body = "### Добавлено\n- Фаза 26: x\n- слияние Day 32"
+    assert rp.changelog_coverage(body, ["25", "26"], ["Day32"]) == ["25"]
+    assert rp.changelog_coverage("фазы 25 и (26), day32", ["25", "26"], ["Day32"]) == []
+    assert rp.changelog_coverage("", ["25"], ["Day33"]) == ["25", "Day33"]
+
+
+def test_build_retry_messages() -> None:
+    base = [{"role": "system", "content": "s"}, {"role": "user", "content": "u"}]
+    out = rp.build_retry_messages(base, "draft", ["25", "Day32"])
+    assert out[:2] == base
+    assert out[2] == {"role": "assistant", "content": "draft"}
+    assert out[3]["role"] == "user"
+    assert "25" in out[3]["content"] and "Day32" in out[3]["content"]
+    assert len(base) == 2
+
+
+def test_build_decision_messages() -> None:
+    signals = {"feat": 3, "fix": 1, "breaking": False}
+    messages = rp.build_decision_messages(["v5.0", "v4.1"], signals, "body" * 2000)
+    assert messages[0]["role"] == "system" and "JSON" in messages[0]["content"]
+    user = messages[1]["content"]
+    assert "v5.0" in user and "v4.1" in user and "feat" in user
+    assert len(user) < 6000
+
+
+def test_parse_decision_valid_and_fenced() -> None:
+    text = '{"version": "v5.0", "title": "Pipeline", "rationale": "A. B."}'
+    assert rp.parse_decision(text, ["v5.0", "v4.1"]) == rp.Decision("v5.0", "Pipeline", "A. B.")
+    fenced = "<think>x</think>\n```json\n" + text + "\n```"
+    assert rp.parse_decision(fenced, ["v5.0", "v4.1"]).version == "v5.0"
+
+
+def test_parse_decision_rejections() -> None:
+    bad = '{"version": "v6.0", "title": "T", "rationale": "R"}'
+    decision = rp.parse_decision(bad, ["v5.0", "v4.1"])
+    assert decision.version is None and decision.title == "T"
+    assert rp.parse_decision("not json", ["v5.0"]) == rp.Decision(None, None, None)
+    assert rp.parse_decision(None, ["v5.0"]) == rp.Decision(None, None, None)
+
+
+def test_changelog_section() -> None:
+    assert rp.changelog_section("v5.0", "2026-10-17", "  ### Добавлено\n- x \n") == (
+        "## [v5.0] - 2026-10-17\n\n### Добавлено\n- x\n"
+    )
