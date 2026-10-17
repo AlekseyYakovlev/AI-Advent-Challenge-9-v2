@@ -1480,7 +1480,93 @@ function appendTokenToStream(token) {
     $('messages').scrollTop = $('messages').scrollHeight;
 }
 
+function isUnifiedDiff(text) {
+    const lines = text.split('\n');
+    const hasHunk = lines.some(line => line.startsWith('@@'));
+    if (!hasHunk) return false;
+    for (let i = 0; i < lines.length - 1; i++) {
+        if (lines[i].startsWith('--- ') && lines[i + 1].startsWith('+++ ')) return true;
+    }
+    return false;
+}
+
+function classifyDiffLine(line, inHunk) {
+    if (line.startsWith('diff --git ')) return { kind: 'meta', inHunk: false };
+    if (!inHunk) {
+        if (line.startsWith('--- ') || line.startsWith('+++ ') || line.startsWith('index ')
+            || line.startsWith('new file mode') || line.startsWith('deleted file mode')) {
+            return { kind: 'meta', inHunk: false };
+        }
+    }
+    if (line.startsWith('@@')) return { kind: 'hunk', inHunk: true };
+    if (!inHunk) return { kind: 'context', inHunk: false };
+    if (line.startsWith('+')) return { kind: 'added', inHunk: true };
+    if (line.startsWith('-')) return { kind: 'removed', inHunk: true };
+    if (line.startsWith('\\')) return { kind: 'meta', inHunk: true };
+    return { kind: 'context', inHunk: true };
+}
+
+function diffLineCounts(text) {
+    let added = 0;
+    let removed = 0;
+    let inHunk = false;
+    for (const line of text.split('\n')) {
+        const res = classifyDiffLine(line, inHunk);
+        inHunk = res.inHunk;
+        if (res.kind === 'added') added++;
+        else if (res.kind === 'removed') removed++;
+    }
+    return { added, removed };
+}
+
+function diffSummarySuffix(evt) {
+    const text = evt.result || '';
+    let added;
+    let removed;
+    if (evt.truncated) {
+        const m = text.split('\n')[0].match(/\(\+(\d+) -(\d+)\)/);
+        if (!m) return '';
+        added = m[1];
+        removed = m[2];
+    } else {
+        const counts = diffLineCounts(text);
+        added = counts.added;
+        removed = counts.removed;
+    }
+    return ' · +' + added + ' −' + removed;
+}
+
+function buildDiffBlock(text) {
+    const box = document.createElement('div');
+    box.className = 'mt-0 rounded border border-slate-700 bg-slate-950 overflow-x-auto max-h-96 '
+        + 'overflow-y-auto font-mono text-xs leading-relaxed focus:outline-none focus:ring-2 '
+        + 'focus:ring-indigo-500';
+    box.setAttribute('role', 'region');
+    box.setAttribute('aria-label', 'Diff изменения');
+    box.tabIndex = 0;
+    const kindClass = {
+        added: 'bg-green-950/60 text-green-300',
+        removed: 'bg-red-950/60 text-red-300',
+        hunk: 'bg-slate-800 text-indigo-300',
+        meta: 'text-slate-400 font-semibold',
+        context: 'text-slate-300',
+    };
+    const lines = text.split('\n');
+    if (lines.length && lines[lines.length - 1] === '') lines.pop();
+    let inHunk = false;
+    for (const line of lines) {
+        const res = classifyDiffLine(line, inHunk);
+        inHunk = res.inHunk;
+        const row = document.createElement('div');
+        row.className = 'whitespace-pre px-2 min-w-full w-max ' + kindClass[res.kind];
+        row.textContent = line === '' ? ' ' : line;
+        box.appendChild(row);
+    }
+    return box;
+}
+
 function buildToolCallCard(evt) {
+    const isDiff = Boolean(evt.ok && isUnifiedDiff(evt.result || ''));
     const card = document.createElement('details');
     card.className = 'tool-call-card max-w-[75%] rounded-lg border border-slate-700 '
         + 'bg-slate-900 text-xs text-slate-300 px-3 py-2';
@@ -1490,6 +1576,7 @@ function buildToolCallCard(evt) {
     summary.className = `cursor-pointer select-none ${evt.ok ? '' : 'text-red-400'}`;
     summary.textContent = '🔧 ' + (evt.server ? evt.server + ' · ' : '')
         + (evt.tool || evt.name || '?') + (evt.ok ? ' — ok' : ' — ошибка');
+    if (isDiff) summary.textContent += diffSummarySuffix(evt);
     card.appendChild(summary);
 
     const argsLabel = document.createElement('div');
@@ -1506,7 +1593,8 @@ function buildToolCallCard(evt) {
     resultPre.className = 'whitespace-pre-wrap break-all';
     resultPre.textContent = evt.result || '';
 
-    card.append(argsLabel, argsPre, resultLabel, resultPre);
+    const body = (evt.ok && isUnifiedDiff(evt.result || '')) ? buildDiffBlock(evt.result) : resultPre;
+    card.append(argsLabel, argsPre, resultLabel, body);
     return card;
 }
 
