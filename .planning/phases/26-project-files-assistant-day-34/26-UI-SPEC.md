@@ -1,7 +1,8 @@
 ---
 phase: 26
 slug: project-files-assistant-day-34
-status: draft
+status: approved
+reviewed_at: 2026-10-17
 shadcn_initialized: false
 preset: none
 created: 2026-10-17
@@ -72,7 +73,7 @@ Reused Tailwind utilities; no new values.
 |-------|-------|-------|
 | xs | 4px | `py-1`-level gaps, `mt-1` |
 | sm | 8px | `px-2` diff line padding, `mt-2` label gaps (existing) |
-| md | 12px / 16px | card `px-3 py-2` (existing, kept for parity) |
+| md | 12px (existing card only) | card `px-3 py-2` (existing, kept for parity); any new element uses 16px |
 
 Exceptions: 12px (`px-3`) and 2px-class vertical rhythm come from the existing tool-call card; the max height `max-h-96` (384px) is a layout cap, not a spacing token.
 
@@ -147,11 +148,11 @@ CDN libraries stay as-is (Tailwind, Marked.js, DOMPurify 3.1.6). No new library,
 
 ## Checker Sign-Off
 
-- [ ] Dimension 1 Copywriting: PASS
-- [ ] Dimension 2 Visuals: PASS
-- [ ] Dimension 3 Color: PASS
-- [ ] Dimension 4 Typography: PASS
-- [ ] Dimension 5 Spacing: PASS
-- [ ] Dimension 6 Registry Safety: PASS
+- [x] Dimension 1 Copywriting: PASS
+- [x] Dimension 2 Visuals: PASS
+- [x] Dimension 3 Color: PASS
+- [x] Dimension 4 Typography: PASS
+- [x] Dimension 5 Spacing: FLAG (12px inherited from existing card only; new diff rows use px-2)
+- [x] Dimension 6 Registry Safety: PASS
 
-**Approval:** pending
+**Approval:** approved 2026-10-17
