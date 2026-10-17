@@ -38,6 +38,7 @@ FIVE_TOOLS: list[str] = [
     "git_status",
     "git_tracked_files",
 ]
+READ_TOOLS: list[str] = ["find_usages", "read_file", "search_text"]
 
 
 def _load_cli() -> ModuleType:
@@ -142,7 +143,7 @@ def _first_line(text: str) -> str:
 
 async def test_exactly_five_tools_with_local_description() -> None:
     tools = await project_git.server.list_tools()
-    assert sorted(t.name for t in tools) == FIVE_TOOLS
+    assert sorted(t.name for t in tools) == sorted(FIVE_TOOLS + READ_TOOLS)
     for tool in tools:
         assert (tool.description or "").startswith(
             "LOCAL working copy (not the GitHub remote):"
@@ -486,7 +487,7 @@ async def test_cli_lists_five_tools(
     out = capsys.readouterr().out
     assert code == 0
     assert "Server: local-git" in out
-    assert "Tools (5):" in out
+    assert "Tools (8):" in out
     for name in FIVE_TOOLS:
         assert name in out
 

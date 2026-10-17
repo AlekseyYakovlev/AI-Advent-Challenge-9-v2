@@ -68,7 +68,7 @@ async def test_user_guide_names_every_registered_tool() -> None:
     """Every tool the project git server registers appears in the guide."""
     tools = await project_git.server.list_tools()
     names = [tool.name for tool in tools]
-    assert len(names) == 5
+    assert len(names) == 8
     section = _guide_section()
     for name in names:
         assert name in section, f"{name} is missing from the user guide"
