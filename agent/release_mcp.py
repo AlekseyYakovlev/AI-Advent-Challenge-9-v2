@@ -97,9 +97,10 @@ class ReleaseMcp:
         return self.rows.github is not None
 
     async def __call__(self, server_key: str, tool: str, arguments: dict[str, Any]) -> ToolOutcome:
-        row = self.rows.release if server_key == "release" else self.rows.github
+        is_release = server_key in ("release", RELEASE_SERVER_NAME)
+        row = self.rows.release if is_release else self.rows.github
         if row is None:
-            name = GITHUB_SERVER_NAME if server_key == "github" else RELEASE_SERVER_NAME
+            name = RELEASE_SERVER_NAME if is_release else GITHUB_SERVER_NAME
             outcome = ToolOutcome(False, f"MCP server '{name}' is not configured")
             await self._emit(name, 0, tool, arguments, outcome)
             return outcome
