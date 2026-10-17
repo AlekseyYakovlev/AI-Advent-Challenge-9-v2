@@ -393,7 +393,7 @@ Plans:
 **Goal:** An assistant that works with project files on its own: given a goal (not "open file X"), it reads, searches across several files, analyses them and creates or changes files, with changes saved or shown as a diff and the run reproducible. Scenarios: find every usage of a component/API, and generate a new file (README / ADR / changelog). Branch `Day34`; deliverable video + code.
 **Requirements**: PFILE-01, PFILE-02, PFILE-03, PFILE-04, PFILE-05, PFILE-06, PFILE-07, PFILE-08, PFILE-09, PFILE-10
 **Depends on:** Phase 22 (project git MCP server); independent of Phase 25
-**Plans:** 4/8 plans executed
+**Plans:** 5/8 plans executed
 
 Plans:
 **Wave 1**
@@ -408,7 +408,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 26-05-PLAN.md — Isolated-copy browser e2e: project-files entry on a clone, write card with diff, render checks
+- [x] 26-05-PLAN.md — Isolated-copy browser e2e: project-files entry on a clone, write card with diff, render checks
 - [ ] 26-06-PLAN.md — scripts/files_eval.py scenario driver for the four D-15 scenarios with automatic checks
 
 **Wave 4** *(blocked on Wave 3 completion)*
