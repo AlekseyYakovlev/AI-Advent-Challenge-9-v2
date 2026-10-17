@@ -268,3 +268,162 @@ async def test_range_commits_rejects_bad_input(
 ) -> None:
     with pytest.raises(ToolInputError):
         await project_git.release_range_commits(range_text, page)
+
+
+# ------------------------------------------------------- release_commit_changelog
+
+SECTION_11: str = "## [v1.1] - 2026-10-17\n\n### Добавлено\n- x\n"
+SECTION_12: str = "## [v1.2] - 2026-10-18\n\n### Исправлено\n- y\n"
+
+
+async def test_changelog_created_and_committed(release_repo: Path) -> None:
+    text = await project_git.release_commit_changelog("v1.1", SECTION_11)
+    assert text.splitlines()[0] == "Committed CHANGELOG.md for v1.1"
+    commit = _json_line(text)["commit"]
+    assert commit == _run(release_repo, "rev-parse", "HEAD")
+    assert _run(release_repo, "show", "--name-only", "--format=%s", "HEAD").splitlines() == [
+        "docs(release): v1.1 changelog",
+        "",
+        "CHANGELOG.md",
+    ]
+    body = (release_repo / "CHANGELOG.md").read_bytes().decode("utf-8")
+    assert body.startswith("# Changelog")
+    assert "### Добавлено" in body and "\r" not in body
+
+
+async def test_changelog_second_section_goes_above_first(release_repo: Path) -> None:
+    await project_git.release_commit_changelog("v1.1", SECTION_11)
+    await project_git.release_commit_changelog("v1.2", SECTION_12)
+    body = (release_repo / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert body.index("# Changelog") < body.index("## [v1.2]") < body.index("## [v1.1]")
+    assert "Исправлено" in body
+
+
+@pytest.mark.parametrize(
+    ("version", "section"),
+    [
+        ("1.1", "## [1.1] - d\n"),
+        ("v1", "## [v1] - d\n"),
+        ("v1.1", "## [v1.2] - d\n"),
+        ("v1.1", "no heading\n"),
+    ],
+)
+async def test_changelog_rejects_bad_version_or_section(
+    release_repo: Path, version: str, section: str
+) -> None:
+    with pytest.raises(ToolInputError):
+        await project_git.release_commit_changelog(version, section)
+
+
+async def test_changelog_refuses_duplicate_version(release_repo: Path) -> None:
+    await project_git.release_commit_changelog("v1.1", SECTION_11)
+    with pytest.raises(ToolInputError, match="already has a section"):
+        await project_git.release_commit_changelog("v1.1", SECTION_11)
+
+
+async def test_changelog_refuses_when_other_file_staged(release_repo: Path) -> None:
+    (release_repo / "other.txt").write_text("o\n", encoding="utf-8")
+    _git(release_repo, "add", "other.txt")
+    with pytest.raises(ToolInputError, match="staged"):
+        await project_git.release_commit_changelog("v1.1", SECTION_11)
+
+
+async def test_changelog_commit_leaves_unstaged_changes_out(release_repo: Path) -> None:
+    (release_repo / "a.txt").write_text("edited\n", encoding="utf-8")
+    await project_git.release_commit_changelog("v1.1", SECTION_11)
+    names = _run(release_repo, "show", "--name-only", "--format=", "HEAD").split()
+    assert names == ["CHANGELOG.md"]
+    assert _run(release_repo, "status", "--porcelain").strip() == "M a.txt"
+
+
+# ------------------------------------------------------------- release_create_tag
+
+
+async def test_create_tag_annotated(release_repo: Path) -> None:
+    sha = _run(release_repo, "rev-parse", "HEAD")
+    text = await project_git.release_create_tag("v1.1", "v1.1: Title", sha)
+    assert text.splitlines()[0] == f"Created annotated tag v1.1 at {sha[:7]}"
+    assert _json_line(text) == {"tag": "v1.1", "commit": sha}
+    assert _run(release_repo, "cat-file", "-t", "v1.1") == "tag"
+    assert _run(release_repo, "rev-parse", "v1.1^{commit}") == sha
+
+
+async def test_create_tag_refuses_existing(release_repo: Path) -> None:
+    sha = _run(release_repo, "rev-parse", "HEAD")
+    with pytest.raises(ToolInputError, match="v1.0"):
+        await project_git.release_create_tag("v1.0", "again", sha)
+
+
+@pytest.mark.parametrize("version", ["v1.1 ", "--x", "refs/tags/v1.1", "1.1", "v1.1.0"])
+async def test_create_tag_rejects_bad_version(release_repo: Path, version: str) -> None:
+    sha = _run(release_repo, "rev-parse", "HEAD")
+    with pytest.raises(ToolInputError):
+        await project_git.release_create_tag(version, "m", sha)
+
+
+@pytest.mark.parametrize("message", ["", "two\nlines", "x" * 201])
+async def test_create_tag_rejects_bad_message(release_repo: Path, message: str) -> None:
+    sha = _run(release_repo, "rev-parse", "HEAD")
+    with pytest.raises(ToolInputError):
+        await project_git.release_create_tag("v1.1", message, sha)
+
+
+# ------------------------------------------------------------------ release_push
+
+
+def _origin_refs(repo: Path) -> str:
+    return _run(repo, "ls-remote", "origin")
+
+
+async def test_push_sends_branch_and_tag(release_repo: Path) -> None:
+    await project_git.release_commit_changelog("v1.1", SECTION_11)
+    sha = _run(release_repo, "rev-parse", "HEAD")
+    await project_git.release_create_tag("v1.1", "v1.1: T", sha)
+    text = await project_git.release_push("main", "v1.1")
+    assert text == "Pushed main and v1.1 to origin"
+    refs = _origin_refs(release_repo)
+    assert f"{sha}\trefs/heads/main" in refs
+    assert "refs/tags/v1.1" in refs
+
+
+async def test_push_rejects_missing_tag(release_repo: Path) -> None:
+    with pytest.raises(ToolInputError):
+        await project_git.release_push("main", "v9.9")
+
+
+@pytest.mark.parametrize(
+    "branch", ["-x", "a:b", "+main", "ma*", "refs/heads/main", "a..b", "", "bad name"]
+)
+async def test_push_rejects_bad_branch(release_repo: Path, branch: str) -> None:
+    with pytest.raises(ToolInputError):
+        await project_git.release_push(branch, "v1.0")
+
+
+async def test_push_non_fast_forward_fails_without_retry(
+    release_repo: Path, tmp_path: Path
+) -> None:
+    other = tmp_path / "other"
+    _git(tmp_path, "clone", str(tmp_path / "origin.git"), str(other))
+    _commit_file(other, "o.txt", "o\n", "other work")
+    _git(other, "push", "origin", "main")
+    remote_head = _run(release_repo, "ls-remote", "origin", "refs/heads/main").split()[0]
+    _commit_file(release_repo, "b.txt", "b\n", "local work")
+    await project_git.release_create_tag("v1.1", "v1.1", _run(release_repo, "rev-parse", "HEAD"))
+    with pytest.raises(ToolInputError, match="push failed"):
+        await project_git.release_push("main", "v1.1")
+    assert _run(release_repo, "ls-remote", "origin", "refs/heads/main").split()[0] == remote_head
+
+
+# ------------------------------------------------------------ source cleanliness
+
+
+def test_release_source_has_no_force_or_wide_staging() -> None:
+    source = MODULE_PATH.read_text(encoding="utf-8")
+    for needle in (
+        "--force", "--force-with-lease", "--mirror", "--delete", '--tags"',
+        'add", "-A', 'commit", "-a',
+    ):  # fmt: skip
+        assert needle not in source, needle
+    assert "print(" not in source
+    for line in source.splitlines():
+        assert not re.match(r"\s*(import|from)\s+(shared|agent)\b", line)
