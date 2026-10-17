@@ -7,6 +7,9 @@ starts it with a scratch database and a closed LM Studio port, drives it with he
 and writes one row per scenario step to eval_out/day32/e2e_review_settings.md.
 The ports 8000/8001 of a running app are never touched; the script refuses to run against them.
 
+Set REVIEW_E2E_LM_STUDIO_URL to a running LM Studio to exercise the refresh success branch (6a);
+that run writes e2e_review_settings_live_lm.md so the closed-port record of 6b is kept.
+
 Exit codes: 0 no step failed, 1 a step failed, 3 the run was blocked (ports busy, Playwright or
 the copy could not start).
 """
@@ -34,7 +37,10 @@ CLOSED_LM_PORT: int = 18767
 FORBIDDEN_PORTS: tuple[int, ...] = (8000, 8001)
 UI_URL: str = f"http://localhost:{UI_PORT}"
 HOST: str = "127.0.0.1"
-REPORT_PATH: Path = REPO_ROOT / "eval_out" / "day32" / "e2e_review_settings.md"
+LIVE_LM_URL: str = os.environ.get("REVIEW_E2E_LM_STUDIO_URL", "")
+REPORT_PATH: Path = REPO_ROOT / "eval_out" / "day32" / (
+    "e2e_review_settings_live_lm.md" if LIVE_LM_URL else "e2e_review_settings.md"
+)
 STEP_TIMEOUT_MS: int = 20000
 REFRESH_WAIT_SECONDS: float = 40.0
 PLAYWRIGHT_TIMEOUT: float = 180.0
@@ -255,7 +261,7 @@ async def run_e2e() -> bool:
             "DB_PATH": str(db_path),
             "UI_PORT": str(UI_PORT),
             "AGENT_PORT": str(AGENT_PORT),
-            "LM_STUDIO_BASE_URL": f"http://{HOST}:{CLOSED_LM_PORT}",
+            "LM_STUDIO_BASE_URL": LIVE_LM_URL or f"http://{HOST}:{CLOSED_LM_PORT}",
             "PYTHONIOENCODING": "utf-8",
             "PYTHONPATH": os.pathsep.join([str(copy_dir), *filter(None, [os.environ.get("PYTHONPATH")])]),
         }
