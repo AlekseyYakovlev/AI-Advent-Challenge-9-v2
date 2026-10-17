@@ -46,6 +46,10 @@ Out of scope: publishing the Release (it stays a draft), Pull Request write oper
   4. Manual version and range: `/release` with own range, overridden version and title.
 - **D-19:** `Day35_report.md` is in Russian like earlier reports, states the task and where the AI takes part, and follows honest recording: a run that could not be made (LM Studio not running, no token, no write access) is recorded as not run / non-working, never as passed.
 
+### Amendments after research (2026-10-17, confirmed by user)
+- **D-20 (amends D-04):** `github-mcp-server` v2.0.2 (latest) has no tool that creates a Release, so the draft Release does NOT go through a second write-enabled `github-mcp-server` entry. Instead add one narrow tool `github_create_draft_release` to `mcp_servers/project_git.py`: `httpx` `POST /repos/{owner}/{repo}/releases` with `draft: true`, token read from the server's own env, registered only when a new `--allow-release` flag is passed. It shows as an ordinary tool card. The report states this deviation from D-04 and why. If the token or permission is missing, the step is recorded as non-working (D-04 rule still applies).
+- **D-21 (clarifies D-09):** "Dirty working tree" is strict: any change blocks writing, including untracked files. The block message lists the offending paths.
+
 ### Claude's Discretion
 - Exact names and parameters of the new narrow git tools and whether they sit behind the existing `--allow-write` flag of Phase 26 (D-05 there: `local-git` stays read-only; the write-enabled entry is `project-files`) — consistency with Phase 26 is expected.
 - Exact filter rules and how commits are mapped to phases; how merged PRs are fetched and deduplicated against `DayNN` merges.
