@@ -1,0 +1,179 @@
+{
+  "users": [
+    {
+      "id": "U-1",
+      "login": "ivan",
+      "name": "Иван Петров",
+      "email": "ivan@example.test",
+      "plan": "Pro",
+      "account_status": "active",
+      "app_version": "5.0.0",
+      "os": "Windows 11"
+    },
+    {
+      "id": "U-2",
+      "login": "olga",
+      "name": "Ольга Смирнова",
+      "email": "olga@example.test",
+      "plan": "Team",
+      "account_status": "active",
+      "app_version": "5.0.0",
+      "os": "Ubuntu 24.04"
+    },
+    {
+      "id": "U-3",
+      "login": "petr",
+      "name": "Пётр Сидоров",
+      "email": "petr@example.test",
+      "plan": "Free",
+      "account_status": "active",
+      "app_version": "4.2.1",
+      "os": "macOS 15"
+    },
+    {
+      "id": "U-4",
+      "login": "anna",
+      "name": "Анна Кузнецова",
+      "email": "anna@example.test",
+      "plan": "Pro",
+      "account_status": "suspended",
+      "app_version": "5.0.0",
+      "os": "Windows 10"
+    }
+  ],
+  "tickets": [
+    {
+      "id": "T-1001",
+      "client_id": "U-1",
+      "subject": "Не могу войти, пишет \"слишком много попыток\"",
+      "category": "auth",
+      "status": "open",
+      "priority": "high",
+      "created_at": "2026-10-12T08:15:00Z",
+      "updated_at": "2026-10-12T09:02:00Z",
+      "error_text": "429 Слишком много неудачных попыток входа. Повторите позже",
+      "messages": [
+        {
+          "at": "2026-10-12T08:15:00Z",
+          "author": "client",
+          "text": "Сменил пароль и много раз подряд пробовал войти, теперь вход заблокирован и пишет, что слишком много попыток."
+        },
+        {
+          "at": "2026-10-12T09:02:00Z",
+          "author": "support",
+          "text": "Когда именно это началось и сколько раз вы вводили пароль?"
+        }
+      ]
+    },
+    {
+      "id": "T-1002",
+      "client_id": "U-2",
+      "subject": "Вход по адресу сервера в локальной сети не работает",
+      "category": "auth",
+      "status": "open",
+      "priority": "high",
+      "created_at": "2026-10-13T10:30:00Z",
+      "updated_at": "2026-10-13T11:10:00Z",
+      "error_text": "403 Cross-origin request rejected",
+      "messages": [
+        {
+          "at": "2026-10-13T10:30:00Z",
+          "author": "client",
+          "text": "Открываю приложение со второго компьютера по адресу http://192.168.1.20:8000, вход не проходит. На самом сервере всё работает."
+        },
+        {
+          "at": "2026-10-13T11:10:00Z",
+          "author": "support",
+          "text": "Уточните, какой точно адрес вы вводите в браузере на втором компьютере."
+        }
+      ]
+    },
+    {
+      "id": "T-1003",
+      "client_id": "U-3",
+      "subject": "Через месяц сессия слетает, снова просит войти",
+      "category": "auth",
+      "status": "in_progress",
+      "priority": "normal",
+      "created_at": "2026-10-08T14:00:00Z",
+      "updated_at": "2026-10-10T09:45:00Z",
+      "error_text": "401 Not authenticated",
+      "messages": [
+        {
+          "at": "2026-10-08T14:00:00Z",
+          "author": "client",
+          "text": "Спустя месяц после входа приложение пишет, что я не авторизован. Браузер блокирует куки для этого сайта."
+        },
+        {
+          "at": "2026-10-10T09:45:00Z",
+          "author": "support",
+          "text": "Проверяем срок жизни сессии; пока разрешите куки для адреса приложения."
+        }
+      ]
+    },
+    {
+      "id": "T-1004",
+      "client_id": "U-2",
+      "subject": "API-ключ не принимается",
+      "category": "api",
+      "status": "waiting",
+      "priority": "normal",
+      "created_at": "2026-10-05T07:20:00Z",
+      "updated_at": "2026-10-06T12:00:00Z",
+      "error_text": "401 Invalid or revoked API key",
+      "messages": [
+        {
+          "at": "2026-10-05T07:20:00Z",
+          "author": "client",
+          "text": "Скрипт получает ошибку при обращении к API с моим ключом."
+        },
+        {
+          "at": "2026-10-06T12:00:00Z",
+          "author": "support",
+          "text": "Возможно, ключ был отозван. Выпустите новый и пришлите результат."
+        }
+      ]
+    },
+    {
+      "id": "T-1005",
+      "client_id": "U-3",
+      "subject": "Локальная модель не отвечает",
+      "category": "llm",
+      "status": "closed",
+      "priority": "low",
+      "created_at": "2026-09-28T16:40:00Z",
+      "updated_at": "2026-09-29T08:05:00Z",
+      "error_text": "LM Studio is not running",
+      "messages": [
+        {
+          "at": "2026-09-28T16:40:00Z",
+          "author": "client",
+          "text": "Выбрал локальную модель, а чат сообщает, что LM Studio не запущена."
+        },
+        {
+          "at": "2026-09-29T08:05:00Z",
+          "author": "support",
+          "text": "Запустите LM Studio и включите локальный сервер на порту 1234. Закрываю заявку."
+        }
+      ]
+    },
+    {
+      "id": "T-1006",
+      "client_id": "U-4",
+      "subject": "MCP-сервер не подключается",
+      "category": "mcp",
+      "status": "open",
+      "priority": "normal",
+      "created_at": "2026-10-14T13:05:00Z",
+      "updated_at": "2026-10-14T13:05:00Z",
+      "error_text": "MCP server failed to start: command not found",
+      "messages": [
+        {
+          "at": "2026-10-14T13:05:00Z",
+          "author": "client",
+          "text": "Добавила MCP-сервер, но он не подключается. В форме показан хвост stderr с ошибкой запуска команды."
+        }
+      ]
+    }
+  ]
+}
