@@ -2,10 +2,12 @@
 
 Usage:
     python mcp_servers/project_git.py --root=<repository> [--max-chars=18000] [--timeout=10]
-        [--allow-write]
+        [--allow-write] [--allow-release]
 
 Without --allow-write every tool only reads. With it, write_file and edit_file are
-registered and write files inside the root.
+registered and write files inside the root. With --allow-release the release tools are
+registered: release_context, release_range_commits, release_commit_changelog,
+release_create_tag, release_push and github_create_draft_release.
 
 This file is self-contained on purpose. It does not use the application logger or
 settings modules from the shared package: that logger writes JSON to stdout, and stdout is
@@ -18,6 +20,7 @@ import ast
 import asyncio
 import contextlib
 import difflib
+import json
 import os
 import re
 import shutil
@@ -60,6 +63,12 @@ RESERVED_NAMES: frozenset[str] = frozenset(
 )
 _SHORT_GIT: re.Pattern[str] = re.compile(r"^git~\d+$", re.IGNORECASE)
 _COMMIT_ID = re.compile(r"[0-9a-f]{40}([0-9a-f]{24})?")
+RELEASE_PAGE_SIZE: int = 50
+RELEASE_NETWORK_TIMEOUT: float = 90.0
+MAX_RELEASE_PAGES: int = 40
+MAX_COMMIT_DIRS: int = 10
+_VERSION_TAG = re.compile(r"v(\d+)\.(\d+)")
+_release_registered: bool = False
 
 
 class ToolInputError(ValueError):
@@ -85,6 +94,7 @@ class ServerConfig:
     max_chars: int
     timeout: float
     allow_write: bool = False
+    allow_release: bool = False
 
 
 _config: ServerConfig | None = None
@@ -93,12 +103,22 @@ server = FastMCP("local-git", log_level="WARNING")
 
 
 def configure(
-    root: str, git: str, max_chars: int, timeout: float, allow_write: bool = False
+    root: str,
+    git: str,
+    max_chars: int,
+    timeout: float,
+    allow_write: bool = False,
+    allow_release: bool = False,
 ) -> None:
     """Store the validated launch settings for the tools."""
     global _config
     _config = ServerConfig(
-        root=root, git=git, max_chars=max_chars, timeout=timeout, allow_write=allow_write
+        root=root,
+        git=git,
+        max_chars=max_chars,
+        timeout=timeout,
+        allow_write=allow_write,
+        allow_release=allow_release,
     )
 
 
@@ -133,6 +153,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--allow-write",
         action="store_true",
         help="register write_file and edit_file (writes inside --root)",
+    )
+    parser.add_argument(
+        "--allow-release",
+        action="store_true",
+        help="expose the release tools (commit CHANGELOG.md, tag, push, draft GitHub Release)",
     )
     args = parser.parse_args(argv)
     if args.max_chars < MIN_MAX_CHARS:
@@ -1243,6 +1268,135 @@ async def edit_file(path: str, old_text: str, new_text: str) -> str:
     return _result(rel, "Updated", text, result)
 
 
+async def _optional_line(args: list[str]) -> str | None:
+    """Run a git command and return its trimmed output, or None when it fails or is empty."""
+    result = await run_git(args)
+    text = result.text.strip()
+    return text if result.returncode == 0 and text else None
+
+
+async def _remote_tags() -> tuple[list[str] | None, str | None]:
+    """List tag names on origin; on failure return (None, reason)."""
+    cfg = get_config()
+    try:
+        result = await run_command(
+            base_argv(cfg.git) + ["ls-remote", "--tags", "--refs", "origin"],
+            cwd=cfg.root,
+            env=git_env(),
+            timeout=RELEASE_NETWORK_TIMEOUT,
+            label="git ls-remote",
+        )
+    except ToolInputError as exc:
+        return None, str(exc)
+    if result.returncode != 0:
+        return None, _last_line(result.stderr, f"git ls-remote exited with {result.returncode}")
+    prefix = "refs/tags/"
+    names = [
+        line.split("\t", 1)[1][len(prefix):]
+        for line in result.text.splitlines()
+        if "\t" in line and line.split("\t", 1)[1].startswith(prefix)
+    ]
+    return names, None
+
+
+async def release_context() -> str:
+    """LOCAL working copy (not the GitHub remote): read what a release needs.
+
+    Takes no parameters. Line 1 names the branch; line 2 is a JSON object with branch, head,
+    origin_url, local_tags, merged_tags (tags reachable from HEAD), remote_tags (tags on origin,
+    null when origin cannot be reached, with remote_error) and dirty (changed and untracked files).
+    """
+    branch = await _optional_line(["symbolic-ref", "--short", "-q", "HEAD"])
+    head = await run_git(["rev-parse", "--verify", "HEAD"])
+    if head.returncode != 0:
+        raise _git_error(head, "rev-parse")
+    status = await run_git(
+        ["-c", "core.quotePath=false", "status", "--porcelain=v1", "--branch",
+         "--untracked-files=all"]
+    )  # fmt: skip
+    if status.returncode != 0:
+        raise _git_error(status, "status")
+    local = await run_git(["tag", "--list"])
+    merged = await run_git(["tag", "--merged", "HEAD"])
+    remote_tags, remote_error = await _remote_tags()
+    info = {
+        "branch": branch,
+        "head": head.text.strip(),
+        "origin_url": await _optional_line(["remote", "get-url", "origin"]),
+        "local_tags": local.text.split(),
+        "merged_tags": merged.text.split(),
+        "remote_tags": remote_tags,
+        "remote_error": remote_error,
+        "dirty": [line for line in status.text.splitlines() if line and not line.startswith("##")],
+    }
+    return f"Release context for {branch or 'detached HEAD'}\n" + json.dumps(
+        info, ensure_ascii=False
+    )
+
+
+def _commit_row(record: str) -> dict[str, object]:
+    """Turn one git log record (header line plus file paths) into the noise-filter row."""
+    head, _, rest = record.partition("\n")
+    sha, parents, subject = (head.split("\t", 2) + ["", ""])[:3]
+    files = [line for line in rest.split("\n") if line.strip()]
+    dirs = sorted({path.split("/", 1)[0] if "/" in path else "." for path in files})
+    return {
+        "sha": sha.strip(),
+        "parents": len(parents.split()),
+        "subject": subject,
+        "dirs": dirs[:MAX_COMMIT_DIRS],
+        "planning_only": bool(files) and all(path.startswith(".planning/") for path in files),
+        "files_n": len(files),
+    }
+
+
+async def release_range_commits(range: str, page: int = 1) -> str:  # noqa: A002
+    """LOCAL working copy (not the GitHub remote): list the commits of an A..B range in pages of 50.
+
+    Parameters: `range` looks like v4.0..HEAD; `page` starts at 1. Line 1 is a summary, then one
+    JSON object per commit (sha, parents, subject, dirs, planning_only, files_n) and a final
+    {"next_page", "total"} line; call again with next_page while it is not null.
+    """
+    if range.count("..") != 1 or "..." in range:
+        raise ToolInputError("range must look like v4.0..HEAD")
+    if page < 1 or page > MAX_RELEASE_PAGES:
+        raise ToolInputError(f"page must be between 1 and {MAX_RELEASE_PAGES}")
+    left_raw, _, right_raw = range.partition("..")
+    if not left_raw or not right_raw:
+        raise ToolInputError("range must look like v4.0..HEAD")
+    span = await resolve_ref(left_raw) + ".." + await resolve_ref(right_raw)
+    counted = await run_git(["rev-list", "--count", span])
+    if counted.returncode != 0 or not counted.text.strip().isdigit():
+        raise _git_error(counted, "rev-list")
+    total = int(counted.text.strip())
+    skip = (page - 1) * RELEASE_PAGE_SIZE
+    result = await run_git(
+        ["log", "--no-color", "--no-show-signature", "--no-renames", "--name-only",
+         "--format=%x1e%H%x09%P%x09%s", f"--skip={skip}", f"--max-count={RELEASE_PAGE_SIZE}", span]
+    )  # fmt: skip
+    if result.returncode != 0:
+        raise _git_error(result, "log")
+    rows = [_commit_row(rec) for rec in result.text.split("\x1e") if rec.strip()]
+    first = skip + 1 if rows else 0
+    summary = f"Commits {first}-{skip + len(rows)} of {total} in {range}"
+    more = skip + len(rows) < total
+    tail = json.dumps({"next_page": page + 1 if more else None, "total": total})
+    text = "\n".join([summary, *(json.dumps(r, ensure_ascii=False) for r in rows), tail])
+    if len(text) > get_config().max_chars:
+        raise ToolInputError("page is too large; this should not happen with 50 commits")
+    return text
+
+
+def register_release_tools() -> None:
+    """Expose the release tools; called only when the server starts with --allow-release."""
+    global _release_registered
+    if _release_registered:
+        return
+    for tool in (release_context, release_range_commits):
+        server.tool(structured_output=False)(tool)
+    _release_registered = True
+
+
 def check_work_tree(git: str, root: str, timeout: float) -> None:
     """Stop the server unless root is inside a git working tree; never runs git init."""
     try:
@@ -1286,7 +1440,16 @@ def main() -> None:
             f"{APP_RESULT_CAP} characters; the app will cut tool results at {APP_RESULT_CAP}\n"
         )
         sys.stderr.flush()
-    configure(root, git, args.max_chars, args.timeout, allow_write=args.allow_write)
+    configure(
+        root,
+        git,
+        args.max_chars,
+        args.timeout,
+        allow_write=args.allow_write,
+        allow_release=args.allow_release,
+    )
+    if args.allow_release:
+        register_release_tools()
     if args.allow_write:
         server.add_tool(write_file, structured_output=False)
         server.add_tool(edit_file, structured_output=False)

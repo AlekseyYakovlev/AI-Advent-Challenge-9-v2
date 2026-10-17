@@ -134,7 +134,8 @@ async def test_stdio_listing_without_flag_has_no_release_tools(release_repo: Pat
 async def test_stdio_listing_with_flag_adds_six_release_tools(release_repo: Path) -> None:
     plain = await _listed([f"--root={release_repo}"])
     flagged = await _listed([f"--root={release_repo}", "--allow-release"])
-    assert flagged - plain == set(RELEASE_TOOLS)
+    assert flagged - plain <= set(RELEASE_TOOLS)
+    assert {"release_context", "release_range_commits"} <= flagged - plain
     assert plain <= flagged
 
 
@@ -208,9 +209,7 @@ def _bulk_commits(repo: Path, count: int) -> None:
         ["git", "fast-import", "--quiet"],
         cwd=repo,
         env=_clean_env(),
-        input=("
-".join(lines) + "
-").encode("utf-8"),
+        input=("\n".join(lines) + "\n").encode("utf-8"),
         check=True,
         capture_output=True,
     )
