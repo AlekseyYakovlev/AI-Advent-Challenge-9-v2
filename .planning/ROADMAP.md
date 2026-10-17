@@ -359,7 +359,10 @@ Plans:
 **Wave 4** *(blocked on Wave 3 completion)*
 
 - [ ] 26-07-PLAN.md — Scenario runs on the local model, rounds measurement, Day34_report.md
-- [ ] 26-08-PLAN.md — Docs: project-files form values, architecture, testing guide, README, docs guards
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [ ] 26-08-PLAN.md — Docs: project-files form values, architecture, testing guide, README, docs guards; full-suite count in Day34_report.md
 
 ### Phase 27: AI release pipeline (Day 35)
 

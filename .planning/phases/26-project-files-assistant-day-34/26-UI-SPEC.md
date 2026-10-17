@@ -43,7 +43,7 @@ Sources: 26-CONTEXT.md (D-01, D-09, D-11, Claude's Discretion on diff detection)
 5. **Card behaviour with diffs.** The card for a write tool (`write_file`, `edit_file`) is rendered collapsed like every other card (existing `<details>` default); the summary line is unchanged, so the user sees the call, expands to see the diff. Optional summary suffix for diff results: ` · +A −R` (counts of added and removed lines, excluding headers) appended to the summary text to make a change visible while collapsed. Added in `textContent`, same summary classes.
 6. **Truncation.** The existing label suffix «(обрезано)» applies unchanged (`evt.truncated`). A truncated diff keeps the server's explicit truncation marker line, rendered in context style.
 7. **Final answer.** The model ends its answer by listing created or changed files (D-11); this is plain assistant markdown rendered by the existing renderer. No new component.
-8. **Reload.** Cards restored from stored history go through the same `buildToolCallCard`, so a reloaded chat shows the same coloured diffs.
+8. **Chat switch (documented limit).** Cards re-shown from `state.toolCallsByMessage` go through the same `buildToolCallCard`, so switching to another chat and back within the session shows the same coloured diffs. `state.toolCallsByMessage` is in-memory only, so after a full page reload the tool-call cards (and their diffs) are not shown; this is a documented limit of this phase.
 
 No new settings, no «Применить» button, no «Изменения» aggregate block (all deferred).
 

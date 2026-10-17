@@ -435,22 +435,27 @@ git -C "$ROOT" diff --binary > run.patch
 | A4 | A write-size limit of ~200 kB and a default `read_file` window of ~300 lines are reasonable | Patterns 5/Pitfall 7 | Tuning only |
 | A5 | Qwen 9B follows "list changed files in the final answer" from a tool description alone | Code Examples | If it does not, add one sentence to the hint (<= 26 spare words) or restate the goal in the scenario prompts |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Which assertions of the three "five tools" tests may change?**
    - Known: D-16 says existing tests stay green unchanged, D-05 forces extra tools into the default server; the tests are listed in Pitfall 1.
    - Unclear: whether the user accepts the minimal edit as satisfying D-16's intent (the git tools' behaviour tests all stay as they are).
    - Recommendation: make the minimal edit, flag it in the plan summary and the final report; no alternative preserves D-05.
+   - RESOLVED: minimal pin edit (8 tools) in 26-01 Task 3, recorded in its SUMMARY.
 2. **Branch base for `Day34`.**
    - Known: `main` = merge of Day32; `Day33` has only docs commits on top (verified: the non-`.planning` diff vs `main` is just `.gitkeep` files); the Phase 26 context/UI-SPEC commits (`48fe7cf`, `2d77327`, `6e6be7f`) and the working tree changes in `.planning/` live on `Day33`.
    - Recommendation: create `Day34` from `main` and cherry-pick the three Phase 26 doc commits (skip the STATE.md commit `fb8b374` or resolve it), keeping Phase 25 docs out; if conflict handling is unwanted, branching from current `Day33` HEAD is harmless (docs only) but merges Phase 25 docs into main early. Planner/user decides.
+   - RESOLVED: branch rule in 26-01 Task 1 (from `main` when `Day33` is merged, otherwise from `Day33` HEAD).
 3. **Is a system-prompt hint needed?**
    - Known: `MULTI_STEP_TOOL_HINT` is generic, 144 words with a 170-word test ceiling, mentions filesystem/GitLab.
    - Recommendation: start without a change; descriptions carry the rules (read before edit, unique `old_text`, list changed files). Add a <= 25-word sentence only if the measured scenarios show premature stops.
+   - RESOLVED: no hint change; the rules live in the tool descriptions (26-04), and a hint is considered only if the measured scenarios in 26-07 show premature stops.
 4. **Where do `eval_out/day34` artifacts live — tracked or ignored?**
    - Known: `eval_out/` is tracked in git (day22..day32 exist); CONTEXT suggests an ignored folder.
    - Recommendation: tracked `eval_out/day34/`, because the report cites each log and patch; strip secrets (`scrub`).
+   - RESOLVED: `eval_out/day34/` is tracked (26-05, 26-06, 26-07); keys, passwords and absolute scratch paths are scrubbed (26-03, 26-06).
 5. **Card persistence after page reload** (Pitfall 3) — out of scope, but the UI-SPEC text promises it; the plan should word the acceptance check as "chat switch" and note the gap.
+   - RESOLVED: persistence is checked by chat switch, not reload (26-05 Task 1); the reload gap is a documented limit (26-UI-SPEC item 8, 26-07 report, 26-08 guide).
 
 ## Environment Availability
 
