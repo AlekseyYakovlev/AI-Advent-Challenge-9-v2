@@ -305,12 +305,33 @@ Plans:
 ### Phase 25: Support assistant (Day 33)
 
 **Goal:** A mini support service: the assistant answers product questions from a FAQ/product-docs knowledge base (existing RAG) and takes the user's or ticket's context from an own read-only stdio MCP server over a JSON file of users and tickets, so "Почему не работает авторизация?" is answered with that ticket's data. Branch `Day33`; deliverable video + code.
-**Requirements**: TBD
+**Requirements**: SUP-01, SUP-02, SUP-03, SUP-04, SUP-05, SUP-06, SUP-07, SUP-08, SUP-09, SUP-10, SUP-11, SUP-12, SUP-13, SUP-14
 **Depends on:** Phase 21 (knowledge base from docs), Phase 22 (own stdio MCP server pattern)
-**Plans:** 0 plans
+**Plans:** 11 plans
 
 Plans:
-- [ ] TBD (run /bm:plan-phase 25 to break down)
+**Wave 1**
+
+- [ ] 25-01-PLAN.md — Shared command-turn mechanism (agent/command_turn.py), /help as facade, /help regression gate
+- [ ] 25-02-PLAN.md — Read-only support MCP server (mcp_servers/support_desk.py) and seed JSON with tests
+- [ ] 25-03-PLAN.md — Russian docs/FAQ.md true to the code, with a docs guard
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 25-04-PLAN.md — SupportConfig, /support grammar, notices, tools, history, prepare/finalize
+- [ ] 25-05-PLAN.md — Direct in-code ticket/user lookup, warning paths, <support_data> fence
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 25-06-PLAN.md — GET/PUT /api/v1/support/config routes
+- [ ] 25-07-PLAN.md — /support over WebSocket and HTTP (_run_support_turn, seams, support field)
+- [ ] 25-08-PLAN.md — «Поддержка (/support)» Settings section, label, notes, notice chip
+- [ ] 25-09-PLAN.md — FAQ retrieval probe on the real embedder; /support threshold and hint decision
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 25-10-PLAN.md — Isolated-copy e2e script (browser + HTTP, two tickets) and recorded run
+- [ ] 25-11-PLAN.md — Docs: API spec, architecture, user guide (form values), testing guide, README
 
 ### Phase 26: Project files assistant (Day 34)
 

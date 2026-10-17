@@ -62,6 +62,23 @@ Requirements for milestone v5.0. Each maps to exactly one roadmap phase.
 - [x] **REV-07**: A frozen set of 4-5 real PRs, two model runs, a DeepSeek judge and `Day32_report.md`. The GitHub REST calls in `scripts/pr_review_ci.py` (PR comment) and `scripts/review_control.py` (opening, reading and closing the test PRs) are CI and verification tooling outside the app; the app itself has no GitHub API client and reads GitHub only through `github-mcp-server`, so the Out of Scope row "Own GitHub API client" is unchanged.
 - [x] **REV-08**: pytest coverage and documentation, including the safe configuration of the self-hosted runner.
 
+### Support Assistant
+
+- [ ] **SUP-01**: `/support [#T-NNNN | @login] <question>` is recognised on the server for WebSocket and the plain HTTP chat endpoint; an empty question gives the usage notice (not stored, no model call); a message that is not `/support` behaves exactly as before.
+- [ ] **SUP-02**: `/support` and `/help` share one command-turn mechanism extracted from `agent/help_command.py` (`agent/command_turn.py`); `/help` behaves exactly as before and its existing tests pass unchanged.
+- [ ] **SUP-03**: Per-user `/support` settings (top-K, candidate count, threshold, four stage switches, whole-server MCP choice, three built-in tool groups; by default only the MCP server named `support` is on) are stored, exposed through `GET/PUT /api/v1/support/config`, and edited in a Settings section «Поддержка (/support)» next to the `/help` section.
+- [ ] **SUP-04**: `/support` searches the knowledge base marked for `/help`; when no base is marked or the base is not ready, `/support` answers with a service notice that points to the `/help` section and makes no model call.
+- [ ] **SUP-05**: `mcp_servers/support_desk.py` is a self-contained read-only stdio MCP server started with `--data <path>`, with the tools `get_ticket`, `get_user`, `list_user_tickets`, `search_tickets`; rejected calls return `isError` with an English reason and fix; results are never empty and stay under 20 000 characters.
+- [ ] **SUP-06**: The support server re-reads the JSON file when it changes; a missing or invalid file at start stops it with a stderr reason; a file that becomes invalid later gives a tool error, not a crash.
+- [ ] **SUP-07**: A tracked seed JSON file (4 clients, 6 tickets, fictitious data) and a Russian `docs/FAQ.md` that is true for the real code; two different tickets lead to different correct answers to «Почему не работает авторизация?».
+- [ ] **SUP-08**: With `#T-NNNN` or `@login` the app calls the support server in code (no model involvement), shows the call as an ordinary tool-call card and `tool_calls` entry, and puts the ticket with its client (or the user with their tickets) into the turn as a fenced data block.
+- [ ] **SUP-09**: A missing ticket or user, or a support server that is not added, disabled or not connecting, never refuses or breaks the turn: the answer is given from the documentation with a warning under the answer and in the HTTP body.
+- [ ] **SUP-10**: A `/support` turn sends the earlier `/support` question/answer pairs of the current branch (bounded) to the model; ordinary messages and `/help` pairs are not sent.
+- [ ] **SUP-11**: The label («Поддержка · T-1001»), sources, verified quotes and warnings are stored in the assistant message payload under an additive `support` key and survive a reload; the HTTP JSON body carries the same (`support`, `rag`, `tool_calls`).
+- [ ] **SUP-12**: pytest covers the support server tools (found, not found, bad arguments, re-read on change, invalid JSON), command parsing with and without identifiers, the direct lookup, every warning path, the `/support` history rule, the shared mechanism keeping `/help` unchanged, the settings routes, the UI source guard and `/support` over WebSocket and HTTP.
+- [ ] **SUP-13**: An isolated-copy end-to-end script (ports 18000/18001, scratch database) adds the support server through the real «MCP серверы» form, marks the documentation base and runs `/support #T-… Почему не работает авторизация?` for two tickets in the browser and over HTTP; the live-model part is recorded as not run when LM Studio is down.
+- [ ] **SUP-14**: `docs/API_SPEC.md`, `docs/ARCHITECTURE.md`, `docs/USER_GUIDE.md`, `docs/TESTING_GUIDE.md` and `README.md` describe `/support`, the support server with exact form values, and the new tests as built, guarded by a docs test.
+
 ## Future Requirements
 
 Deferred to later days of Week 7. Tracked but not in the current roadmap.
@@ -126,12 +143,26 @@ Deferred to later days of Week 7. Tracked but not in the current roadmap.
 | REV-06 | Phase 24 | Complete |
 | REV-07 | Phase 24 | Complete |
 | REV-08 | Phase 24 | Complete |
+| SUP-01 | Phase 25 | Pending |
+| SUP-02 | Phase 25 | Pending |
+| SUP-03 | Phase 25 | Pending |
+| SUP-04 | Phase 25 | Pending |
+| SUP-05 | Phase 25 | Pending |
+| SUP-06 | Phase 25 | Pending |
+| SUP-07 | Phase 25 | Pending |
+| SUP-08 | Phase 25 | Pending |
+| SUP-09 | Phase 25 | Pending |
+| SUP-10 | Phase 25 | Pending |
+| SUP-11 | Phase 25 | Pending |
+| SUP-12 | Phase 25 | Pending |
+| SUP-13 | Phase 25 | Pending |
+| SUP-14 | Phase 25 | Pending |
 
 **Coverage:**
-- v5.0 requirements: 32 total
-- Mapped to phases: 32
+- v5.0 requirements: 46 total
+- Mapped to phases: 46
 - Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-10-13*
-*Last updated: 2026-10-13 after initial definition*
+*Last updated: 2026-10-17 — SUP-01..SUP-14 added for Phase 25 (Day 33)*
