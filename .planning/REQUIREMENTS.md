@@ -68,9 +68,9 @@ Requirements for milestone v5.0. Each maps to exactly one roadmap phase.
 - [x] **SUP-02**: `/support` and `/help` share one command-turn mechanism extracted from `agent/help_command.py` (`agent/command_turn.py`); `/help` behaves exactly as before and its existing tests pass unchanged.
 - [ ] **SUP-03**: Per-user `/support` settings (top-K, candidate count, threshold, four stage switches, whole-server MCP choice, three built-in tool groups; by default only the MCP server named `support` is on) are stored, exposed through `GET/PUT /api/v1/support/config`, and edited in a Settings section «Поддержка (/support)» next to the `/help` section.
 - [ ] **SUP-04**: `/support` searches the knowledge base marked for `/help`; when no base is marked or the base is not ready, `/support` answers with a service notice that points to the `/help` section and makes no model call.
-- [ ] **SUP-05**: `mcp_servers/support_desk.py` is a self-contained read-only stdio MCP server started with `--data <path>`, with the tools `get_ticket`, `get_user`, `list_user_tickets`, `search_tickets`; rejected calls return `isError` with an English reason and fix; results are never empty and stay under 20 000 characters.
-- [ ] **SUP-06**: The support server re-reads the JSON file when it changes; a missing or invalid file at start stops it with a stderr reason; a file that becomes invalid later gives a tool error, not a crash.
-- [ ] **SUP-07**: A tracked seed JSON file (4 clients, 6 tickets, fictitious data) and a Russian `docs/FAQ.md` that is true for the real code; two different tickets lead to different correct answers to «Почему не работает авторизация?».
+- [x] **SUP-05**: `mcp_servers/support_desk.py` is a self-contained read-only stdio MCP server started with `--data <path>`, with the tools `get_ticket`, `get_user`, `list_user_tickets`, `search_tickets`; rejected calls return `isError` with an English reason and fix; results are never empty and stay under 20 000 characters.
+- [x] **SUP-06**: The support server re-reads the JSON file when it changes; a missing or invalid file at start stops it with a stderr reason; a file that becomes invalid later gives a tool error, not a crash.
+- [x] **SUP-07**: A tracked seed JSON file (4 clients, 6 tickets, fictitious data) and a Russian `docs/FAQ.md` that is true for the real code; two different tickets lead to different correct answers to «Почему не работает авторизация?».
 - [ ] **SUP-08**: With `#T-NNNN` or `@login` the app calls the support server in code (no model involvement), shows the call as an ordinary tool-call card and `tool_calls` entry, and puts the ticket with its client (or the user with their tickets) into the turn as a fenced data block.
 - [ ] **SUP-09**: A missing ticket or user, or a support server that is not added, disabled or not connecting, never refuses or breaks the turn: the answer is given from the documentation with a warning under the answer and in the HTTP body.
 - [ ] **SUP-10**: A `/support` turn sends the earlier `/support` question/answer pairs of the current branch (bounded) to the model; ordinary messages and `/help` pairs are not sent.
@@ -160,9 +160,9 @@ Deferred to later days of Week 7. Tracked but not in the current roadmap.
 | SUP-02 | Phase 25 | Complete |
 | SUP-03 | Phase 25 | Pending |
 | SUP-04 | Phase 25 | Pending |
-| SUP-05 | Phase 25 | Pending |
-| SUP-06 | Phase 25 | Pending |
-| SUP-07 | Phase 25 | Pending |
+| SUP-05 | Phase 25 | Complete |
+| SUP-06 | Phase 25 | Complete |
+| SUP-07 | Phase 25 | Complete |
 | SUP-08 | Phase 25 | Pending |
 | SUP-09 | Phase 25 | Pending |
 | SUP-10 | Phase 25 | Pending |
