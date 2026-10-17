@@ -307,7 +307,7 @@ Plans:
 **Goal:** A mini support service: the assistant answers product questions from a FAQ/product-docs knowledge base (existing RAG) and takes the user's or ticket's context from an own read-only stdio MCP server over a JSON file of users and tickets, so "Почему не работает авторизация?" is answered with that ticket's data. Branch `Day33`; deliverable video + code.
 **Requirements**: SUP-01, SUP-02, SUP-03, SUP-04, SUP-05, SUP-06, SUP-07, SUP-08, SUP-09, SUP-10, SUP-11, SUP-12, SUP-13, SUP-14
 **Depends on:** Phase 21 (knowledge base from docs), Phase 22 (own stdio MCP server pattern)
-**Plans:** 7/11 plans executed
+**Plans:** 8/11 plans executed
 
 Plans:
 **Wave 1**
@@ -325,7 +325,7 @@ Plans:
 
 - [x] 25-06-PLAN.md — GET/PUT /api/v1/support/config routes
 - [x] 25-07-PLAN.md — /support over WebSocket and HTTP (_run_support_turn, seams, support field)
-- [ ] 25-08-PLAN.md — «Поддержка (/support)» Settings section, label, notes, notice chip
+- [x] 25-08-PLAN.md — «Поддержка (/support)» Settings section, label, notes, notice chip
 - [ ] 25-09-PLAN.md — FAQ retrieval probe on the real embedder; /support threshold and hint decision
 
 **Wave 4** *(blocked on Wave 3 completion)*
