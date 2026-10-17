@@ -144,7 +144,7 @@ def run_git(cwd: Path, *args: str, check: bool = True) -> subprocess.CompletedPr
         stdin=subprocess.DEVNULL, timeout=GIT_TIMEOUT,
     )
     if check and done.returncode != 0:
-        raise RuntimeError(rc.scrub(f"git {args[0]}: {done.stderr.strip()[:300]}"))
+        raise RuntimeError(rc.scrub(f"git {args[0]}: {(done.stderr.strip() or done.stdout.strip())[:300]}"))
     return done
 
 
@@ -222,13 +222,15 @@ def highest_major(tags: set[str]) -> int:
     return max(majors, default=0)
 
 
-def commit_file(clone: Path, subject: str, text: str) -> None:
-    """Append a line to .planning/p.md and commit it with the given subject."""
-    path = clone / ".planning" / "p.md"
+def commit_file(
+    clone: Path, subject: str, text: str, name: str = "p.md", folder: str = "src"
+) -> None:
+    """Append a line to <folder>/<name> and commit it; .planning commits are filtered out (D-07)."""
+    path = clone / folder / name
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8", newline="\n") as handle:
         handle.write(text + "\n")
-    run_git(clone, "add", ".planning/p.md")
+    run_git(clone, "add", f"{folder}/{name}")
     run_git(clone, "commit", "-m", subject)
 
 
@@ -259,9 +261,9 @@ def setup_scratch_repo(remote: str, workdir: Path) -> ScratchRepo:
 
     commit_file(clone, "feat(90-01): add alpha", "alpha")
     commit_file(clone, "fix(90-02): fix alpha", "alpha fix")
-    commit_file(clone, "docs(90-01): plan", "plan")
+    commit_file(clone, "docs(90-01): plan", "plan", "plan.md", ".planning")
     run_git(clone, "checkout", "-b", f"{branch}-side")
-    commit_file(clone, "feat(91-01): add beta", "beta")
+    commit_file(clone, "feat(91-01): add beta", "beta", "side.md")
     run_git(clone, "checkout", branch)
     commit_file(clone, "chore: bump", "bump")
     run_git(clone, "merge", "--no-ff", f"{branch}-side", "-m", "Merge branch 'Day90': e2e merge")
@@ -380,9 +382,9 @@ async def start_isolated_app(workdir: Path) -> AppHandle | None:
     return AppHandle(scratch, copy_dir, proc, log_file, "releaseuser", creds["releaseuser"])
 
 
-PLAN_TYPES: tuple[str, ...] = ("release_plan", "release_result", "notice")
-RESULT_TYPES: tuple[str, ...] = ("release_result", "notice")
-PLAN_TIMEOUT: float = 480.0
+PLAN_TYPES: tuple[str, ...] = ("release_plan", "release_result", "help_notice")
+RESULT_TYPES: tuple[str, ...] = ("release_result", "help_notice")
+PLAN_TIMEOUT: float = 900.0
 CONFIRM_TIMEOUT: float = 300.0
 SCENARIO_TITLES: dict[int, str] = {
     1: "Полный путь: коммит, тег, push, черновик Release",
@@ -452,9 +454,22 @@ def frames_text(frames: Frames, start: int) -> str:
     return json.dumps(frames.items[start:], ensure_ascii=False)
 
 
+def plan_detail(frame: dict[str, Any] | None, ctx: "Ctx") -> str:
+    """Describe why a plan was not built: the frame, its block reason or the frame types seen."""
+    if frame is None:
+        seen = [f.get("type") for f in ctx.frames.items[-12:]]
+        return f"нет кадра плана за таймаут; последние кадры: {seen}"
+    return f"type={frame.get('type')} blocked={frame.get('blocked')} text={str(frame.get('text', ''))[:200]}"
+
+
 def step_map(frame: dict[str, Any]) -> dict[str, str]:
     """Return step key -> status of a plan or result frame."""
     return {s["key"]: s["status"] for s in frame.get("steps", [])}
+
+
+def step_details(frame: dict[str, Any]) -> str:
+    """Return the failure details of a result frame for check messages (already scrubbed by the server)."""
+    return f"reason={frame.get('reason')}"
 
 
 async def wait_socket(page: Any) -> None:
@@ -539,10 +554,27 @@ def record_plan(
     })
 
 
+MODEL_DRAFT_FAILED: str = "Не удалось получить черновик от модели"
+MAX_PLAN_ATTEMPTS: int = 3
+MODEL_RETRIES: list[dict[str, Any]] = []
+
+
 async def plan_for(ctx: Ctx, text: str = "/release") -> tuple[int, dict[str, Any] | None]:
-    """Send /release and wait for the plan frame (or a notice)."""
-    start = await send_text(ctx, text)
-    return start, await wait_frame(ctx.frames, start, PLAN_TYPES, PLAN_TIMEOUT)
+    """Send /release and wait for the plan frame (or a notice).
+
+    A small local model sometimes returns no usable draft; the notice itself asks to repeat the
+    command, so that exact notice is retried (at most MAX_PLAN_ATTEMPTS) and every retry is recorded.
+    """
+    for attempt in range(1, MAX_PLAN_ATTEMPTS + 1):
+        start = await send_text(ctx, text)
+        frame = await wait_frame(ctx.frames, start, PLAN_TYPES, PLAN_TIMEOUT)
+        failed = bool(frame and frame.get("type") == "help_notice"
+                      and MODEL_DRAFT_FAILED in str(frame.get("text", "")))
+        if not failed or attempt == MAX_PLAN_ATTEMPTS:
+            return start, frame
+        MODEL_RETRIES.append({"command": text, "attempt": attempt})
+        say(f"модель не отдала черновик, повтор {attempt}/{MAX_PLAN_ATTEMPTS - 1}: {text}")
+    return start, frame
 
 
 def draft_release_exists(remote: str, token: str, tag: str) -> tuple[bool, str]:
@@ -585,7 +617,8 @@ async def scenario_blocks(ctx: Ctx) -> dict[str, Any]:
 
     start, frame = await plan_for(ctx)
     if not check(sc, "чистое дерево: план построен", bool(frame and frame["type"] == "release_plan"
-                                                          and not frame.get("blocked"))):
+                                                          and not frame.get("blocked")),
+                 plan_detail(frame, ctx)):
         return sc
     record_plan(ctx, sc, frame, ["90", "91"], ["Day90"])
     commit_file(clone, "chore(e2e): move head", "head move")
@@ -625,7 +658,8 @@ async def scenario_no_access(ctx: Ctx) -> dict[str, Any]:
     await new_chat(ctx.page)
     start, frame = await plan_for(ctx)
     if not check(sc, "план построен", bool(frame and frame["type"] == "release_plan"
-                                           and not frame.get("blocked"))):
+                                           and not frame.get("blocked")),
+                 plan_detail(frame, ctx)):
         return sc
     record_plan(ctx, sc, frame, ["90", "91"], ["Day90"])
     start = await click_confirm(ctx)
@@ -636,7 +670,8 @@ async def scenario_no_access(ctx: Ctx) -> dict[str, Any]:
     sc["tag"] = result.get("tag")
     check(sc, "коммит, тег и push выполнены",
           all(steps.get(k) == "done" for k in ("commit", "tag", "push")), str(steps))
-    check(sc, "черновик Release недоступен", steps.get("release") == "unavailable", str(steps))
+    check(sc, "черновик Release недоступен", steps.get("release") == "unavailable",
+          f"{steps} {step_details(result)}")
     check(sc, "итог «partial» и текст релиза для ручного создания",
           result.get("outcome") == "partial" and bool(result.get("release_text")))
     check(sc, "заголовок карточки «Частично выполнено»",
@@ -654,7 +689,7 @@ async def scenario_no_access(ctx: Ctx) -> dict[str, Any]:
     steps = step_map(result)
     check(sc, "шаги 1-3 пропущены, Release выполнен",
           all(steps.get(k) == "skipped" for k in ("commit", "tag", "push"))
-          and steps.get("release") == "done", str(steps))
+          and steps.get("release") == "done", f"{steps} {step_details(result)}")
     url = str(result.get("release_url") or "")
     sc["release_url"] = url
     check(sc, "ссылка на Release ведёт на github.com", url.startswith("https://github.com/"))
@@ -676,7 +711,8 @@ async def scenario_full(ctx: Ctx) -> dict[str, Any]:
     await new_chat(ctx.page)
     start, frame = await plan_for(ctx)
     if not check(sc, "план построен", bool(frame and frame["type"] == "release_plan"
-                                           and not frame.get("blocked"))):
+                                           and not frame.get("blocked")),
+                 plan_detail(frame, ctx)):
         return sc
     record_plan(ctx, sc, frame, ["92"], [])
     start = await click_confirm(ctx)
@@ -740,6 +776,9 @@ async def run_scenarios(ctx: Ctx) -> list[dict[str, Any]]:
     """Run the four scenarios in the order 3, 2, 1, 4; one failing does not stop the others."""
     results: list[dict[str, Any]] = []
     for runner in (scenario_blocks, scenario_no_access, scenario_full, scenario_manual):
+        if runner is scenario_full and ctx.token:
+            # Scenario 2 adds the token itself; re-apply it so an early exit there cannot starve 1 and 4.
+            await update_release_server_env(ctx.page, ctx.server_id, {TOKEN_ENV_NAME: ctx.token})
         try:
             sc = await runner(ctx)
         except Exception as exc:  # noqa: BLE001 - one broken scenario must not hide the others
@@ -836,7 +875,7 @@ def finish(
     rc.write_json(out, {
         "scenarios": scenarios, "plans": plans, "model": chat_model.get("id"),
         "started_at": started, "finished_at": datetime.now(timezone.utc).isoformat(),
-        "pytest": None,
+        "pytest": None, "model_retries": MODEL_RETRIES,
     })
     say(f"results written: {out}")
     for sc in scenarios:

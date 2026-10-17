@@ -17,8 +17,9 @@ from shared.logger import get_logger
 logger = get_logger(__name__)
 
 RELEASE_LLM_TIMEOUT: float = 240.0
-CHANGELOG_MAX_TOKENS: int = 1800
-DECISION_MAX_TOKENS: int = 400
+# Reasoning models (qwen3.5-9b) spend ~6000 tokens thinking before the answer; 1800 left the reply empty.
+CHANGELOG_MAX_TOKENS: int = 8192
+DECISION_MAX_TOKENS: int = 4096
 RAW_DRAFT_RETRY_CHARS: int = 4000
 
 

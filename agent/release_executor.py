@@ -51,7 +51,7 @@ _TOOLS: dict[str, tuple[str, str]] = {
     "commit": ("release", "release_commit_changelog"),
     "tag": ("release", "release_create_tag"),
     "push": ("release", "release_push"),
-    "release": ("github", "github_create_draft_release"),
+    "release": ("release", "github_create_draft_release"),
 }
 
 Outcome = Literal["done", "partial", "failed", "blocked"]

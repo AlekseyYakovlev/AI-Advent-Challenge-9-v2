@@ -158,6 +158,8 @@ async def test_happy_path_writes_in_order() -> None:
     }
     assert all(state == StepState.DONE for state in plan.steps.values())
     assert plan.release_url == URL
+    # The draft Release tool is served by the release-git entry (--allow-release), not a github row.
+    assert {server for server, _, _ in call.calls} == {"release"}
     assert plan.commit_sha == COMMIT
     assert sink.progress() == [
         ("commit", "running"), ("commit", "done"),
