@@ -87,7 +87,7 @@ Requirements for milestone v5.0. Each maps to exactly one roadmap phase.
 - [ ] **PFILE-04**: Writes are refused with `isError`, an English reason and a fix for paths outside the root, anything under `.git/` (including NTFS aliases), `.env*` files, paths git ignores, Windows device names, binary files or content, and content above the size limit.
 - [ ] **PFILE-05**: A goal typed as an ordinary chat message makes the model list, search, read and write project files through these tools in the existing tool loop; every call is visible as a tool-call card and the final answer lists the created or changed files.
 - [x] **PFILE-06**: A tool-call card whose successful result is a unified diff renders a coloured diff (added green, removed red, hunk headers marked) built with `createElement`/`textContent` only; other cards render as before.
-- [ ] **PFILE-07**: `scripts/files_task.py` sends a goal to the plain HTTP chat endpoint with an API key, refuses a dirty target root and the script's own repository, runs at temperature 0, and saves a run log (goal, commit, provider/model, settings, MCP servers, tool calls, answer) and the resulting `git diff` as a `.patch`.
+- [x] **PFILE-07**: `scripts/files_task.py` sends a goal to the plain HTTP chat endpoint with an API key, refuses a dirty target root and the script's own repository, runs at temperature 0, and saves a run log (goal, commit, provider/model, settings, MCP servers, tool calls, answer) and the resulting `git diff` as a `.patch`.
 - [x] **PFILE-08**: pytest covers the read tools, the write gate, every forbidden write target, diff results and the run script against a mocked endpoint; an isolated-copy end-to-end script (ports 18000/18001, scratch database, a clone as the write root) shows the diff card in the browser.
 - [ ] **PFILE-09**: `Day34_report.md` (Russian) records the four fixed scenarios (API usages, ADR, CHANGELOG, folder README) run on the local LM Studio model through the scenario driver, each with its run log and `.patch`; a run that could not be made is recorded as not run and a failed scenario stays visible.
 - [x] **PFILE-10**: `docs/USER_GUIDE.md` (exact `project-files` form values), `docs/ARCHITECTURE.md`, `docs/TESTING_GUIDE.md` and `README.md` describe the file tools, the `--allow-write` gate, the diff card and the run scripts as built, guarded by `tests/test_docs_mcp_servers.py`.
@@ -176,7 +176,7 @@ Deferred to later days of Week 7. Tracked but not in the current roadmap.
 | PFILE-04 | Phase 26 | Pending |
 | PFILE-05 | Phase 26 | Pending |
 | PFILE-06 | Phase 26 | Complete |
-| PFILE-07 | Phase 26 | Pending |
+| PFILE-07 | Phase 26 | Complete |
 | PFILE-08 | Phase 26 | Complete |
 | PFILE-09 | Phase 26 | Pending |
 | PFILE-10 | Phase 26 | Complete |
