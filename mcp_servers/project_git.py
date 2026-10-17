@@ -1,7 +1,11 @@
-"""Read-only git MCP server for one repository, served over stdio.
+"""Git and project-file MCP server for one repository, served over stdio.
 
 Usage:
     python mcp_servers/project_git.py --root=<repository> [--max-chars=18000] [--timeout=10]
+        [--allow-write]
+
+Without --allow-write every tool only reads. With it, write_file and edit_file are
+registered and write files inside the root.
 
 This file is self-contained on purpose. It does not use the application logger or
 settings modules from the shared package: that logger writes JSON to stdout, and stdout is
@@ -13,11 +17,13 @@ import argparse
 import ast
 import asyncio
 import contextlib
+import difflib
 import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass
 from typing import NoReturn
@@ -45,6 +51,14 @@ USAGE_LINE_CHARS: int = 160
 MAX_PARSE_BYTES: int = 1_000_000
 USAGES_TIME_BUDGET_S: float = 20.0
 SEARCH_ADVICE: str = "Narrow the search with glob or a more specific pattern."
+MAX_WRITE_BYTES: int = 200_000
+WRITE_ADVICE: str = "The file was saved in full; call read_file to review it."
+RESERVED_NAMES: frozenset[str] = frozenset(
+    {"con", "prn", "aux", "nul"}
+    | {f"com{n}" for n in range(1, 10)}
+    | {f"lpt{n}" for n in range(1, 10)}
+)
+_SHORT_GIT: re.Pattern[str] = re.compile(r"^git~\d+$", re.IGNORECASE)
 _COMMIT_ID = re.compile(r"[0-9a-f]{40}([0-9a-f]{24})?")
 
 
@@ -70,6 +84,7 @@ class ServerConfig:
     git: str
     max_chars: int
     timeout: float
+    allow_write: bool = False
 
 
 _config: ServerConfig | None = None
@@ -77,10 +92,14 @@ _config: ServerConfig | None = None
 server = FastMCP("local-git", log_level="WARNING")
 
 
-def configure(root: str, git: str, max_chars: int, timeout: float) -> None:
+def configure(
+    root: str, git: str, max_chars: int, timeout: float, allow_write: bool = False
+) -> None:
     """Store the validated launch settings for the tools."""
     global _config
-    _config = ServerConfig(root=root, git=git, max_chars=max_chars, timeout=timeout)
+    _config = ServerConfig(
+        root=root, git=git, max_chars=max_chars, timeout=timeout, allow_write=allow_write
+    )
 
 
 def get_config() -> ServerConfig:
@@ -94,7 +113,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse and validate the launch arguments."""
     parser = argparse.ArgumentParser(
         prog="project_git.py",
-        description="Read-only git MCP server over stdio.",
+        description="Git and project-file MCP server over stdio (read-only unless --allow-write).",
         allow_abbrev=False,
     )
     parser.add_argument("--root", default=os.getcwd(), help="repository folder (default: cwd)")
@@ -109,6 +128,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=float,
         default=DEFAULT_TIMEOUT,
         help="per-command timeout in seconds (greater than 0)",
+    )
+    parser.add_argument(
+        "--allow-write",
+        action="store_true",
+        help="register write_file and edit_file (writes inside --root)",
     )
     args = parser.parse_args(argv)
     if args.max_chars < MIN_MAX_CHARS:
@@ -964,6 +988,205 @@ async def find_usages(symbol: str, path: str | None = None) -> str:
     return fit_text(summary, "\n".join(body_lines), cfg.max_chars, advice=narrow)
 
 
+def require_write() -> None:
+    """Refuse the call unless the server was started with --allow-write."""
+    if not get_config().allow_write:
+        raise ToolInputError(
+            "writing is disabled: this server was started without --allow-write; "
+            "use the project-files entry"
+        )
+
+
+async def is_git_ignored(rel: str) -> bool:
+    """Return True when git ignores the path; glob pathspecs stay on because check-ignore needs it."""
+    cfg = get_config()
+    result = await run_command(
+        pathspec_argv(cfg.git) + ["check-ignore", "-q", "--", rel],
+        cwd=cfg.root,
+        env=git_env(),
+        timeout=cfg.timeout,
+        label="git check-ignore",
+    )
+    if result.returncode == 0:
+        return True
+    if result.returncode == 1:
+        return False
+    raise _git_error(result, "check-ignore")
+
+
+async def check_write_target(path: str | None) -> tuple[str, str]:
+    """Validate a write path and return (root-relative path, absolute path)."""
+    rel = _normalise_path(path)
+    if rel is None or rel == ".":
+        raise ToolInputError(
+            "path is required and must name a file, for example docs/adr/0001-decision.md"
+        )
+    for part in rel.split("/"):
+        bare = part.rstrip(". ")
+        if bare.casefold() == ".git" or _SHORT_GIT.match(bare):
+            raise ToolInputError(
+                "writing inside .git is not allowed; choose a path in the working tree"
+            )
+        if part.split(".")[0].casefold() in RESERVED_NAMES:
+            raise ToolInputError(
+                f"'{part}' is a reserved Windows device name; choose another file name"
+            )
+    if rel.rsplit("/", 1)[-1].casefold().startswith(".env"):
+        raise ToolInputError(".env files hold secrets and cannot be written; choose another path")
+    if await is_git_ignored(rel):
+        raise ToolInputError(f"git ignores {rel}; write only files git would track (see .gitignore)")
+    absolute = os.path.join(get_config().root, rel)
+    if os.path.isdir(absolute):
+        raise ToolInputError(f"{rel} is a folder; give a file path inside it")
+    return rel, absolute
+
+
+def unified_diff_text(rel: str, old: str | None, new: str) -> tuple[str, int, int]:
+    """Build a unified diff and count added and removed lines."""
+    lines = list(
+        difflib.unified_diff(
+            split_lines(old or ""),
+            split_lines(new),
+            fromfile="/dev/null" if old is None else f"a/{rel}",
+            tofile=f"b/{rel}",
+            lineterm="",
+            n=3,
+        )
+    )
+    body = lines[2:]
+    added = sum(1 for line in body if line.startswith("+"))
+    removed = sum(1 for line in body if line.startswith("-"))
+    return "\n".join(lines), added, removed
+
+
+def _write_atomic(abs_path: str, rel: str, text: str, crlf: bool) -> None:
+    """Write UTF-8 text through a temporary file in the same folder and os.replace."""
+    parent = os.path.dirname(abs_path)
+    data = (text.replace("\n", "\r\n") if crlf else text).encode("utf-8")
+    tmp_name: str | None = None
+    try:
+        os.makedirs(parent, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=parent, prefix=".pg-write-", delete=False) as tmp:
+            tmp_name = tmp.name
+            tmp.write(data)
+            tmp.flush()
+        os.replace(tmp_name, abs_path)
+    except OSError as exc:
+        if tmp_name is not None and os.path.exists(tmp_name):
+            with contextlib.suppress(OSError):
+                os.remove(tmp_name)
+        raise ToolInputError(f"could not write {rel}: {exc.strerror or exc}") from None
+
+
+def _check_content(text: str) -> None:
+    """Refuse binary-looking or oversized content."""
+    if "\x00" in text:
+        raise ToolInputError("content contains NUL bytes; binary files cannot be written")
+    if len(text.encode("utf-8")) > MAX_WRITE_BYTES:
+        raise ToolInputError(
+            "content is larger than 200000 bytes; split the file or write a shorter one"
+        )
+
+
+def _read_existing(abs_path: str, rel: str) -> tuple[str, bool] | None:
+    """Return (LF text, had CRLF) of an existing text file, or None when it does not exist."""
+    try:
+        with open(abs_path, "rb") as handle:
+            raw = handle.read()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise ToolInputError(f"could not read {rel}: {exc.strerror or exc}") from None
+    if is_binary(raw):
+        raise ToolInputError(f"{rel} is a binary file and cannot be changed")
+    return decode_text(raw)
+
+
+def _result(rel: str, verb: str, old: str | None, new: str) -> str:
+    """Compose the summary line plus diff for a finished write."""
+    diff, added, removed = unified_diff_text(rel, old, new)
+    return fit_text(
+        f"{verb} {rel} (+{added} -{removed})", diff, get_config().max_chars, advice=WRITE_ADVICE
+    )
+
+
+async def write_file(path: str, content: str) -> str:
+    """LOCAL working copy (not the GitHub remote): create a file, or fully rewrite one, inside the repository and save it immediately.
+
+    Parameters: `path` is a file relative to the repository root (missing folders are
+    created); `content` is the complete new text of the file. The result is a summary line
+    "Created <path> (+A -R)" or "Updated <path> (+A -R)" followed by the unified diff. For a
+    partial change of an existing file use `edit_file` instead. Paths inside `.git`, `.env*`
+    files and paths that git ignores are refused.
+    After all changes are done, list every file you created or changed in your final answer.
+    """
+    require_write()
+    rel, absolute = await check_write_target(path)
+    new = content.replace("\r\n", "\n")
+    _check_content(new)
+    existing = _read_existing(absolute, rel)
+    old = existing[0] if existing else None
+    if existing is not None and old == new:
+        return f"No changes: {rel} already has this content"
+    _write_atomic(absolute, rel, new, existing[1] if existing else False)
+    return _result(rel, "Updated" if existing is not None else "Created", old, new)
+
+
+def _not_found_reason(rel: str, text: str, old: str) -> str:
+    """Explain a zero-match edit and hint where the first line of old_text appears."""
+    first = next((line.strip() for line in old.split("\n") if line.strip()), "")
+    if first:
+        for number, line in enumerate(text.split("\n"), start=1):
+            if first in line:
+                return (
+                    f"old_text was not found in {rel} (its first line appears at line {number}; "
+                    "check indentation and copy the lines exactly from read_file)"
+                )
+    return f"old_text was not found in {rel} (call read_file and copy the lines exactly)"
+
+
+async def edit_file(path: str, old_text: str, new_text: str) -> str:
+    """LOCAL working copy (not the GitHub remote): replace one exact fragment of an existing text file and save it immediately.
+
+    Call read_file first and copy `old_text` exactly, without the line-number prefix.
+    `old_text` must occur exactly once in the file; include surrounding lines to make it
+    unique. `new_text` replaces it. The result is a summary line "Updated <path> (+A -R)"
+    followed by the unified diff.
+    After all changes are done, list every file you created or changed in your final answer.
+    """
+    require_write()
+    rel, absolute = await check_write_target(path)
+    existing = _read_existing(absolute, rel)
+    if existing is None:
+        raise ToolInputError(f"{rel} does not exist; use write_file to create it")
+    if not old_text:
+        raise ToolInputError(
+            "old_text must not be empty; copy the exact lines to replace from read_file"
+        )
+    old = old_text.replace("\r\n", "\n")
+    new = new_text.replace("\r\n", "\n")
+    if old == new:
+        raise ToolInputError("old_text and new_text are identical; nothing to change")
+    text, crlf = existing
+    count = text.count(old)
+    if count == 0:
+        raise ToolInputError(_not_found_reason(rel, text, old))
+    if count > 1:
+        starts: list[int] = []
+        index = text.find(old)
+        while index != -1 and len(starts) < 10:
+            starts.append(text.count("\n", 0, index) + 1)
+            index = text.find(old, index + 1)
+        raise ToolInputError(
+            f"old_text occurs {count} times in {rel} (lines {', '.join(map(str, starts))}); "
+            "add surrounding lines so it is unique"
+        )
+    result = text.replace(old, new, 1)
+    _check_content(result)
+    _write_atomic(absolute, rel, result, crlf)
+    return _result(rel, "Updated", text, result)
+
+
 def check_work_tree(git: str, root: str, timeout: float) -> None:
     """Stop the server unless root is inside a git working tree; never runs git init."""
     try:
@@ -1007,7 +1230,10 @@ def main() -> None:
             f"{APP_RESULT_CAP} characters; the app will cut tool results at {APP_RESULT_CAP}\n"
         )
         sys.stderr.flush()
-    configure(root, git, args.max_chars, args.timeout)
+    configure(root, git, args.max_chars, args.timeout, allow_write=args.allow_write)
+    if args.allow_write:
+        server.add_tool(write_file, structured_output=False)
+        server.add_tool(edit_file, structured_output=False)
     server.run(transport="stdio")
 
 
