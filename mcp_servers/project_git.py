@@ -2,10 +2,15 @@
 
 Usage:
     python mcp_servers/project_git.py --root=<repository> [--max-chars=18000] [--timeout=10]
-        [--allow-write]
+        [--allow-write] [--allow-release]
 
 Without --allow-write every tool only reads. With it, write_file and edit_file are
-registered and write files inside the root.
+registered and write files inside the root. With --allow-release the release tools are
+registered: release_context, release_range_commits, release_commit_changelog,
+release_create_tag, release_push and github_create_draft_release.
+
+The server is local-only by default. Under --allow-release it also makes HTTPS calls to
+api.github.com (github_create_draft_release) with the token from its own environment.
 
 This file is self-contained on purpose. It does not use the application logger or
 settings modules from the shared package: that logger writes JSON to stdout, and stdout is
@@ -18,6 +23,7 @@ import ast
 import asyncio
 import contextlib
 import difflib
+import json
 import os
 import re
 import shutil
@@ -28,6 +34,7 @@ import time
 from dataclasses import dataclass
 from typing import NoReturn
 
+import httpx
 import psutil
 from mcp.server.fastmcp import FastMCP
 
@@ -60,6 +67,30 @@ RESERVED_NAMES: frozenset[str] = frozenset(
 )
 _SHORT_GIT: re.Pattern[str] = re.compile(r"^git~\d+$", re.IGNORECASE)
 _COMMIT_ID = re.compile(r"[0-9a-f]{40}([0-9a-f]{24})?")
+RELEASE_PAGE_SIZE: int = 50
+RELEASE_NETWORK_TIMEOUT: float = 90.0
+MAX_RELEASE_PAGES: int = 40
+MAX_COMMIT_DIRS: int = 10
+MAX_SECTION_CHARS: int = 100000
+GITHUB_API: str = "https://api.github.com"
+GITHUB_TOKEN_ENV: str = "GITHUB_PERSONAL_ACCESS_TOKEN"
+GITHUB_TIMEOUT: float = 30.0
+MAX_RELEASE_BODY_CHARS: int = 125000
+MAX_RELEASE_NAME_CHARS: int = 200
+GITHUB_HEADERS: dict[str, str] = {
+    "Accept": "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+}
+_GITHUB_NAME = re.compile(r"[A-Za-z0-9_.-]+")
+_FULL_SHA = re.compile(r"[0-9a-f]{40}")
+MAX_TAG_MESSAGE_CHARS: int = 200
+CHANGELOG_HEADER: str = (
+    "# Changelog\n\n"
+    "Все значимые изменения проекта записываются в этот файл.\n"
+    "Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/).\n"
+)
+_VERSION_TAG = re.compile(r"v(\d+)\.(\d+)")
+_release_registered: bool = False
 
 
 class ToolInputError(ValueError):
@@ -85,6 +116,7 @@ class ServerConfig:
     max_chars: int
     timeout: float
     allow_write: bool = False
+    allow_release: bool = False
 
 
 _config: ServerConfig | None = None
@@ -93,12 +125,22 @@ server = FastMCP("local-git", log_level="WARNING")
 
 
 def configure(
-    root: str, git: str, max_chars: int, timeout: float, allow_write: bool = False
+    root: str,
+    git: str,
+    max_chars: int,
+    timeout: float,
+    allow_write: bool = False,
+    allow_release: bool = False,
 ) -> None:
     """Store the validated launch settings for the tools."""
     global _config
     _config = ServerConfig(
-        root=root, git=git, max_chars=max_chars, timeout=timeout, allow_write=allow_write
+        root=root,
+        git=git,
+        max_chars=max_chars,
+        timeout=timeout,
+        allow_write=allow_write,
+        allow_release=allow_release,
     )
 
 
@@ -133,6 +175,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--allow-write",
         action="store_true",
         help="register write_file and edit_file (writes inside --root)",
+    )
+    parser.add_argument(
+        "--allow-release",
+        action="store_true",
+        help="expose the release tools (commit CHANGELOG.md, tag, push, draft GitHub Release)",
     )
     args = parser.parse_args(argv)
     if args.max_chars < MIN_MAX_CHARS:
@@ -1243,6 +1290,357 @@ async def edit_file(path: str, old_text: str, new_text: str) -> str:
     return _result(rel, "Updated", text, result)
 
 
+async def _optional_line(args: list[str]) -> str | None:
+    """Run a git command and return its trimmed output, or None when it fails or is empty."""
+    result = await run_git(args)
+    text = result.text.strip()
+    return text if result.returncode == 0 and text else None
+
+
+async def _remote_tags() -> tuple[list[str] | None, str | None]:
+    """List tag names on origin; on failure return (None, reason)."""
+    cfg = get_config()
+    try:
+        result = await run_command(
+            base_argv(cfg.git) + ["ls-remote", "--refs", "origin", "refs/tags/*"],
+            cwd=cfg.root,
+            env=git_env(),
+            timeout=RELEASE_NETWORK_TIMEOUT,
+            label="git ls-remote",
+        )
+    except ToolInputError as exc:
+        return None, str(exc)
+    if result.returncode != 0:
+        return None, _last_line(result.stderr, f"git ls-remote exited with {result.returncode}")
+    prefix = "refs/tags/"
+    names = [
+        line.split("\t", 1)[1][len(prefix):]
+        for line in result.text.splitlines()
+        if "\t" in line and line.split("\t", 1)[1].startswith(prefix)
+    ]
+    return names, None
+
+
+async def release_context() -> str:
+    """LOCAL working copy (not the GitHub remote): read what a release needs.
+
+    Takes no parameters. Line 1 names the branch; line 2 is a JSON object with branch, head,
+    origin_url, local_tags, merged_tags (tags reachable from HEAD), remote_tags (tags on origin,
+    null when origin cannot be reached, with remote_error) and dirty (changed and untracked files).
+    """
+    branch = await _optional_line(["symbolic-ref", "--short", "-q", "HEAD"])
+    head = await run_git(["rev-parse", "--verify", "HEAD"])
+    if head.returncode != 0:
+        raise _git_error(head, "rev-parse")
+    status = await run_git(
+        ["-c", "core.quotePath=false", "status", "--porcelain=v1", "--branch",
+         "--untracked-files=all"]
+    )  # fmt: skip
+    if status.returncode != 0:
+        raise _git_error(status, "status")
+    local = await run_git(["tag", "--list"])
+    merged = await run_git(["tag", "--merged", "HEAD"])
+    remote_tags, remote_error = await _remote_tags()
+    info = {
+        "branch": branch,
+        "head": head.text.strip(),
+        "origin_url": await _optional_line(["remote", "get-url", "origin"]),
+        "local_tags": local.text.split(),
+        "merged_tags": merged.text.split(),
+        "remote_tags": remote_tags,
+        "remote_error": remote_error,
+        "dirty": [line for line in status.text.splitlines() if line and not line.startswith("##")],
+    }
+    return f"Release context for {branch or 'detached HEAD'}\n" + json.dumps(
+        info, ensure_ascii=False
+    )
+
+
+def _commit_row(record: str) -> dict[str, object]:
+    """Turn one git log record (header line plus file paths) into the noise-filter row."""
+    head, _, rest = record.partition("\n")
+    sha, parents, subject = (head.split("\t", 2) + ["", ""])[:3]
+    files = [line for line in rest.split("\n") if line.strip()]
+    dirs = sorted({path.split("/", 1)[0] if "/" in path else "." for path in files})
+    return {
+        "sha": sha.strip(),
+        "parents": len(parents.split()),
+        "subject": subject,
+        "dirs": dirs[:MAX_COMMIT_DIRS],
+        "planning_only": bool(files) and all(path.startswith(".planning/") for path in files),
+        "files_n": len(files),
+    }
+
+
+async def release_range_commits(range: str, page: int = 1) -> str:  # noqa: A002
+    """LOCAL working copy (not the GitHub remote): list the commits of an A..B range in pages of 50.
+
+    Parameters: `range` looks like v4.0..HEAD; `page` starts at 1. Line 1 is a summary, then one
+    JSON object per commit (sha, parents, subject, dirs, planning_only, files_n) and a final
+    {"next_page", "total"} line; call again with next_page while it is not null.
+    """
+    if range.count("..") != 1 or "..." in range:
+        raise ToolInputError("range must look like v4.0..HEAD")
+    if page < 1 or page > MAX_RELEASE_PAGES:
+        raise ToolInputError(f"page must be between 1 and {MAX_RELEASE_PAGES}")
+    left_raw, _, right_raw = range.partition("..")
+    if not left_raw or not right_raw:
+        raise ToolInputError("range must look like v4.0..HEAD")
+    span = await resolve_ref(left_raw) + ".." + await resolve_ref(right_raw)
+    counted = await run_git(["rev-list", "--count", span])
+    if counted.returncode != 0 or not counted.text.strip().isdigit():
+        raise _git_error(counted, "rev-list")
+    total = int(counted.text.strip())
+    skip = (page - 1) * RELEASE_PAGE_SIZE
+    result = await run_git(
+        ["log", "--no-color", "--no-show-signature", "--no-renames", "--name-only",
+         "--format=%x1e%H%x09%P%x09%s", f"--skip={skip}", f"--max-count={RELEASE_PAGE_SIZE}", span]
+    )  # fmt: skip
+    if result.returncode != 0:
+        raise _git_error(result, "log")
+    rows = [_commit_row(rec) for rec in result.text.split("\x1e") if rec.strip()]
+    first = skip + 1 if rows else 0
+    summary = f"Commits {first}-{skip + len(rows)} of {total} in {range}"
+    more = skip + len(rows) < total
+    tail = json.dumps({"next_page": page + 1 if more else None, "total": total})
+    text = "\n".join([summary, *(json.dumps(r, ensure_ascii=False) for r in rows), tail])
+    if len(text) > get_config().max_chars:
+        raise ToolInputError("page is too large; this should not happen with 50 commits")
+    return text
+
+
+def _check_version(version: str) -> None:
+    """Require a tag name such as v1.2."""
+    if not _VERSION_TAG.fullmatch(version):
+        raise ToolInputError("version must look like v1.2 (letter v, major, dot, minor)")
+
+
+def _insert_section(existing: str, section: str) -> str:
+    """Put the new section above the first existing release section, or after the header."""
+    block = section.rstrip("\n") + "\n\n"
+    lines = existing.split("\n")
+    for index, line in enumerate(lines):
+        if line.startswith("## ["):
+            return "\n".join(lines[:index]) + ("\n" if index else "") + block + "\n".join(lines[index:])
+    return existing.rstrip("\n") + "\n\n" + block.rstrip("\n") + "\n"
+
+
+async def release_commit_changelog(version: str, section: str) -> str:
+    """LOCAL working copy: prepend a release section to CHANGELOG.md and commit only that file.
+
+    Parameters: `version` such as v1.2; `section` is the full Markdown block starting with
+    "## [v1.2] - <date>". Refuses when other files are staged or the version is already listed.
+    Returns the commit hash as JSON on the second line.
+    """
+    _check_version(version)
+    if not section.startswith(f"## [{version}] - "):
+        raise ToolInputError(f'section must start with "## [{version}] - <date>"')
+    if "\x00" in section or len(section) > MAX_SECTION_CHARS:
+        raise ToolInputError("section contains a NUL byte or is larger than 100000 characters")
+    cfg = get_config()
+    rel = resolve_inside_root(cfg.root, "CHANGELOG.md")
+    path = os.path.join(cfg.root, rel)
+    staged = await run_git(["diff", "--cached", "--name-only"])
+    if staged.returncode != 0:
+        raise _git_error(staged, "diff")
+    others = [name for name in staged.text.split() if name != "CHANGELOG.md"]
+    if others:
+        raise ToolInputError(
+            f"other files are staged ({', '.join(others[:5])}); unstage them before the release commit"
+        )
+    try:
+        with open(path, encoding="utf-8", newline="") as handle:
+            existing = handle.read().replace("\r\n", "\n")
+    except FileNotFoundError:
+        existing = CHANGELOG_HEADER
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ToolInputError(f"could not read CHANGELOG.md: {exc}") from None
+    if f"## [{version}]" in existing:
+        raise ToolInputError(f"CHANGELOG.md already has a section for {version}")
+    updated = _insert_section(existing, section.replace("\r\n", "\n"))
+    try:
+        with open(path, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(updated)
+    except OSError as exc:
+        raise ToolInputError(f"could not write CHANGELOG.md: {exc.strerror or exc}") from None
+    added = await run_git(["add", "--", "CHANGELOG.md"])
+    if added.returncode != 0:
+        raise _git_error(added, "add")
+    committed = await run_git(
+        ["commit", "-m", f"docs(release): {version} changelog", "--", "CHANGELOG.md"]
+    )
+    if committed.returncode != 0:
+        raise _git_error(committed, "commit")
+    head = await run_git(["rev-parse", "HEAD"])
+    return f"Committed CHANGELOG.md for {version}\n" + json.dumps({"commit": head.text.strip()})
+
+
+async def release_create_tag(version: str, message: str, commit: str) -> str:
+    """LOCAL working copy: create an annotated tag on a commit; refuses an existing tag.
+
+    Parameters: `version` such as v1.2; `message` is a one-line tag message; `commit` is the hash.
+    """
+    _check_version(version)
+    if not message.strip() or "\r" in message or "\n" in message:
+        raise ToolInputError("message must be one non-empty line")
+    if len(message) > MAX_TAG_MESSAGE_CHARS:
+        raise ToolInputError(f"message must be at most {MAX_TAG_MESSAGE_CHARS} characters")
+    sha = await resolve_ref(commit)
+    listed = await run_git(["tag", "--list", "--", version])
+    if listed.text.strip():
+        raise ToolInputError(f"tag {version} already exists; choose a higher version")
+    created = await run_git(["tag", "-a", version, "-m", message, sha])
+    if created.returncode != 0:
+        raise _git_error(created, "tag")
+    return f"Created annotated tag {version} at {sha[:7]}\n" + json.dumps(
+        {"tag": version, "commit": sha}
+    )
+
+
+async def release_push(branch: str, tag: str) -> str:
+    """LOCAL working copy to origin: push one branch and one tag with explicit refspecs.
+
+    Parameters: `branch` is a plain branch name; `tag` is an existing local tag such as v1.2.
+    A rejected push (for example non-fast-forward) is reported and never retried.
+    """
+    check_ref_syntax(branch)
+    if (
+        branch.startswith(("refs/", "-"))
+        or any(ch in branch for ch in ":+*?[~^")
+        or ".." in branch
+    ):
+        raise ToolInputError("branch must be a plain branch name such as main")
+    checked = await run_git(["check-ref-format", "--branch", branch])
+    if checked.returncode != 0:
+        raise ToolInputError(f"'{branch}' is not a valid branch name")
+    _check_version(tag)
+    listed = await run_git(["tag", "--list", "--", tag])
+    if not listed.text.strip():
+        raise ToolInputError(f"tag {tag} does not exist locally; create it first")
+    cfg = get_config()
+    result = await run_command(
+        base_argv(cfg.git)
+        + [
+            "push", "--porcelain", "origin",
+            f"refs/heads/{branch}:refs/heads/{branch}",
+            f"refs/tags/{tag}:refs/tags/{tag}",
+        ],  # fmt: skip
+        cwd=cfg.root,
+        env=git_env(),
+        timeout=RELEASE_NETWORK_TIMEOUT,
+        label="git push",
+    )
+    if result.returncode != 0:
+        raise _git_error(result, "push")
+    return f"Pushed {branch} and {tag} to origin"
+
+
+def _github_failure(status: int, owner: str, repo: str, token: str, payload: object) -> ToolInputError:
+    """Map a GitHub error status to an English reason without echoing credentials."""
+    if status == 401:
+        return ToolInputError("GitHub rejected the token (401)")
+    if status in (403, 404):
+        return ToolInputError(
+            f"no write access to {owner}/{repo} ({status}): the token needs Contents: write"
+        )
+    if status == 422:
+        message = payload.get("message") if isinstance(payload, dict) else None
+        text = str(message) if message else "unknown"
+        return ToolInputError(
+            f"GitHub validation failed (422): {text.replace(token, '***')[:300]}"
+        )
+    return ToolInputError(f"GitHub answered {status}")
+
+
+def _json_or_none(response: httpx.Response) -> object:
+    """Decode a JSON body, or None when it is not JSON."""
+    try:
+        return response.json()
+    except ValueError:
+        return None
+
+
+def _release_answer(verb: str, item: dict[str, object]) -> str:
+    """Compose the result text for a draft release."""
+    return f"{verb}: {item.get('html_url')}\n" + json.dumps(
+        {"html_url": item.get("html_url"), "id": item.get("id"), "draft": True}
+    )
+
+
+async def github_create_draft_release(
+    owner: str, repo: str, tag: str, name: str, body: str, commit: str
+) -> str:
+    """GitHub REMOTE: create a DRAFT release for an existing tag. Never publishes.
+
+    Parameters: `owner` and `repo` name the GitHub repository; `tag` such as v1.2; `name` is the
+    one-line title; `body` is the Markdown notes; `commit` is the 40-character hash the tag points
+    at. A draft that already exists for the tag is returned instead of a duplicate.
+    """
+    for label, value in (("owner", owner), ("repo", repo)):
+        if not _GITHUB_NAME.fullmatch(value) or value in (".", ".."):
+            raise ToolInputError(f"{label} must be a plain GitHub name such as octocat")
+    _check_version(tag)
+    if not name.strip() or "\r" in name or "\n" in name or len(name) > MAX_RELEASE_NAME_CHARS:
+        raise ToolInputError("name must be one non-empty line of at most 200 characters")
+    if len(body) > MAX_RELEASE_BODY_CHARS:
+        raise ToolInputError("body is larger than 125000 characters; shorten the release notes")
+    if not _FULL_SHA.fullmatch(commit):
+        raise ToolInputError("commit must be a full 40-character lowercase hash")
+    token = os.environ.get(GITHUB_TOKEN_ENV, "").strip()
+    if not token:
+        raise ToolInputError(
+            f"{GITHUB_TOKEN_ENV} is not set in this server's environment; "
+            "add it in the MCP server form"
+        )
+    headers = {**GITHUB_HEADERS, "Authorization": f"Bearer {token}"}
+    url = f"{GITHUB_API}/repos/{owner}/{repo}/releases"
+    try:
+        async with httpx.AsyncClient(timeout=GITHUB_TIMEOUT) as client:
+            listed = await client.get(url, params={"per_page": 100}, headers=headers)
+            if listed.status_code in (401, 403, 404):
+                raise _github_failure(listed.status_code, owner, repo, token, None)
+            if listed.status_code == 200:
+                items = _json_or_none(listed)
+                for item in items if isinstance(items, list) else []:
+                    if isinstance(item, dict) and item.get("tag_name") == tag:
+                        return _release_answer("Draft release already exists", item)
+            created = await client.post(
+                url,
+                headers=headers,
+                json={
+                    "tag_name": tag,
+                    "target_commitish": commit,
+                    "name": name,
+                    "body": body,
+                    "draft": True,
+                    "prerelease": False,
+                },
+            )
+    except httpx.HTTPError as exc:
+        raise ToolInputError(f"GitHub request failed: {type(exc).__name__}") from None
+    payload = _json_or_none(created)
+    if created.status_code == 201 and isinstance(payload, dict):
+        return _release_answer("Draft release created", payload)
+    raise _github_failure(created.status_code, owner, repo, token, payload)
+
+
+def register_release_tools() -> None:
+    """Expose the release tools; called only when the server starts with --allow-release."""
+    global _release_registered
+    if _release_registered:
+        return
+    for tool in (
+        release_context,
+        release_range_commits,
+        release_commit_changelog,
+        release_create_tag,
+        release_push,
+        github_create_draft_release,
+    ):
+        server.tool(structured_output=False)(tool)
+    _release_registered = True
+
+
 def check_work_tree(git: str, root: str, timeout: float) -> None:
     """Stop the server unless root is inside a git working tree; never runs git init."""
     try:
@@ -1286,7 +1684,16 @@ def main() -> None:
             f"{APP_RESULT_CAP} characters; the app will cut tool results at {APP_RESULT_CAP}\n"
         )
         sys.stderr.flush()
-    configure(root, git, args.max_chars, args.timeout, allow_write=args.allow_write)
+    configure(
+        root,
+        git,
+        args.max_chars,
+        args.timeout,
+        allow_write=args.allow_write,
+        allow_release=args.allow_release,
+    )
+    if args.allow_release:
+        register_release_tools()
     if args.allow_write:
         server.add_tool(write_file, structured_output=False)
         server.add_tool(edit_file, structured_output=False)
