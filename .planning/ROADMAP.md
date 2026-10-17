@@ -428,13 +428,13 @@ Plans:
 **Goal:** A real task automated end to end: release preparation for this repository. The AI drafts the changelog from commits and merged PRs, proposes the next version, and prepares a tag and a draft GitHub Release; the report states the task and where the AI takes part. May be partly non-working where keys or write access are missing. Branch `Day35`; deliverable video + code.
 **Requirements**: TBD
 **Depends on:** Phase 22 (git and GitHub MCP), Phase 26 (file generation)
-**Plans:** 8 plans
+**Plans:** 2/8 plans executed
 
 Plans:
 **Wave 1**
 
-- [ ] 27-01-PLAN.md — Release tools in mcp_servers/project_git.py behind --allow-release (context, range, commit CHANGELOG.md, tag, push, draft Release)
-- [ ] 27-02-PLAN.md — Pure core: /release grammar, plan/step types, frame contract, versions, noise filter, prompts, parsers
+- [x] 27-01-PLAN.md — Release tools in mcp_servers/project_git.py behind --allow-release (context, range, commit CHANGELOG.md, tag, push, draft Release)
+- [x] 27-02-PLAN.md — Pure core: /release grammar, plan/step types, frame contract, versions, noise filter, prompts, parsers
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
