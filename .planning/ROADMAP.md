@@ -428,7 +428,7 @@ Plans:
 **Goal:** A real task automated end to end: release preparation for this repository. The AI drafts the changelog from commits and merged PRs, proposes the next version, and prepares a tag and a draft GitHub Release; the report states the task and where the AI takes part. May be partly non-working where keys or write access are missing. Branch `Day35`; deliverable video + code.
 **Requirements**: TBD
 **Depends on:** Phase 22 (git and GitHub MCP), Phase 26 (file generation)
-**Plans:** 6/8 plans executed
+**Plans:** 7/8 plans executed
 
 Plans:
 **Wave 1**
@@ -448,7 +448,7 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 27-07-PLAN.md — Isolated-copy e2e scenario script and documentation
+- [x] 27-07-PLAN.md — Isolated-copy e2e scenario script and documentation
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
