@@ -307,7 +307,7 @@ Plans:
 **Goal:** A mini support service: the assistant answers product questions from a FAQ/product-docs knowledge base (existing RAG) and takes the user's or ticket's context from an own read-only stdio MCP server over a JSON file of users and tickets, so "Почему не работает авторизация?" is answered with that ticket's data. Branch `Day33`; deliverable video + code.
 **Requirements**: SUP-01, SUP-02, SUP-03, SUP-04, SUP-05, SUP-06, SUP-07, SUP-08, SUP-09, SUP-10, SUP-11, SUP-12, SUP-13, SUP-14
 **Depends on:** Phase 21 (knowledge base from docs), Phase 22 (own stdio MCP server pattern)
-**Plans:** 6/11 plans executed
+**Plans:** 7/11 plans executed
 
 Plans:
 **Wave 1**
@@ -324,7 +324,7 @@ Plans:
 **Wave 3** *(blocked on Wave 2 completion)*
 
 - [x] 25-06-PLAN.md — GET/PUT /api/v1/support/config routes
-- [ ] 25-07-PLAN.md — /support over WebSocket and HTTP (_run_support_turn, seams, support field)
+- [x] 25-07-PLAN.md — /support over WebSocket and HTTP (_run_support_turn, seams, support field)
 - [ ] 25-08-PLAN.md — «Поддержка (/support)» Settings section, label, notes, notice chip
 - [ ] 25-09-PLAN.md — FAQ retrieval probe on the real embedder; /support threshold and hint decision
 
@@ -372,13 +372,27 @@ Plans:
 **Plans:** 8 plans
 
 Plans:
+**Wave 1**
+
 - [ ] 27-01-PLAN.md — Release tools in mcp_servers/project_git.py behind --allow-release (context, range, commit CHANGELOG.md, tag, push, draft Release)
 - [ ] 27-02-PLAN.md — Pure core: /release grammar, plan/step types, frame contract, versions, noise filter, prompts, parsers
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 27-03-PLAN.md — Plan phase: chat-model changelog and version decision, build_plan over MCP reads
 - [ ] 27-04-PLAN.md — Confirm phase: ReleaseMcp caller with tool cards, step state machine with retry
 - [ ] 27-05-PLAN.md — Release plan card in app.js per 27-UI-SPEC
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 27-06-PLAN.md — WS wiring (release_handler, thin ws.py hook, state cleanup) + WS integration test
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
 - [ ] 27-07-PLAN.md — Isolated-copy e2e scenario script and documentation
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
 - [ ] 27-08-PLAN.md — Sandbox control runs and Day35_report.md
 
 ---
