@@ -1,0 +1,325 @@
+diff --git a/docs/adr/001-separation-ui-agent-processes.md b/docs/adr/001-separation-ui-agent-processes.md
+new file mode 100644
+index 0000000..633ef9f
+--- /dev/null
++++ b/docs/adr/001-separation-ui-agent-processes.md
+@@ -0,0 +1,319 @@
++# Architecture Decision Record 001: Separation of UI and Agent into Two Processes
++
++**Status:** Accepted  
++**Date:** 2026-10-17  
++**Author:** System Architect  
++**Version:** 1.0  
++
++---
++
++## Context
++
++### Problem Statement
++
++The application requires a chat interface with LLM integration, WebSocket streaming, and persistent message history. The key challenges are:
++
++1. **Process stability**: The Agent process handles complex operations (LLM calls, database writes, context building) that could crash or hang
++2. **Resource isolation**: LLM operations and database access should not interfere with UI responsiveness
++3. **Scalability**: Future features may require independent scaling of different components
++4. **Security**: Separation of concerns for authentication, API keys, and sensitive operations
++
++### Current Architecture Overview
++
++The application currently implements a two-process architecture:
++
++```
++┌─────────────────────────────────────────────────────────────────────┐
++│              Browser UI (vanilla JS + CDN libs)                      │
++│  `ui/static/index.html` + `ui/static/app.js`                         │
++└────────────────────┬────────────────────────────────────────────────┘
++                     │ HTTP/WebSocket (port 8000 → 8001)
++┌────────────────────▼────────────────────────────────────────────────┐
++│                  UI Server (FastAPI)                                │
++│  `ui/main.py`, `ui/supervisor.py`                                   │
++│  - Serves static frontend                                           │
++│  - Manages Agent subprocess lifecycle via AgentSupervisor           │
++│  - Health polling via GET /health (every 3 seconds)                │
++└────────────────────┬────────────────────────────────────────────────┘
++                     │ asyncio.create_subprocess_exec
++                     │ Port 8001 (spawned subprocess)
++┌────────────────────▼────────────────────────────────────────────────┐
++│                Agent Server (FastAPI)                               │
++│  `agent/main.py`, `agent/ws.py`                                     │
++│  - REST API (/api/v1/chats, /api/v1/settings, etc.)                │
++│  - WebSocket streaming chat endpoint (/ws/chat/{chat_id})           │
++│  - LLM integration (DeepSeek cloud + LM Studio local)               │
++│  - Context compression and statistics                              │
++└────────────┬──────────────────────────────────────────┬─────────────┘
++             │                                          │
++             ▼                                          ▼
++┌──────────────────────────────────────┐  ┌──────────────────────────┐
++│  SQLite Database (sqlite+aiosqlite)  │  │  LLM Backends            │
++│  `app.db`                            │  │  - DeepSeek API          │
++│  `shared/database.py`                │  │  - LM Studio             │
++│  - Chat (tree structure)             │  │  `agent/llm_client.py`   │
++│  - Message (parent_id)               │  │                          │
++│  - Settings (global + per-chat)      │  └──────────────────────────┘
++│  - TokenUsage (stats)                │
++└──────────────────────────────────────┘
++```
++
++### Key Components
++
++| Component | Responsibility | Location |
++|-----------|----------------|----------|
++| **UI Server** | Static file serving, agent process management | `ui/main.py` |
++| **Agent Supervisor** | Agent subprocess lifecycle, health checks, orphan cleanup | `ui/supervisor.py` |
++| **Agent Server** | REST API, WebSocket chat, LLM calls, context building | `agent/main.py`, `agent/ws.py` |
++| **Context Engine** | Message tree loading, compression strategies, statistics | `agent/context_engine.py` |
++| **LLM Client** | OpenAI-compatible streaming, token counting, model management | `agent/llm_client.py` |
++| **Database** | Async SQLite, migrations, session management | `shared/database.py` |
++
++---
++
++## Decision
++
++### Solution
++
++The application shall be structured as two independent Python processes:
++
++1. **UI Server Process (Port 8000)**
++   - Serves the static frontend (HTML/CSS/JavaScript)
++   - Manages the Agent subprocess lifecycle
++   - Performs health checks on the Agent process
++   - Handles orphan process cleanup
++
++2. **Agent Server Process (Port 8001)**
++   - Provides REST API endpoints for chat management
++   - Handles WebSocket streaming for real-time chat
++   - Executes LLM calls and context building
++   - Manages database operations
++   - Runs as a subprocess spawned by the UI Server
++
++### Communication Protocol
++
++The two processes communicate via:
++
++- **HTTP/WebSocket** on ports 8000 (UI) and 8001 (Agent)
++- **Process spawning** via `asyncio.create_subprocess_exec`
++- **Health checks** via GET `/health` endpoint every 3 seconds
++- **Shared state** through SQLite database (`app.db`)
++
++### Process Lifecycle Management
++
++The UI Server's lifespan hook creates an `AgentSupervisor` that:
++
++1. Spawns the Agent subprocess with proper logging redirection
++2. Monitors health via periodic `/health` polling
++3. Automatically restarts the Agent on failure
++4. Cleans up orphan processes on shutdown
++
++---
++
++## Consequences
++
++### Positive Consequences
++
++#### 1. Improved Stability and Fault Tolerance
++
++- **Agent crashes don't crash UI**: If the Agent process crashes (e.g., due to LLM timeout, database lock), the UI Server remains responsive and can restart the Agent automatically
++- **Graceful degradation**: The Supervisor detects failures within 3 seconds and initiates recovery
++- **Independent restarts**: Each process can be restarted independently without affecting the other
++
++#### 2. Better Resource Isolation
++
++- **CPU/Memory separation**: LLM operations (which are CPU-intensive) run in a separate process, preventing UI lag
++- **Database connection pooling**: The Agent manages its own database connections, reducing contention
++- **Process-level limits**: Each process can have independent resource constraints
++
++#### 3. Enhanced Security
++
++- **Authentication boundary**: Session cookies and API keys are validated at the Agent level
++- **CORS enforcement**: Both processes enforce CORS rules consistently via `HostMatchCORSMiddleware`
++- **Origin validation**: WebSocket connections require valid Origin headers, preventing cross-site attacks
++
++#### 4. Scalability and Maintainability
++
++- **Independent deployment**: Future versions can update UI or Agent independently
++- **Testing isolation**: Each process can be tested separately with its own test database
++- **Code organization**: Clear separation of concerns between frontend-serving logic and AI processing
++
++#### 5. Development Experience
++
++- **Parallel development**: Frontend and backend developers can work simultaneously
++- **Local testing**: Developers can run UI and Agent independently for debugging
++- **Hot reloading**: Static files can be served with hot reload without restarting the Agent
++
++### Negative Consequences
++
++#### 1. Increased Complexity
++
++- **Process management overhead**: The Supervisor adds complexity to process lifecycle management
++- **Inter-process communication**: Debugging issues across process boundaries is more difficult
++- **Shared state challenges**: In-memory state (e.g., `agent/state.py`) is not shared between processes
++
++#### 2. Performance Overhead
++
++- **Network latency**: HTTP/WebSocket communication adds minimal but non-zero latency (~1-5ms)
++- **Serialization/deserialization**: JSON payloads require parsing on both ends
++- **Startup time**: Two processes mean longer total startup time compared to a monolithic app
++
++#### 3. Debugging Challenges
++
++- **Distributed tracing**: Tracing requests across process boundaries requires careful logging
++- **State inspection**: In-memory state in Agent cannot be inspected from UI process
++- **Error correlation**: Correlating errors between processes requires log aggregation
++
++#### 4. Resource Usage
++
++- **Memory duplication**: Shared libraries and code are loaded twice (once per process)
++- **Two Python interpreters**: Each process runs its own Python interpreter
++- **Port conflicts**: Requires careful port management and cleanup on shutdown
++
++### Mitigation Strategies
++
++| Issue | Mitigation |
++|-------|------------|
++| Process complexity | Well-defined interfaces via REST/WebSocket API |
++| Network latency | Minimal for local communication; acceptable trade-off |
++| Debugging difficulty | Structured logging with correlation IDs (structlog) |
++| Memory overhead | Acceptable for single-user local application |
++| Port conflicts | Supervisor handles orphan cleanup automatically |
++
++---
++
++## Alternatives Considered
++
++### 1. Monolithic Single Process
++
++**Description**: All components (UI, Agent, database) in one Python process.
++
++**Pros**:
++- Simpler architecture
++- No inter-process communication overhead
++- Easier debugging
++
++**Cons**:
++- UI freezes during LLM operations
++- Harder to restart individual components
++- Single point of failure
++- Poor separation of concerns
++
++**Rejected because**: The stability and responsiveness requirements outweigh the simplicity benefits.
++
++### 2. Client-Server with HTTP API Only
++
++**Description**: UI as a separate Node.js/Python server communicating via REST API only.
++
++**Pros**:
++- Clear separation
++- Standard REST communication
++
++**Cons**:
++- No real-time streaming without additional complexity
++- Higher latency than WebSocket
++- More complex deployment
++
++**Rejected because**: WebSocket streaming is essential for the chat experience, and the current approach provides it with minimal overhead.
++
++### 3. gRPC Communication
++
++**Description**: Use gRPC instead of HTTP/WebSocket for inter-process communication.
++
++**Pros**:
++- Lower latency than HTTP
++- Strong typing via Protobuf
++- Better performance for high-frequency calls
++
++**Cons**:
++- Additional dependency (grpcio)
++- More complex setup and debugging
++- Overkill for current use case
++
++**Rejected because**: HTTP/WebSocket provides sufficient performance for the chat use case with minimal complexity.
++
++### 4. Message Queue (Redis/RabbitMQ)
++
++**Description**: Use a message queue for communication between processes.
++
++**Pros**:
++- Decoupled processes
++- Built-in retry and reliability
++- Can scale horizontally
++
++**Cons**:
++- Additional infrastructure requirement
++- Higher latency than direct HTTP
++- Complex setup and maintenance
++
++**Rejected because**: Direct HTTP/WebSocket is simpler and sufficient for single-user local deployment.
++
++---
++
++## References
++
++- `.planning/codebase/ARCHITECTURE.md` - Detailed architecture documentation
++- `.planning/codebase/STRUCTURE.md` - Codebase structure and conventions
++- `docs/ARCHITECTURE.md` - Architecture guide with process communication details
++- `ui/supervisor.py` - Agent subprocess lifecycle management
++- `agent/main.py` - Agent server entry point
++- `run.py` - Application entry point
++
++---
++
++## Appendix: Implementation Details
++
++### Supervisor Health Check Logic
++
++```python
++# ui/supervisor.py
++async def _healthcheck_loop():
++    """Monitor Agent health and restart on failure."""
++    while True:
++        try:
++            await httpx.get(f"http://127.0.0.1:{AGENT_PORT}/health", timeout=5)
++            await httpx.get(f"http://127.0.0.1:{AGENT_PORT}/debug/routes", 
++                          follow_redirects=False)  # Expect 401 (auth required)
++            _agent_routes_ready = True
++        except Exception:
++            _agent_routes_ready = False
++        
++        if not _agent_routes_ready:
++            await restart_agent()
++        
++        await asyncio.sleep(HEALTHCHECK_INTERVAL)  # 3 seconds
++```
++
++### Process Spawning
++
++```python
++# ui/supervisor.py
++async def start():
++    """Spawn Agent subprocess."""
++    process = await asyncio.create_subprocess_exec(
++        sys.executable, "-m", "uvicorn", "agent.main:app",
++        "--host", host,
++        "--port", str(AGENT_PORT),
++        stdout=asyncio.subprocess.PIPE,
++        stderr=asyncio.subprocess.PIPE,
++    )
++    self._process = process
++```
++
++### Shared Configuration
++
++Both processes share configuration via `shared/config.py`:
++
++```python
++# shared/config.py
++class Settings(BaseSettings):
++    UI_PORT: int = 8000
++    AGENT_PORT: int = 8001
++    BIND_HOST: str = "127.0.0.1"
++    DEEPSEEK_API_KEY: str = ""
++    LM_STUDIO_BASE_URL: str = "http://localhost:1234/v1"
++```
++
++---
++
++*End of ADR 001*
