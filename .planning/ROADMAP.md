@@ -393,7 +393,7 @@ Plans:
 **Goal:** An assistant that works with project files on its own: given a goal (not "open file X"), it reads, searches across several files, analyses them and creates or changes files, with changes saved or shown as a diff and the run reproducible. Scenarios: find every usage of a component/API, and generate a new file (README / ADR / changelog). Branch `Day34`; deliverable video + code.
 **Requirements**: PFILE-01, PFILE-02, PFILE-03, PFILE-04, PFILE-05, PFILE-06, PFILE-07, PFILE-08, PFILE-09, PFILE-10
 **Depends on:** Phase 22 (project git MCP server); independent of Phase 25
-**Plans:** 3/8 plans executed
+**Plans:** 4/8 plans executed
 
 Plans:
 **Wave 1**
@@ -404,7 +404,7 @@ Plans:
 
 - [x] 26-02-PLAN.md — Coloured unified-diff view in tool-call cards (textContent only) with source guards
 - [x] 26-03-PLAN.md — scripts/files_task.py: goal over the HTTP chat endpoint at temperature 0, run.json + run.patch + answer.md
-- [ ] 26-04-PLAN.md — --allow-write gate, write_file / edit_file with diff results, forbidden write targets, tests
+- [x] 26-04-PLAN.md — --allow-write gate, write_file / edit_file with diff results, forbidden write targets, tests
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
