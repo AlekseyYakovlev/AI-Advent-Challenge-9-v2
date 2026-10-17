@@ -1839,7 +1839,132 @@ function sendReleaseConfirm(planId) {
     appendLoadingBubble();
 }
 
-function markReleaseCardsStale(exceptId) {}
+function markReleaseCardsStale(exceptId) {
+    for (const [planId, entry] of Object.entries(state.releaseCards)) {
+        if (planId === exceptId || entry.card.dataset.stale === '1') continue;
+        entry.card.dataset.stale = '1';
+        entry.card.dataset.busy = '1';
+        entry.card.querySelectorAll('input, button').forEach((el) => { el.disabled = true; });
+        entry.refs.button.textContent = 'План устарел';
+        setReleaseHeader(entry.refs, 'План устарел', 'text-slate-400');
+    }
+}
+
+function releaseCardEntry(planId) {
+    return state.releaseCards[String(planId)] || state.releaseCards[state.latestReleasePlanId] || null;
+}
+
+function findReleaseStepRow(list, key) {
+    return Array.from(list.children).find((row) => row.dataset.step === key) || null;
+}
+
+function updateReleaseStep(data) {
+    const entry = releaseCardEntry(data.plan_id);
+    if (!entry) return;
+    const refs = entry.refs;
+    if (entry.card.dataset.busy !== '1') {
+        entry.card.dataset.busy = '1';
+        refs.button.disabled = true;
+        refs.button.textContent = 'Выполняется…';
+        refs.versionInput.disabled = true;
+        refs.titleInput.disabled = true;
+        refs.chips.forEach((chipBtn) => { chipBtn.disabled = true; });
+        setReleaseHeader(refs, 'Выполняется…', 'text-slate-300');
+    }
+    const row = findReleaseStepRow(refs.steps, data.step);
+    if (!row) return;
+    setReleaseStepRow(row, data.status);
+    if (data.detail && (data.status === 'failed' || data.status === 'unavailable')) {
+        row.title = String(data.detail);
+    }
+}
+
+function applyReleaseResult(data) {
+    const entry = releaseCardEntry(data.plan_id);
+    if (!entry) return;
+    const { card, refs } = entry;
+    const outcomes = {
+        done: ['Готово', 'text-green-400'],
+        partial: ['Частично выполнено', 'text-yellow-400'],
+        failed: ['Ошибка', 'text-red-400'],
+        blocked: ['Заблокировано', 'text-red-400'],
+    };
+    const [headerText, headerClass] = outcomes[data.outcome] || outcomes.failed;
+    setReleaseHeader(refs, headerText, headerClass);
+
+    for (const step of (data.steps || [])) {
+        const row = findReleaseStepRow(refs.steps, step.key);
+        if (row) setReleaseStepRow(row, step.status);
+        else refs.steps.appendChild(releaseStepRow(step));
+    }
+
+    const finished = data.outcome === 'done';
+    const locked = finished || Boolean(data.locked);
+    if (data.version) refs.versionInput.value = data.version;
+    if (data.title) refs.titleInput.value = data.title;
+    refs.versionInput.disabled = false;
+    refs.titleInput.disabled = false;
+    refs.versionInput.readOnly = locked;
+    refs.titleInput.readOnly = locked;
+    refs.chips.forEach((chipBtn) => { chipBtn.disabled = locked; });
+
+    refs.extra.replaceChildren();
+    if (!finished && (data.reason || data.hint)) {
+        const failure = mcpEl('div', 'border border-red-800 rounded px-2 py-2 space-y-1');
+        if (data.reason) failure.appendChild(mcpEl('div', 'text-red-300 font-mono whitespace-pre-wrap break-words', String(data.reason)));
+        if (data.hint) failure.appendChild(mcpEl('div', 'text-xs text-slate-300', String(data.hint)));
+        refs.extra.appendChild(failure);
+    }
+    if ((data.outcome === 'partial' || data.outcome === 'failed') && data.release_text) {
+        const manual = document.createElement('details');
+        manual.appendChild(mcpEl('summary', 'cursor-pointer text-slate-300', 'Текст релиза для ручной публикации'));
+        const pre = mcpEl('pre', 'text-xs font-mono whitespace-pre-wrap break-words bg-slate-950 border border-slate-700 rounded px-2 py-2 mt-2 max-h-96 overflow-y-auto', String(data.release_text));
+        const copyBtn = mcpEl('button', 'mt-2 bg-slate-800 border border-slate-700 px-4 py-2 rounded focus:outline-none focus:ring-2 focus:ring-indigo-500', 'Скопировать текст релиза');
+        copyBtn.type = 'button';
+        copyBtn.addEventListener('click', () => {
+            if (!navigator.clipboard) {
+                showToast('Не удалось скопировать текст', 'error');
+                return;
+            }
+            navigator.clipboard.writeText(String(data.release_text))
+                .then(() => showToast('Текст релиза скопирован', 'success'))
+                .catch(() => showToast('Не удалось скопировать текст', 'error'));
+        });
+        manual.append(pre, copyBtn);
+        refs.extra.appendChild(manual);
+    }
+    if (finished) {
+        const facts = mcpEl('div', 'text-xs flex flex-wrap gap-2');
+        if (data.tag) facts.appendChild(mcpEl('span', 'font-mono text-slate-200', String(data.tag)));
+        if (data.commit_sha) facts.appendChild(mcpEl('span', 'font-mono text-slate-200', String(data.commit_sha).slice(0, 8)));
+        refs.extra.appendChild(facts);
+        if (typeof data.release_url === 'string' && data.release_url.startsWith('https://github.com/')) {
+            const link = mcpEl('a', 'text-indigo-400 underline', 'Черновик GitHub Release');
+            link.href = data.release_url;
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+            refs.extra.appendChild(link);
+        }
+    }
+
+    const headChanged = data.outcome === 'blocked' && String(data.reason || '').startsWith('HEAD изменился');
+    if (headChanged) {
+        const recreate = mcpEl('button', 'bg-slate-800 border border-slate-700 px-4 py-2 rounded focus:outline-none focus:ring-2 focus:ring-indigo-500', 'Пересоздать план');
+        recreate.type = 'button';
+        recreate.addEventListener('click', () => sendMessage('/release ' + (entry.data.range || '')));
+        refs.extra.appendChild(recreate);
+    }
+
+    refs.hint.hidden = finished;
+    refs.button.hidden = finished;
+    refs.button.textContent = (data.outcome === 'partial' || data.outcome === 'failed') ? 'Повторить оставшиеся шаги' : 'Подтвердить релиз';
+    card.dataset.busy = (finished || headChanged) ? '1' : '0';
+    if (headChanged) refs.versionInput.disabled = true;
+    refs.revalidate();
+    if (finished || headChanged) refs.button.disabled = true;
+    const messagesEl = $('messages');
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+}
 
 function appendReleasePlanCard(data) {
     const container = $('messages');
@@ -2174,6 +2299,17 @@ function handleWsMessage(data) {
             state.lastFailedMessage = null;
             markReleaseCardsStale(String(data.plan_id));
             appendReleasePlanCard(data);
+            break;
+        case 'release_progress':
+            updateReleaseStep(data);
+            break;
+        case 'release_result':
+            state.pendingToolCalls = [];
+            setStreaming(false);
+            removeLoadingBubble();
+            unblockInput();
+            state.lastFailedMessage = null;
+            applyReleaseResult(data);
             break;
         case 'error':
             if (data.code !== 'TOOL_ERROR') state.pendingToolCalls = [];
