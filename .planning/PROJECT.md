@@ -98,6 +98,8 @@ The agent must demonstrably separate and manage distinct kinds of state — shor
 
 ## Current State
 
+Phase 25 (Support Assistant, Day 33) complete (2026-10-17): `/support` command over WebSocket and HTTP, read-only support MCP server over a JSON file of users and tickets, `docs/FAQ.md` in the shared documentation base, Settings section, 14/14 requirements (SUP-01..14). Live e2e with `qwen/qwen3.5-9b` passed; demo video recorded. Parked review findings WR-01..04 (unfenced model-invoked tool results, fence bypass with whitespace, retrieval hint truncation, concurrent first PUT of support config).
+
 Shipped **v4.0 Week 6: Local LLM as a Private Service** (2026-10-12): LAN mode, API keys, HTTP chat, limits, verification script and `Day30_report.md` — Phases 18-20, 21 plans, 26/26 requirements, branch `Day30` merged to `main`. The live run from a Mac passed with exit code 0. The manual second-device UI check is confirmed by the user's statement only. Known limits documented in `docs/ARCHITECTURE.md`: DNS rebinding, plain HTTP, open `/health`, limits kept in process memory (reset on Agent restart).
 
 Shipped **v3.0 Week 5: RAG** (2026-10-10): knowledge-base indexing, RAG chat, reranking, citations with a code-enforced «не знаю», task memory — Phases 10-11, 13-17. Open debug session: `rag-speeding-fine-below-threshold`.
@@ -169,4 +171,4 @@ This document evolves at phase transitions and milestone boundaries.
 Phase 16 (Citations and Anti-Hallucination, Day 24) complete (2026-10-04): per-chat strict mode (on by default, existing RAG chats migrate to on); answers carry quotes verified on the server (exact, fuzzy, unverified, auto) with source rows built from chunk metadata only; when no fragment passes the threshold the code answers «Не знаю» with a clarifying question and makes no model call; quotes block and strict switch in the chat UI; `Day24_report.md` with a live run on the 10 control questions. Honest result: the unchanged 0.67 threshold falsely refused 3 of 8 answerable questions (Q01, Q07, Q08); out-of-corpus 2/2 refused. Review findings WR-01..04 and IN-01..03 parked as backlog 999.13-999.17 (see .planning/phases/16-citations-and-anti-hallucination-day-24/16-REVIEW.md). Open: 16-HUMAN-UAT.md (supervisor restart test never run).
 
 ---
-*Last updated: 2026-10-13 after v5.0 milestone start*
+*Last updated: 2026-10-17 after Phase 25 completion*
