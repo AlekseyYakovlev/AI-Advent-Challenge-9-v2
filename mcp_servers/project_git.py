@@ -680,6 +680,38 @@ def split_lines(text: str) -> list[str]:
     return lines
 
 
+def _has_git_part(rel: str) -> bool:
+    """Return True when any path component names the .git directory (including 8.3 aliases)."""
+    for part in rel.split("/"):
+        bare = part.rstrip(". ")
+        if bare.casefold() == ".git" or _SHORT_GIT.match(bare):
+            return True
+    return False
+
+
+def _is_env_name(rel: str) -> bool:
+    """Return True when the file name starts with .env."""
+    return rel.rsplit("/", 1)[-1].casefold().startswith(".env")
+
+
+def _is_protected_path(rel: str) -> bool:
+    """Return True for paths the tools never read or write: .env* files and .git internals."""
+    return _has_git_part(rel) or _is_env_name(rel)
+
+
+def _resolve_listed(item: str, visible: set[str]) -> str | None:
+    """Return the real root-relative path of a listed file, or None when it must not be opened."""
+    try:
+        real = resolve_inside_root(get_config().root, "./" + item)
+    except ToolInputError:
+        return None
+    if _is_protected_path(real):
+        return None
+    if os.path.normcase(real) != os.path.normcase(item) and os.path.normcase(real) not in visible:
+        return None
+    return real
+
+
 async def require_visible_file(rel: str) -> str:
     """Return the absolute path of a visible regular file or raise ToolInputError."""
     if rel == ".":
@@ -689,6 +721,11 @@ async def require_visible_file(rel: str) -> str:
         raise ToolInputError(
             f"{rel} is not a readable file: it does not exist, is a folder, or git ignores it; "
             "call git_tracked_files to list files"
+        )
+    if _is_protected_path(rel):
+        raise ToolInputError(
+            f"{rel} is a .env file or inside .git; these hold secrets and repository internals "
+            "and cannot be read; choose another file"
         )
     return absolute
 
@@ -703,7 +740,7 @@ async def read_file(
     (1-based, inclusive) select a range. By default 300 lines are shown from the start. The
     first line is a summary "path: lines a-b of N"; when more lines exist a marker at the end
     names the `start_line` to call with next. Files that git ignores (.env, databases) and
-    binary files cannot be read.
+    binary files cannot be read, and neither can `.env*` files or anything inside `.git`.
     """
     max_chars = get_config().max_chars
     rel = _normalise_path(path)
@@ -774,7 +811,8 @@ async def search_text(
     Parameters: `pattern` is searched as a plain substring by default; with `regex=true` it is
     an extended regular expression. `glob` limits the files, for example `*.py` or `docs/*.md`.
     `ignore_case` ignores letter case. Files git ignores (.env, databases) and binary files
-    are skipped. The first line is "N matches in M files", then one `path:line: text` per hit.
+    are skipped, as are `.env*` files, `.git` paths and links that leave the root or point at
+    hidden files. The first line is "N matches in M files", then one `path:line: text` per hit.
     """
     cfg = get_config()
     if (
@@ -826,9 +864,20 @@ async def search_text(
     hits: list[str] = []
     files: set[str] = set()
     total = 0
+    visible: set[str] | None = None
+    allowed: dict[str, bool] = {}
     for line in result.text.split("\n"):
         parts = line.split(":", 2)
         if len(parts) < 3:
+            continue
+        if parts[0] not in allowed:
+            if visible is None:
+                visible = {os.path.normcase(p) for p in await visible_paths()}
+            allowed[parts[0]] = (
+                not _is_protected_path(parts[0])
+                and _resolve_listed(parts[0], visible) is not None
+            )
+        if not allowed[parts[0]]:
             continue
         total += 1
         files.add(parts[0])
@@ -919,14 +968,18 @@ async def find_usages(symbol: str, path: str | None = None) -> str:
     the scan to a file or folder. Reports definitions (def, class), imports, calls, plain
     references, assignments and parameters through the Python syntax tree, so comments and
     strings never match. The first line counts usages by kind, then one
-    `path:line: kind: source line` per usage. Non-Python files need search_text.
+    `path:line: kind: source line` per usage. Non-Python files need search_text. `.env*` files,
+    `.git` paths and links that leave the root or point at hidden files are skipped.
     """
     cfg = get_config()
     name = symbol.strip().split(".")[-1]
     if not name.isidentifier() or len(name) > 100:
         raise ToolInputError("symbol must be a Python name such as cleanup_chat_caches")
     rel = _normalise_path(path)
-    py_files = sorted(p for p in await visible_paths(rel) if p.endswith(".py"))
+    py_files = sorted(
+        p for p in await visible_paths(rel) if p.endswith(".py") and not _is_protected_path(p)
+    )
+    visible: set[str] = {os.path.normcase(p) for p in await visible_paths()}
     started = time.monotonic()
     rows: list[tuple[str, int, str, str]] = []
     skipped = 0
@@ -936,7 +989,11 @@ async def find_usages(symbol: str, path: str | None = None) -> str:
             break
         scanned += 1
         await asyncio.sleep(0)
-        absolute = os.path.join(cfg.root, item)
+        real = _resolve_listed(item, visible)
+        if real is None:
+            skipped += 1
+            continue
+        absolute = os.path.join(cfg.root, real)
         try:
             if os.path.getsize(absolute) > MAX_PARSE_BYTES:
                 skipped += 1
@@ -969,7 +1026,7 @@ async def find_usages(symbol: str, path: str | None = None) -> str:
         f"{_plural(files, 'file', 'files')} ({kinds})"
     )
     if skipped:
-        summary += f"; {skipped} files skipped (syntax errors)"
+        summary += f"; {skipped} files skipped (syntax errors, too large or unsafe links)"
     narrow = "Call again with path set to a folder to narrow the scan."
     body_lines = [f"{p}:{n}: {k}: {t}" for p, n, k, t in rows[:MAX_USAGE_HITS]]
     if len(rows) > MAX_USAGE_HITS:
@@ -1021,17 +1078,16 @@ async def check_write_target(path: str | None) -> tuple[str, str]:
         raise ToolInputError(
             "path is required and must name a file, for example docs/adr/0001-decision.md"
         )
+    if _has_git_part(rel):
+        raise ToolInputError(
+            "writing inside .git is not allowed; choose a path in the working tree"
+        )
     for part in rel.split("/"):
-        bare = part.rstrip(". ")
-        if bare.casefold() == ".git" or _SHORT_GIT.match(bare):
-            raise ToolInputError(
-                "writing inside .git is not allowed; choose a path in the working tree"
-            )
         if part.split(".")[0].casefold() in RESERVED_NAMES:
             raise ToolInputError(
                 f"'{part}' is a reserved Windows device name; choose another file name"
             )
-    if rel.rsplit("/", 1)[-1].casefold().startswith(".env"):
+    if _is_env_name(rel):
         raise ToolInputError(".env files hold secrets and cannot be written; choose another path")
     if await is_git_ignored(rel):
         raise ToolInputError(f"git ignores {rel}; write only files git would track (see .gitignore)")

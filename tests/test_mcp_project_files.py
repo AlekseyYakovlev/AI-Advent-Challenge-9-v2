@@ -275,6 +275,163 @@ async def test_find_usages_ignores_dotted_prefix(files_repo: Path) -> None:
     assert "a.py:1:" in out
 
 
+def _fake_realpath(monkeypatch: pytest.MonkeyPatch, root: Path, mapping: dict[str, Path]) -> None:
+    """Make listed names resolve to other paths, simulating symlinks on any account."""
+    original = os.path.realpath
+    root_real = original(root)
+    table: dict[str, str] = {
+        os.path.normcase(os.path.join(root_real, name)): str(target)
+        for name, target in mapping.items()
+    }
+
+    def fake(path: Any, *args: Any, **kwargs: Any) -> str:
+        key = os.path.normcase(os.path.abspath(path))
+        if key in table:
+            return table[key]
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(os.path, "realpath", fake)
+
+
+def _try_symlink(target: Path, link: Path) -> None:
+    try:
+        os.symlink(target, link)
+    except (OSError, NotImplementedError, AttributeError):
+        pytest.skip("symlinks are not available")
+
+
+async def test_find_usages_skips_link_to_ignored_env_simulated(
+    files_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (files_repo / ".env").write_text('KEY = "sk-env-secret"\n', encoding="utf-8")
+    (files_repo / "leak.py").write_text('KEY = "decoy"\n', encoding="utf-8")
+    _fake_realpath(monkeypatch, files_repo, {"leak.py": files_repo / ".env"})
+    out = await _ok(project_git.find_usages("KEY"))
+    assert out.startswith("No usages of KEY")
+    for forbidden in ("sk-env-secret", "decoy", "leak.py"):
+        assert forbidden not in out
+
+
+async def test_find_usages_skips_link_outside_root_simulated(
+    files_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    outside = tmp_path / "outside_secret.py"
+    outside.write_text('KEY = "outside-secret"\n', encoding="utf-8")
+    (files_repo / "out.py").write_text('KEY = "decoy"\n', encoding="utf-8")
+    (files_repo / "ok.py").write_text("KEY = 1\n", encoding="utf-8")
+    _fake_realpath(monkeypatch, files_repo, {"out.py": outside})
+    out = await _ok(project_git.find_usages("KEY"))
+    assert "ok.py:1: assign:" in out
+    assert "1 files skipped" in out.splitlines()[0]
+    for forbidden in ("outside-secret", "decoy", "out.py"):
+        assert forbidden not in out
+
+
+async def test_find_usages_allows_link_to_visible_file_simulated(
+    files_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (files_repo / "alias.py").write_text("needle = 9\n", encoding="utf-8")
+    _fake_realpath(monkeypatch, files_repo, {"alias.py": files_repo / "a.py"})
+    out = await _ok(project_git.find_usages("needle"))
+    assert "alias.py:1:" in out
+    assert "a.py:1:" in out
+    assert "skipped" not in out
+
+
+async def test_find_usages_real_symlink_to_env_and_outside(
+    files_repo: Path, tmp_path: Path
+) -> None:
+    outside = tmp_path / "outside_secret.py"
+    outside.write_text('KEY = "outside-secret"\n', encoding="utf-8")
+    (files_repo / ".env").write_text('KEY = "sk-env-secret"\n', encoding="utf-8")
+    _try_symlink(files_repo / ".env", files_repo / "leak.py")
+    _try_symlink(outside, files_repo / "out.py")
+    out = await _ok(project_git.find_usages("KEY"))
+    assert "sk-env-secret" not in out
+    assert "outside-secret" not in out
+
+
+async def test_find_usages_skips_env_named_python_file(files_repo: Path) -> None:
+    (files_repo / "pkg" / ".envsettings.py").write_text('KEY = "envpy-secret"\n', encoding="utf-8")
+    out = await _ok(project_git.find_usages("KEY"))
+    assert "envpy-secret" not in out
+    assert ".envsettings" not in out
+
+
+async def test_find_usages_and_search_keep_dash_named_file(files_repo: Path) -> None:
+    (files_repo / "-x.py").write_text("needle = 2\n", encoding="utf-8")
+    usages = await _ok(project_git.find_usages("needle"))
+    assert "-x.py:1:" in usages
+    found = await _ok(project_git.search_text("needle", glob="*.py"))
+    assert "-x.py:1:" in found
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="case-insensitive file systems only")
+async def test_resolve_listed_ignores_case_difference(
+    files_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fake_realpath(monkeypatch, files_repo, {"a.py": files_repo / "A.PY"})
+    assert project_git._resolve_listed("a.py", {os.path.normcase("a.py")}) is not None
+    out = await _ok(project_git.find_usages("needle"))
+    assert "a.py:1:" in out
+    assert "skipped" not in out
+
+
+def test_protected_path_helpers() -> None:
+    for rel in (".env", "config/.env.local", ".ENV.prod", ".git/config", "sub/.git/x", ".GIT./x", "GIT~1/x"):
+        assert project_git._is_protected_path(rel), rel
+    for rel in ("a.py", "docs/env.md", "pkg/b.py", "my.git.py"):
+        assert not project_git._is_protected_path(rel), rel
+
+
+async def test_read_file_env_variant_refused(files_repo: Path) -> None:
+    (files_repo / "config").mkdir()
+    (files_repo / "config" / ".env.local").write_text("LOCALSECRET=1\n", encoding="utf-8")
+    with pytest.raises(ToolInputError, match="secrets"):
+        await project_git.read_file("config/.env.local")
+
+
+@pytest.mark.parametrize("path", [".git/config", ".git/HEAD"])
+async def test_read_file_git_paths_refused(files_repo: Path, path: str) -> None:
+    with pytest.raises(ToolInputError):
+        await project_git.read_file(path)
+
+
+async def test_search_text_skips_env_variant(files_repo: Path) -> None:
+    (files_repo / "config").mkdir()
+    (files_repo / "config" / ".env.local").write_text("needle LOCALSECRET\n", encoding="utf-8")
+    assert (await _ok(project_git.search_text("LOCALSECRET"))).startswith("No matches for")
+    out = await _ok(project_git.search_text("needle"))
+    assert "LOCALSECRET" not in out
+    assert ".env.local" not in out
+    assert out.splitlines()[0] == "5 matches in 4 files"
+
+
+async def test_search_text_skips_link_to_env_simulated(
+    files_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (files_repo / "notes" / "leak.md").write_text("needle decoy\n", encoding="utf-8")
+    _fake_realpath(monkeypatch, files_repo, {"notes/leak.md": files_repo / ".env"})
+    assert (await _ok(project_git.search_text("decoy"))).startswith("No matches for")
+    assert "notes/leak.md" not in await _ok(project_git.search_text("needle"))
+
+
+async def test_read_file_link_to_env_simulated(
+    files_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (files_repo / "notes" / "leak.md").write_text("needle decoy\n", encoding="utf-8")
+    _fake_realpath(monkeypatch, files_repo, {"notes/leak.md": files_repo / ".env"})
+    with pytest.raises(ToolInputError):
+        await project_git.read_file("notes/leak.md")
+
+
+async def test_read_and_search_real_symlink_to_env(files_repo: Path) -> None:
+    _try_symlink(files_repo / ".env", files_repo / "notes" / "leak.md")
+    with pytest.raises(ToolInputError):
+        await project_git.read_file("notes/leak.md")
+    assert "SECRET=1" not in await _ok(project_git.search_text("SECRET"))
+
+
 # ------------------------------------------------------------- write tools
 
 REPO_ROOT: Path = Path(__file__).resolve().parent.parent
