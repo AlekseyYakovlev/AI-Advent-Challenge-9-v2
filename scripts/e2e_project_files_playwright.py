@@ -49,6 +49,8 @@ WRITE_GOAL: str = (
     "В конце перечисли созданные или изменённые файлы."
 )
 READ_GOAL: str = "Где в проекте используется функция cleanup_chat_caches? Ничего не меняй."
+VIDEO_DIR: str = os.environ.get("FILES_E2E_VIDEO_DIR", "")
+VIDEO_SLOW_MO: int = int(os.environ.get("FILES_E2E_SLOW_MO_MS", "0"))
 PREFERRED_MODEL: str = "qwen/qwen3.5-9b"
 ANSWER_TIMEOUT_MS: int = 600000
 STEP_TIMEOUT_MS: int = 20000
@@ -290,6 +292,19 @@ async def diff_regions_in_write_cards(page: Any) -> int:
     )
 
 
+async def show_cards(page: Any, pause: float) -> None:
+    """For the demo video: open the project-files cards, scroll them into view and hold."""
+    if not VIDEO_DIR:
+        return
+    await page.evaluate(
+        """(server) => { const cards = Array.from(document.querySelectorAll('details.tool-call-card'))
+            .filter(c => c.textContent.includes(server)); cards.forEach(c => { c.open = true; });
+            if (cards.length) cards[cards.length - 1].scrollIntoView({block: 'center'}); }""",
+        SERVER_NAME,
+    )
+    await asyncio.sleep(pause)
+
+
 async def scenario(page: Any, clone: Path) -> tuple[bool, list[str]]:
     """Run one attempt in a new chat; return the overall result and a transcript."""
     transcript: list[str] = []
@@ -303,6 +318,7 @@ async def scenario(page: Any, clone: Path) -> tuple[bool, list[str]]:
     await select_chat_model(page)
 
     before, texts, answer = await ask(page, WRITE_GOAL)
+    await show_cards(page, 8.0)
     transcript += [f"goal: {WRITE_GOAL}", *[f"card: {t[:200]}" for t in texts], f"answer: {answer}"]
     write_card = any(
         SERVER_NAME in t and any(w in t for w in WRITE_TOOLS) for t in texts[before:]
@@ -315,6 +331,7 @@ async def scenario(page: Any, clone: Path) -> tuple[bool, list[str]]:
     ok3 = report("clone contains the new or changed file", changed, TARGET_FILE)
 
     cards_before, texts2, answer2 = await ask(page, READ_GOAL)
+    await show_cards(page, 6.0)
     transcript += [f"goal: {READ_GOAL}", *[f"card: {t[:200]}" for t in texts2[cards_before:]],
                    f"answer: {answer2}"]
     report("read goal: a search_text / find_usages card appeared (not required)",
@@ -329,6 +346,7 @@ async def scenario(page: Any, clone: Path) -> tuple[bool, list[str]]:
         "id => state.currentChatId === id", arg=first_chat, timeout=15000,
     )
     await asyncio.sleep(2.0)
+    await show_cards(page, 5.0)
     ok4 = report("diff card survives a chat switch within the session",
                  await diff_regions_in_write_cards(page) >= 1)
     return bool(ok1 and ok2 and ok3 and ok4), transcript
@@ -343,8 +361,13 @@ async def drive_browser(
     render_ok = False
     model_ok = False
     async with async_playwright() as playwright:
-        browser = await playwright.chromium.launch(headless=True)
-        page = await (await browser.new_context()).new_page()
+        browser = await playwright.chromium.launch(headless=not VIDEO_DIR, slow_mo=VIDEO_SLOW_MO)
+        context = await browser.new_context(
+            viewport={"width": 1366, "height": 850},
+            **({"record_video_dir": VIDEO_DIR, "record_video_size": {"width": 1366, "height": 850}}
+               if VIDEO_DIR else {}),
+        )
+        page = await context.new_page()
         page.set_default_timeout(STEP_TIMEOUT_MS)
         page.on("pageerror", lambda exc: page_errors.append(str(exc)))
         try:
@@ -367,12 +390,17 @@ async def drive_browser(
             report("scenario run aborted", False, f"{type(exc).__name__}: {exc}")
             await page.screenshot(path=str(scratch / "failure.png"))
         finally:
+            await context.close()
             await browser.close()
+            if VIDEO_DIR and page.video:
+                print(f"video saved: {await page.video.path()}", flush=True)
     return render_ok, model_ok
 
 
 def write_out(result_line: str) -> None:
     """Write the recorded check lines and the RESULT line (no secrets) to OUT_FILE."""
+    if VIDEO_DIR:
+        return
     OUT_FILE.parent.mkdir(parents=True, exist_ok=True)
     lines = [
         "# Project files assistant: isolated-copy e2e",
