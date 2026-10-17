@@ -5,7 +5,7 @@ import asyncio
 import pytest
 from httpx import AsyncClient
 from sqlmodel import select
-from agent.state import chat_locks, title_tasks, ws_rate_limiter
+from agent.state import chat_locks, release_plans, title_tasks, ws_rate_limiter
 from shared.database import async_session_factory
 from shared.models import (
     Chat,
@@ -30,11 +30,13 @@ async def test_delete_chat_cleans_in_memory_caches(authenticated_client: AsyncCl
 
     ws_rate_limiter[chat_id] = [1.0, 2.0]
     chat_locks[chat_id] = asyncio.Lock()
+    release_plans[chat_id] = object()
 
     resp = await authenticated_client.delete(f"/api/v1/chats/{chat_id}")
     assert resp.status_code == 204
     assert chat_id not in ws_rate_limiter
     assert chat_id not in chat_locks
+    assert chat_id not in release_plans
 
 
 @pytest.mark.asyncio

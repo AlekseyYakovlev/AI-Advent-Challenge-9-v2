@@ -13,6 +13,8 @@ title_tasks: dict[int, asyncio.Task[None]] = {}
 kb_jobs: dict[int, asyncio.Task[None]] = {}
 # Loaded FAISS indexes keyed by knowledge base id.
 kb_index_cache: dict[int, Any] = {}
+# Pending /release plan per chat (agent/release_handler.py); live only, never persisted.
+release_plans: dict[int, Any] = {}
 
 # Set per chat turn in ws._handle_chat_message so tool handlers know the chat's model;
 # it is overwritten on every turn, so nothing needs to clear it.
@@ -28,6 +30,7 @@ def cleanup_chat_caches(chat_id: int) -> None:
     active_streams.pop(chat_id, None)
     ws_rate_limiter.pop(chat_id, None)
     chat_locks.pop(chat_id, None)
+    release_plans.pop(chat_id, None)
     title_task = title_tasks.pop(chat_id, None)
     if title_task is not None and not title_task.done():
         title_task.cancel()
