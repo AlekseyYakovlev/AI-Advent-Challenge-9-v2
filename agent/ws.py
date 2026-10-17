@@ -22,6 +22,7 @@ from agent.context_engine import (
 )
 from agent.dependencies import get_current_user_ws
 from agent import command_turn, help_command, invariants, limits, support_command, support_lookup, tasks
+from agent import release_command, release_handler
 from agent.command_turn import NOTICE_NO_BASE
 from agent.llm_client import LLMClient, count_tokens
 from agent.mcp_tools import McpToolset, build_mcp_toolset
@@ -43,6 +44,7 @@ from agent.schemas import (
 )
 from agent.text_tool_calls import TextToolCallFilter
 from agent.titles import DEFAULT_CHAT_TITLE, schedule_title_generation
+from agent.tool_frames import preview as _preview, tool_call_frame as _tool_call_frame
 from agent.tool_guard import (
     ACTION_ANNOUNCE_REMINDER,
     ACTION_CLAIM_REMINDER,
@@ -93,33 +95,6 @@ def _normalize_tool_calls_for_echo(tool_calls: list[dict[str, Any]]) -> list[dic
         call_copy["function"] = function
         normalized.append(call_copy)
     return normalized
-
-
-def _preview(text: str, limit: int) -> tuple[str, bool]:
-    """Cut text to the limit and report whether it was cut."""
-    if len(text) <= limit:
-        return text, False
-    return text[:limit], True
-
-
-def _tool_call_frame(result: dict[str, Any]) -> dict[str, Any]:
-    """Build the tool_call WebSocket frame for one dispatch result."""
-    mcp_info = result.get("mcp")
-    arguments, _ = _preview(result.get("arguments", ""), TOOL_EVENT_ARGS_PREVIEW_CHARS)
-    preview, cut = _preview(
-        result.get("result_text", result["content"]),
-        TOOL_EVENT_PREVIEW_CHARS,
-    )
-    return ToolCallEvent(
-        tool_call_id=result.get("tool_call_id"),
-        name=result.get("name"),
-        server=mcp_info["server_name"] if mcp_info else None,
-        tool=mcp_info["tool"] if mcp_info else result.get("name"),
-        arguments=arguments,
-        ok=result["ok"],
-        result=preview,
-        truncated=bool(result.get("truncated")) or cut,
-    ).model_dump()
 
 
 async def _load_mcp_toolset(session: AsyncSession, user_id: int, chat_id: int) -> McpToolset:
@@ -1581,6 +1556,12 @@ async def ws_chat(websocket: WebSocket, chat_id: int) -> None:
             except asyncio.TimeoutError:
                 await websocket.close(code=1000, reason="Idle timeout")
                 break
+
+            if release_command.is_release_command(raw):
+                if await _reject_rate_limited(websocket, chat_id):
+                    continue
+                await release_handler.handle_release(websocket, chat_id, user.id, raw)
+                continue
 
             if help_command.is_help_command(raw) or support_command.is_support_command(raw):
                 try:

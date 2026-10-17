@@ -919,3 +919,35 @@ The provider and the model come from the review settings. By default this is the
 ### Out of scope
 
 Inline comments on lines, posting comments from the app itself (the workflow posts), a `/review` chat command, GitHub-hosted runners and blocking a merge on the result.
+
+## /release command (Day 35)
+
+`/release` is a code-driven release pipeline on top of the git MCP server. The model writes text and picks a version from candidates; every read and write is a tool call made by code (the model never gets the release tools, D-03), and each call is shown as an ordinary tool-call card.
+
+### Modules
+
+- `agent/release_command.py`: grammar of `/release`, `ReleasePlan`, `StepState`, the frame builders and the Russian copy.
+- `agent/release_pipeline.py`: pure rules - version candidates, MCP result parsers, noise filter, commit grouping, prompts, strict parsing of model output, `changelog_coverage`, section assembly.
+- `agent/release_llm.py`: the chat's own client and model for the changelog draft and the version choice.
+- `agent/release_planner.py`: plan phase, reads only; returns a `ReleasePlan` or a notice.
+- `agent/release_mcp.py`: `ReleaseMcp` caller and `resolve_release_rows` for the user's `release-git` and `github` server rows.
+- `agent/release_executor.py`: `confirm_plan`, the resumable commit, tag, push, Release state machine with re-validation before any write.
+- `agent/release_handler.py`: the WebSocket entry, runs under the per-chat lock; `agent/ws.py` has one thin branch that delegates to it.
+- `agent/tool_frames.py`: the shared `tool_call` frame builder.
+- `agent/state.py::release_plans`: in-memory plans per chat, removed by `cleanup_chat_caches`.
+
+### Flow
+
+```text
+/release -> planner reads context and commits (read tools) -> LLM draft + version choice
+         -> release_plan frame (nothing stored)
+confirm  -> re-check HEAD, clean tree, version
+         -> 1 commit CHANGELOG.md -> 2 annotated tag -> 3 push branch + tag (no force)
+         -> 4 draft GitHub Release  (release_progress per step, release_result at the end)
+```
+
+A step that is already `done` is skipped on retry. A failed or unavailable step leaves the earlier steps in place; nothing is rolled back. The release tools are only registered when the server starts with `--allow-release`.
+
+### Deviation from D-04 (D-20)
+
+Decision D-04 planned to create the draft Release through the official GitHub MCP server. github-mcp-server v2.0.2 has no create-release tool, so the draft Release is created by the own narrow `github_create_draft_release` tool in `mcp_servers/project_git.py`, which calls the GitHub REST API with the token from the server's own environment. The tool never publishes, and a draft that already exists for the tag is returned instead of a duplicate. The optional read-only `github` entry is still used to add merged Pull Requests to the plan.

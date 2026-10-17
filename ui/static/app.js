@@ -45,6 +45,8 @@ const state = {
     apiKeys: [],
     savingApiKey: false,
     chatRefreshPendingId: null,
+    releaseCards: {},
+    latestReleasePlanId: null,
 };
 
 const TASK_STATE_LABELS = {
@@ -1617,6 +1619,366 @@ function appendToolCallCard(evt) {
     container.scrollTop = container.scrollHeight;
 }
 
+const RELEASE_STEP_STATUS = {
+    pending: { glyph: '○', cls: 'text-slate-500', word: 'ожидает' },
+    running: { glyph: '…', cls: 'text-slate-300', word: 'выполняется' },
+    done: { glyph: '✓', cls: 'text-green-400', word: 'выполнено' },
+    skipped: { glyph: '↷', cls: 'text-slate-400', word: 'пропущено' },
+    failed: { glyph: '✗', cls: 'text-red-400', word: 'ошибка' },
+    unavailable: { glyph: '⊘', cls: 'text-yellow-400', word: 'недоступно' },
+};
+
+const RELEASE_VERSION_PATTERN = /^v(\d+)\.(\d+)$/;
+
+function validateReleaseVersion(value, lastTag, taken) {
+    const match = /^v(\d+)\.(\d+)$/.exec(value);
+    if (!match) return 'Формат версии: vX.Y, например v4.1.';
+    const last = RELEASE_VERSION_PATTERN.exec(lastTag || '');
+    if (last) {
+        const major = Number(match[1]);
+        const minor = Number(match[2]);
+        const lastMajor = Number(last[1]);
+        const lastMinor = Number(last[2]);
+        if (major < lastMajor || (major === lastMajor && minor <= lastMinor)) {
+            return `Версия должна быть больше последнего тега (${lastTag}).`;
+        }
+    }
+    if ((taken || []).includes(value)) return `Версия ${value} уже существует как тег. Выберите другую.`;
+    return '';
+}
+
+function setReleaseStepRow(row, status) {
+    const info = RELEASE_STEP_STATUS[status] || RELEASE_STEP_STATUS.pending;
+    const glyph = row.querySelector('[data-role="glyph"]');
+    const word = row.querySelector('[data-role="word"]');
+    glyph.className = info.cls;
+    glyph.textContent = info.glyph;
+    word.className = `text-xs ${info.cls}`;
+    word.textContent = info.word;
+}
+
+function releaseStepRow(step) {
+    const row = mcpEl('li', 'flex items-center gap-2 text-sm');
+    row.dataset.step = step.key;
+    const glyph = mcpEl('span', '', '');
+    glyph.dataset.role = 'glyph';
+    const label = mcpEl('span', 'text-slate-300', step.label);
+    const word = mcpEl('span', '', '');
+    word.dataset.role = 'word';
+    row.append(glyph, label, word);
+    setReleaseStepRow(row, step.status);
+    return row;
+}
+
+function setReleaseHeader(refs, text, colorClass) {
+    refs.status.className = `font-semibold ${colorClass}`;
+    refs.status.textContent = text;
+}
+
+function buildReleasePlanCard(data) {
+    const planId = String(data.plan_id);
+    const counts = data.counts || {};
+    const card = mcpEl('div', 'release-plan rounded-lg border border-slate-700 bg-slate-900 text-sm text-slate-300 px-3 py-2 max-w-[75%] self-start space-y-4');
+    card.setAttribute('role', 'region');
+    card.setAttribute('aria-label', 'План релиза');
+    card.dataset.planId = planId;
+    card.dataset.busy = '0';
+
+    const header = mcpEl('div', 'flex items-center justify-between gap-2');
+    const chip = mcpEl('span', RAG_CHIP_NEUTRAL + ' text-xs', 'План релиза');
+    const status = mcpEl('span', '', '');
+    status.setAttribute('role', 'status');
+    status.setAttribute('aria-live', 'polite');
+    header.append(chip, status);
+    card.appendChild(header);
+
+    const facts = mcpEl('div', 'text-xs space-y-1');
+    const factRows = [
+        ['Диапазон', data.range],
+        ['Ветка', data.branch],
+        ['Коммитов в релизе', (counts.kept || 0) + (counts.day_merges || 0) + (counts.prs || 0)],
+        ['Отфильтровано', counts.dropped || 0],
+    ];
+    for (const [name, value] of factRows) {
+        const row = mcpEl('div', 'flex gap-2');
+        row.append(mcpEl('span', 'text-slate-500', name), mcpEl('span', 'text-slate-200 font-mono', String(value ?? '')));
+        facts.appendChild(row);
+    }
+    card.appendChild(facts);
+
+    const warnings = Array.isArray(data.warnings) ? data.warnings.slice() : [];
+    if (Array.isArray(data.coverage_missing) && data.coverage_missing.length) {
+        warnings.push('Модель не упомянула: ' + data.coverage_missing.join(', '));
+    }
+    if (warnings.length) {
+        const warnBlock = mcpEl('div', 'space-y-1');
+        for (const text of warnings) {
+            const line = mcpEl('div', 'text-xs text-yellow-500', String(text));
+            line.setAttribute('role', 'status');
+            warnBlock.appendChild(line);
+        }
+        card.appendChild(warnBlock);
+    }
+    if (data.blocked) {
+        card.appendChild(mcpEl('div', 'text-red-300 font-mono whitespace-pre-wrap break-words', String(data.blocked)));
+    }
+
+    const form = mcpEl('div', 'space-y-2');
+    const versionId = `release-version-${planId}`;
+    const errorId = `release-version-error-${planId}`;
+    const titleId = `release-title-${planId}`;
+    const inputClass = 'w-full bg-slate-950 border border-slate-700 rounded px-2 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500';
+    const versionLabel = mcpEl('label', 'block text-xs text-slate-500', 'Версия');
+    versionLabel.htmlFor = versionId;
+    const versionInput = mcpEl('input', `${inputClass} font-mono`);
+    versionInput.type = 'text';
+    versionInput.id = versionId;
+    versionInput.value = data.version || '';
+    versionInput.setAttribute('aria-describedby', errorId);
+    const chips = [];
+    const chipRow = mcpEl('div', 'flex flex-wrap gap-2');
+    for (const candidate of (data.candidates || [])) {
+        const value = String(candidate);
+        const chipBtn = mcpEl('button', 'px-2 py-2 rounded border border-slate-700 bg-slate-800 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500', value);
+        chipBtn.type = 'button';
+        chipBtn.addEventListener('click', () => {
+            versionInput.value = value;
+            versionInput.dispatchEvent(new Event('input'));
+        });
+        chips.push(chipBtn);
+        chipRow.appendChild(chipBtn);
+    }
+    const versionError = mcpEl('div', 'text-xs text-red-400', '');
+    versionError.id = errorId;
+    const titleLabel = mcpEl('label', 'block text-xs text-slate-500', 'Название');
+    titleLabel.htmlFor = titleId;
+    const titleInput = mcpEl('input', inputClass);
+    titleInput.type = 'text';
+    titleInput.id = titleId;
+    titleInput.value = data.title || '';
+    form.append(versionLabel, versionInput, chipRow, versionError, titleLabel, titleInput);
+    card.appendChild(form);
+
+    const rationale = mcpEl('div', 'space-y-1');
+    rationale.append(mcpEl('div', 'text-xs text-slate-500', 'Обоснование версии'), mcpEl('div', 'text-slate-300', data.rationale || ''));
+    card.appendChild(rationale);
+
+    const details = document.createElement('details');
+    details.appendChild(mcpEl('summary', 'cursor-pointer text-slate-300', 'Черновик CHANGELOG (Добавлено / Исправлено / Изменено)'));
+    const changelog = mcpEl('div', 'max-h-96 overflow-y-auto bg-slate-800 border border-slate-700 rounded px-2 py-2 mt-2');
+    changelog.innerHTML = renderMarkdown(data.changelog || '');
+    details.appendChild(changelog);
+    card.appendChild(details);
+
+    const steps = mcpEl('ol', 'list-none space-y-1');
+    for (const step of (data.steps || [])) steps.appendChild(releaseStepRow(step));
+    card.appendChild(steps);
+
+    const extra = mcpEl('div', 'space-y-2');
+    card.appendChild(extra);
+
+    const actions = mcpEl('div', 'flex flex-wrap items-center gap-2');
+    const button = mcpEl('button', 'bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed', 'Подтвердить релиз');
+    button.type = 'button';
+    const hint = mcpEl('span', 'text-xs text-slate-500', 'Или введите /release confirm');
+    actions.append(button, hint);
+    card.appendChild(actions);
+    card.appendChild(mcpEl('div', 'text-xs text-slate-500', 'План хранится до подтверждения или перезапуска агента.'));
+
+    const refs = { status, versionInput, titleInput, error: versionError, button, hint, steps, extra, actions, chips };
+    refs.revalidate = () => {
+        const message = validateReleaseVersion(versionInput.value.trim(), data.last_tag, data.taken);
+        versionError.textContent = message;
+        versionInput.setAttribute('aria-invalid', message ? 'true' : 'false');
+        versionInput.classList.toggle('border-red-500', Boolean(message));
+        versionInput.classList.toggle('border-slate-700', !message);
+        chips.forEach((chipBtn) => chipBtn.classList.toggle('border-indigo-500', chipBtn.textContent === versionInput.value.trim()));
+        button.disabled = Boolean(message) || Boolean(data.blocked) || card.dataset.busy === '1';
+    };
+    versionInput.addEventListener('input', refs.revalidate);
+    button.addEventListener('click', () => sendReleaseConfirm(planId));
+
+    if (data.blocked) {
+        setReleaseHeader(refs, 'Заблокировано', 'text-red-400');
+        versionInput.disabled = true;
+        titleInput.disabled = true;
+        chips.forEach((chipBtn) => { chipBtn.disabled = true; });
+    } else {
+        setReleaseHeader(refs, 'Ожидает подтверждения', 'text-yellow-400');
+    }
+    refs.revalidate();
+
+    state.releaseCards[planId] = { card, data, refs };
+    return card;
+}
+
+function sendReleaseConfirm(planId) {
+    const entry = state.releaseCards[planId];
+    if (!entry) return;
+    if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
+        showToast('Нет соединения с сервером', 'error');
+        return;
+    }
+    const refs = entry.refs;
+    state.ws.send(JSON.stringify({
+        type: 'release_confirm',
+        plan_id: entry.data.plan_id,
+        version: refs.versionInput.value.trim(),
+        title: refs.titleInput.value.trim(),
+        model: state.selectedModel,
+        provider_id: state.selectedProviderId,
+    }));
+    entry.card.dataset.busy = '1';
+    refs.button.disabled = true;
+    refs.button.textContent = 'Выполняется…';
+    refs.versionInput.disabled = true;
+    refs.titleInput.disabled = true;
+    refs.chips.forEach((chipBtn) => { chipBtn.disabled = true; });
+    setReleaseHeader(refs, 'Выполняется…', 'text-slate-300');
+    setStreaming(true);
+    appendLoadingBubble();
+}
+
+function markReleaseCardsStale(exceptId) {
+    for (const [planId, entry] of Object.entries(state.releaseCards)) {
+        if (planId === exceptId || entry.card.dataset.stale === '1') continue;
+        entry.card.dataset.stale = '1';
+        entry.card.dataset.busy = '1';
+        entry.card.querySelectorAll('input, button').forEach((el) => { el.disabled = true; });
+        entry.refs.button.textContent = 'План устарел';
+        setReleaseHeader(entry.refs, 'План устарел', 'text-slate-400');
+    }
+}
+
+function releaseCardEntry(planId) {
+    return state.releaseCards[String(planId)] || state.releaseCards[state.latestReleasePlanId] || null;
+}
+
+function findReleaseStepRow(list, key) {
+    return Array.from(list.children).find((row) => row.dataset.step === key) || null;
+}
+
+function updateReleaseStep(data) {
+    const entry = releaseCardEntry(data.plan_id);
+    if (!entry) return;
+    const refs = entry.refs;
+    if (entry.card.dataset.busy !== '1') {
+        entry.card.dataset.busy = '1';
+        refs.button.disabled = true;
+        refs.button.textContent = 'Выполняется…';
+        refs.versionInput.disabled = true;
+        refs.titleInput.disabled = true;
+        refs.chips.forEach((chipBtn) => { chipBtn.disabled = true; });
+        setReleaseHeader(refs, 'Выполняется…', 'text-slate-300');
+    }
+    const row = findReleaseStepRow(refs.steps, data.step);
+    if (!row) return;
+    setReleaseStepRow(row, data.status);
+    if (data.detail && (data.status === 'failed' || data.status === 'unavailable')) {
+        row.title = String(data.detail);
+    }
+}
+
+function applyReleaseResult(data) {
+    const entry = releaseCardEntry(data.plan_id);
+    if (!entry) return;
+    const { card, refs } = entry;
+    const outcomes = {
+        done: ['Готово', 'text-green-400'],
+        partial: ['Частично выполнено', 'text-yellow-400'],
+        failed: ['Ошибка', 'text-red-400'],
+        blocked: ['Заблокировано', 'text-red-400'],
+    };
+    const [headerText, headerClass] = outcomes[data.outcome] || outcomes.failed;
+    setReleaseHeader(refs, headerText, headerClass);
+
+    for (const step of (data.steps || [])) {
+        const row = findReleaseStepRow(refs.steps, step.key);
+        if (row) setReleaseStepRow(row, step.status);
+        else refs.steps.appendChild(releaseStepRow(step));
+    }
+
+    const finished = data.outcome === 'done';
+    const locked = finished || Boolean(data.locked);
+    if (data.version) refs.versionInput.value = data.version;
+    if (data.title) refs.titleInput.value = data.title;
+    refs.versionInput.disabled = false;
+    refs.titleInput.disabled = false;
+    refs.versionInput.readOnly = locked;
+    refs.titleInput.readOnly = locked;
+    refs.chips.forEach((chipBtn) => { chipBtn.disabled = locked; });
+
+    refs.extra.replaceChildren();
+    if (!finished && (data.reason || data.hint)) {
+        const failure = mcpEl('div', 'border border-red-800 rounded px-2 py-2 space-y-1');
+        if (data.reason) failure.appendChild(mcpEl('div', 'text-red-300 font-mono whitespace-pre-wrap break-words', String(data.reason)));
+        if (data.hint) failure.appendChild(mcpEl('div', 'text-xs text-slate-300', String(data.hint)));
+        refs.extra.appendChild(failure);
+    }
+    if ((data.outcome === 'partial' || data.outcome === 'failed') && data.release_text) {
+        const manual = document.createElement('details');
+        manual.appendChild(mcpEl('summary', 'cursor-pointer text-slate-300', 'Текст релиза для ручной публикации'));
+        const pre = mcpEl('pre', 'text-xs font-mono whitespace-pre-wrap break-words bg-slate-950 border border-slate-700 rounded px-2 py-2 mt-2 max-h-96 overflow-y-auto', String(data.release_text));
+        const copyBtn = mcpEl('button', 'mt-2 bg-slate-800 border border-slate-700 px-4 py-2 rounded focus:outline-none focus:ring-2 focus:ring-indigo-500', 'Скопировать текст релиза');
+        copyBtn.type = 'button';
+        copyBtn.addEventListener('click', () => {
+            if (!navigator.clipboard) {
+                showToast('Не удалось скопировать текст', 'error');
+                return;
+            }
+            navigator.clipboard.writeText(String(data.release_text))
+                .then(() => showToast('Текст релиза скопирован', 'success'))
+                .catch(() => showToast('Не удалось скопировать текст', 'error'));
+        });
+        manual.append(pre, copyBtn);
+        refs.extra.appendChild(manual);
+    }
+    if (finished) {
+        const facts = mcpEl('div', 'text-xs flex flex-wrap gap-2');
+        if (data.tag) facts.appendChild(mcpEl('span', 'font-mono text-slate-200', String(data.tag)));
+        if (data.commit_sha) facts.appendChild(mcpEl('span', 'font-mono text-slate-200', String(data.commit_sha).slice(0, 8)));
+        refs.extra.appendChild(facts);
+        if (typeof data.release_url === 'string' && data.release_url.startsWith('https://github.com/')) {
+            const link = mcpEl('a', 'text-indigo-400 underline', 'Черновик GitHub Release');
+            link.href = data.release_url;
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+            refs.extra.appendChild(link);
+        }
+    }
+
+    const headChanged = data.outcome === 'blocked' && String(data.reason || '').startsWith('HEAD изменился');
+    if (headChanged) {
+        const recreate = mcpEl('button', 'bg-slate-800 border border-slate-700 px-4 py-2 rounded focus:outline-none focus:ring-2 focus:ring-indigo-500', 'Пересоздать план');
+        recreate.type = 'button';
+        recreate.addEventListener('click', () => sendMessage('/release ' + (entry.data.range || '')));
+        refs.extra.appendChild(recreate);
+    }
+
+    refs.hint.hidden = finished;
+    refs.button.hidden = finished;
+    refs.button.textContent = (data.outcome === 'partial' || data.outcome === 'failed') ? 'Повторить оставшиеся шаги' : 'Подтвердить релиз';
+    card.dataset.busy = (finished || headChanged) ? '1' : '0';
+    if (headChanged) refs.versionInput.disabled = true;
+    refs.revalidate();
+    if (finished || headChanged) refs.button.disabled = true;
+    const messagesEl = $('messages');
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function appendReleasePlanCard(data) {
+    const container = $('messages');
+    const wrapper = wrapToolCard(buildReleasePlanCard(data));
+    const streaming = container.querySelector('[data-streaming="true"]');
+    if (streaming) {
+        container.insertBefore(wrapper, streaming);
+    } else {
+        container.appendChild(wrapper);
+    }
+    state.latestReleasePlanId = String(data.plan_id);
+    container.scrollTop = container.scrollHeight;
+}
+
 function removeLoadingBubble() {
     const el = document.querySelector('[data-streaming="true"]');
     if (el) el.remove();
@@ -1929,6 +2291,26 @@ function handleWsMessage(data) {
             messagesEl.scrollTop = messagesEl.scrollHeight;
             break;
         }
+        case 'release_plan':
+            state.pendingToolCalls = [];
+            setStreaming(false);
+            removeLoadingBubble();
+            unblockInput();
+            state.lastFailedMessage = null;
+            markReleaseCardsStale(String(data.plan_id));
+            appendReleasePlanCard(data);
+            break;
+        case 'release_progress':
+            updateReleaseStep(data);
+            break;
+        case 'release_result':
+            state.pendingToolCalls = [];
+            setStreaming(false);
+            removeLoadingBubble();
+            unblockInput();
+            state.lastFailedMessage = null;
+            applyReleaseResult(data);
+            break;
         case 'error':
             if (data.code !== 'TOOL_ERROR') state.pendingToolCalls = [];
             setStreaming(false);

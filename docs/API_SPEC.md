@@ -1535,6 +1535,43 @@ Returns `{"code_index": <object or null>, "refresh": <object>}`. `code_index` de
 
 Session only. Starts a background refresh of the code index and answers `202` with `{"running": true, "base_ref": "<branch>"}`. The body is optional (`{"base_ref": "Day32"}`); an empty POST works. The branch is chosen in this order: the body, the base of the last index, the current local branch of the saved folder; when none is known the answer is `422`. `422` also means that no repository path is saved yet. `409` with code `REVIEW_INDEX_BUSY` means a refresh of this user is already running. Poll `GET /api/v1/reviews/code-index` for the result.
 
+## /release command (Day 35)
+
+### Inbound
+
+The command arrives as an ordinary chat message on `WS /ws/chat/{chat_id}`:
+
+| Content | Meaning |
+|---|---|
+| `/release` | plan from the last tag to HEAD |
+| `/release v4.0..HEAD` | plan for an explicit range (`A..B`, no `...`) |
+| `/release confirm [vX.Y] [title]` | confirm the newest plan of the chat |
+
+The card button sends a `release_confirm` frame: `{"type": "release_confirm", "plan_id": "...", "version": "vX.Y", "title": "...", "model": "...", "provider_id": 1}`. A stale `plan_id` (a newer plan exists) is refused with a notice. Nothing of the command or its frames is stored as a chat message (`stored: false`).
+
+### Outbound frames
+
+`release_plan`: `plan_id`, `range`, `branch`, `head_sha`, `last_tag`, `candidates`, `taken`, `version`, `title`, `tag_message`, `rationale`, `changelog`, `counts` (`kept`, `dropped`, `day_merges`, `prs`), `warnings`, `coverage_missing`, `blocked` (reason or null), `steps` (list of `{key, label, status}` for `commit`, `tag`, `push`, `release`), `stored`.
+
+`release_progress`: `plan_id`, `step`, `status` (`running`, `done`, `skipped`, `unavailable`, `failed`), `detail`.
+
+`release_result`: `plan_id`, `outcome` (`done`, `partial`, `failed`, `blocked`), `steps`, `reason`, `hint`, `release_url`, `tag`, `commit_sha`, `version`, `title`, `tag_message`, `release_text` (notes for a manual Release), `locked` (true once the changelog commit exists), `stored`.
+
+Each tool call made by the pipeline is also sent as a regular `tool_call` frame (server `release-git` or `github`). Short refusals (no plan, usage, server missing, confirm already running) arrive as `notice` frames with kind `release`.
+
+### Tools of the release-git server (`--allow-release`)
+
+| Tool | Arguments | Result |
+|---|---|---|
+| `release_context` | none | branch line, then JSON: `branch`, `head`, `origin_url`, `local_tags`, `merged_tags`, `remote_tags` (null plus `remote_error` when origin is unreachable), `dirty` |
+| `release_range_commits` | `range`, `page` | summary line, one JSON object per commit (`sha`, `parents`, `subject`, `dirs`, `planning_only`, `files_n`), final `{next_page, total}` |
+| `release_commit_changelog` | `version`, `section` | commits the new `CHANGELOG.md` section, returns the commit hash |
+| `release_create_tag` | `version`, `message`, `commit` | annotated tag; refuses an existing tag |
+| `release_push` | `branch`, `tag` | pushes one branch and one tag with explicit refspecs, no force, no retry |
+| `github_create_draft_release` | `owner`, `repo`, `tag`, `name`, `body`, `commit` | draft Release over GitHub REST; an existing draft for the tag is returned; needs `GITHUB_PERSONAL_ACCESS_TOKEN` in the server env |
+
+Errors are tool errors with a reason in the text (invalid input, non-fast-forward push rejected, missing token, GitHub HTTP status). The draft Release tool replaces the create-release tool that github-mcp-server v2.0.2 does not have (D-20).
+
 ## Environment Settings
 
 | Variable | Default | Meaning |

@@ -931,3 +931,40 @@ pytest tests/test_command_turn.py tests/test_help_command.py tests/test_help_api
 ### Control run on real Pull Requests (manual, not part of pytest)
 - `scripts/review_control.py` opens the frozen control set of Pull Requests (`prepare-docs`, `open`, `wait`, `collect`, `rerun`, `close`, `status`); `scripts/review_judge.py` asks a DeepSeek judge which planted defects each review found and how many remarks were false. The control run of Plan 24-13 uses the local model and then DeepSeek; the records are in `eval_out/day32/`.
 - Exit codes of the control script: 0 done, 1 failed, 3 not run, 4 a manual step is needed. A run that could not be made (no runner, no token, no model) is recorded as `не запускалось`, never as a result.
+
+## /release command (Day 35)
+
+Tests use temporary git repositories with a local bare `origin`; GitHub is mocked with `respx`. No test touches the project repository or the network.
+
+### test_mcp_release_tools.py and test_mcp_release_github.py
+The six release tools: registration only under `--allow-release`, context and paged range reads, changelog commit, annotated tag, non-force push with explicit refspecs, and the idempotent draft Release over mocked GitHub REST.
+
+### test_release_command.py
+Grammar of `/release`, `/release v4.0..HEAD`, `/release confirm`, the frame builders and the Russian copy.
+
+### test_release_pipeline.py
+Version candidates, MCP result parsers, noise filter, grouping, prompts, strict model output parsing, `changelog_coverage` and section assembly.
+
+### test_release_planner.py
+Plan phase with an injected caller: dirty tree, remote tags, LLM retry on missing coverage, version fallback; no write tool is ever called.
+
+### test_release_mcp.py
+`ReleaseMcp` against the real git server on a temporary repository, and server row resolution.
+
+### test_release_executor.py
+Confirm state machine: step order, retry skips done steps, HEAD and version re-validation, blocked and partial outcomes, a Release answer without a valid URL is a failure.
+
+### test_release_ws.py
+`/release` and `release_confirm` end to end over the WebSocket against a temporary repository with a bare origin; plan cleanup on chat delete.
+
+### test_release_ui.py (frontend source guard)
+The plan card in `ui/static/app.js`: version validation, confirm frame, in-place step updates, stale-card handling, no unsafe HTML.
+
+### scripts/e2e_release_playwright.py (isolated copy, not part of pytest)
+Drives the four sandbox scenarios (full path, no GitHub access, blocks, manual range and title) through the browser on a copy at UI :18000 / Agent :18001 with a scratch database and the real local LM Studio model.
+
+- Environment: `RELEASE_SCRATCH_REMOTE` (SSH URL of a scratch GitHub repository, never the project repository) and `RELEASE_SCRATCH_TOKEN` (fine-grained token with Contents: write on that repository only). Both are read from the environment only and never printed or written.
+- It clones the scratch repository, pushes a new `e2e-<timestamp>` branch and two tags (never force), and runs the D-17 code check (`changelog_coverage`, allowed headings) on every changelog.
+- `--dry-check` runs only the safety preflight; `--out` sets the results JSON (default `.planning/phases/27-ai-release-pipeline-day-35/27-CONTROL-RUNS.json`); `--keep-temp` keeps the temporary directories.
+- Each scenario is recorded as passed, failed or `не запускалось`; a missing token records the scenarios that need it as `не запускалось`.
+- Exit codes: 0 pass, 1 fail, 2 blocked (remote missing or unsafe, ports busy, LM Studio unreachable, no loaded chat model), 4 Playwright not installed.
