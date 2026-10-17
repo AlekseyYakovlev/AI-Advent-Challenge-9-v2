@@ -1,13 +1,17 @@
-"""Tests for the read_file, search_text and find_usages tools of the project git server."""
+"""Tests for the file read, search and write tools of the project git server."""
 
+import contextlib
 import os
 import shutil
 import subprocess
-from collections.abc import Awaitable
+import sys
+from collections.abc import AsyncIterator, Awaitable, Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from agent.mcp_client import close_handle, open_session
 from mcp_servers import project_git
 from mcp_servers.project_git import ToolInputError
 
@@ -58,7 +62,7 @@ def _make_files_repo(repo: Path) -> Path:
     (repo / "a.py").write_text("needle = 1\nprint(needle)\n", encoding="utf-8")
     (repo / "pkg" / "b.py").write_text("def f():\n    return 'needle'\n", encoding="utf-8")
     (repo / "docs" / "guide.md").write_text("# Guide\nneedle here\n", encoding="utf-8")
-    (repo / ".gitignore").write_text(".env\n*.db\n", encoding="utf-8")
+    (repo / ".gitignore").write_text(".env\n*.db\nbuild/\n", encoding="utf-8")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", "first")
     (repo / ".env").write_text("needle SECRET=1\n", encoding="utf-8")
@@ -269,3 +273,240 @@ async def test_find_usages_bad_symbol(files_repo: Path) -> None:
 async def test_find_usages_ignores_dotted_prefix(files_repo: Path) -> None:
     out = await _ok(project_git.find_usages("mod.needle", "a.py"))
     assert "a.py:1:" in out
+
+
+# ------------------------------------------------------------- write tools
+
+REPO_ROOT: Path = Path(__file__).resolve().parent.parent
+SERVER: str = str(REPO_ROOT / "mcp_servers" / "project_git.py")
+READ_ONLY_TOOLS: set[str] = {
+    "git_current_branch", "git_status", "git_diff", "git_tracked_files",
+    "git_recent_commits", "read_file", "search_text", "find_usages",
+}  # fmt: skip
+
+
+def _configure_write(repo: Path, max_chars: int = 18000) -> None:
+    project_git.configure(
+        os.path.realpath(repo), shutil.which("git") or "git", max_chars, 10.0, allow_write=True
+    )
+
+
+@pytest.fixture
+def write_repo(files_repo: Path) -> Iterator[Path]:
+    """The files repository with write mode on; read-only mode is restored afterwards."""
+    _configure_write(files_repo)
+    yield files_repo
+    _configure(files_repo)
+
+
+def _text(result: Any) -> str:
+    return "".join(getattr(item, "text", "") for item in result.content)
+
+
+@contextlib.asynccontextmanager
+async def _session(args: list[str]) -> AsyncIterator[Any]:
+    handle, result = await open_session(sys.executable, [SERVER, *args], None, None)
+    assert handle is not None, (result.error_code, result.error_message, result.stderr_tail)
+    try:
+        yield handle.session
+    finally:
+        await close_handle(handle)
+
+
+def _snapshot(repo: Path) -> dict[Path, bytes]:
+    return {p: p.read_bytes() for p in repo.rglob("*") if p.is_file() and ".git" not in p.parts}
+
+
+def test_config_allow_write_default_and_flag(files_repo: Path) -> None:
+    assert project_git.get_config().allow_write is False
+    _configure_write(files_repo)
+    try:
+        assert project_git.get_config().allow_write is True
+    finally:
+        _configure(files_repo)
+
+
+def test_parse_args_allow_write() -> None:
+    assert project_git.parse_args(["--allow-write"]).allow_write is True
+    assert project_git.parse_args([]).allow_write is False
+
+
+async def test_import_time_registry_has_no_writer() -> None:
+    names = {t.name for t in await project_git.server.list_tools()}
+    assert names == READ_ONLY_TOOLS
+
+
+async def test_write_tools_refuse_without_flag(files_repo: Path) -> None:
+    with pytest.raises(ToolInputError, match="--allow-write"):
+        await project_git.write_file("notes/a.md", "x\n")
+    with pytest.raises(ToolInputError, match="--allow-write"):
+        await project_git.edit_file("a.py", "needle = 1", "needle = 2")
+    assert not (files_repo / "notes" / "a.md").exists()
+    assert (files_repo / "a.py").read_text(encoding="utf-8").startswith("needle = 1")
+
+
+async def test_stdio_tool_list_without_flag(files_repo: Path) -> None:
+    async with _session([f"--root={files_repo}"]) as session:
+        names = {t.name for t in (await session.list_tools()).tools}
+    assert names == READ_ONLY_TOOLS and len(names) == 8
+
+
+async def test_stdio_tool_list_with_flag(files_repo: Path) -> None:
+    async with _session([f"--root={files_repo}", "--allow-write"]) as session:
+        names = {t.name for t in (await session.list_tools()).tools}
+    assert names == READ_ONLY_TOOLS | {"write_file", "edit_file"} and len(names) == 10
+
+
+async def test_stdio_write_creates_file(files_repo: Path) -> None:
+    async with _session([f"--root={files_repo}", "--allow-write"]) as session:
+        result = await session.call_tool(
+            "write_file", {"path": "docs/adr/0001-x.md", "content": "# T\n\nbody\n"}
+        )
+    assert not result.isError
+    assert _text(result).startswith("Created docs/adr/0001-x.md")
+    created = files_repo / "docs" / "adr" / "0001-x.md"
+    assert created.read_text(encoding="utf-8") == "# T\n\nbody\n"
+
+
+async def test_stdio_write_env_refused(files_repo: Path) -> None:
+    before = (files_repo / ".env").read_bytes()
+    async with _session([f"--root={files_repo}", "--allow-write"]) as session:
+        result = await session.call_tool("write_file", {"path": ".env", "content": "X=1\n"})
+    assert result.isError and ".env files hold secrets" in _text(result)
+    assert (files_repo / ".env").read_bytes() == before
+
+
+async def test_write_file_new(write_repo: Path) -> None:
+    text = await _ok(project_git.write_file("notes/a.md", "# T\n\nbody\n"))
+    assert text.splitlines()[0] == "Created notes/a.md (+3 -0)"
+    assert "--- /dev/null" in text and "+++ b/notes/a.md" in text
+    assert "@@ -0,0 +1,3 @@" in text
+    assert (write_repo / "notes" / "a.md").read_text(encoding="utf-8") == "# T\n\nbody\n"
+
+
+async def test_write_file_new_in_missing_folders(write_repo: Path) -> None:
+    text = await _ok(project_git.write_file("x/y/z.txt", "hi\n"))
+    assert text.startswith("Created x/y/z.txt (+1 -0)")
+    assert (write_repo / "x" / "y" / "z.txt").is_file()
+
+
+async def test_write_file_overwrite(write_repo: Path) -> None:
+    text = await _ok(project_git.write_file("a.py", "needle = 2\nprint(needle)\n"))
+    assert text.splitlines()[0] == "Updated a.py (+1 -1)"
+    assert "--- a/a.py" in text and "+++ b/a.py" in text
+    assert "-needle = 1" in text and "+needle = 2" in text
+
+
+async def test_write_file_identical_is_no_change(write_repo: Path) -> None:
+    text = await _ok(project_git.write_file("a.py", "needle = 1\nprint(needle)\n"))
+    assert text.startswith("No changes:")
+    assert (write_repo / "a.py").read_text(encoding="utf-8") == "needle = 1\nprint(needle)\n"
+
+
+async def test_write_file_keeps_crlf_of_existing(write_repo: Path) -> None:
+    (write_repo / "crlf.txt").write_bytes(b"one\r\ntwo\r\n")
+    await _ok(project_git.write_file("crlf.txt", "one\nthree\n"))
+    assert (write_repo / "crlf.txt").read_bytes() == b"one\r\nthree\r\n"
+
+
+async def test_edit_file_single_match(write_repo: Path) -> None:
+    text = await _ok(project_git.edit_file("a.py", "needle = 1", "needle = 5"))
+    assert text.splitlines()[0] == "Updated a.py (+1 -1)"
+    assert (write_repo / "a.py").read_text(encoding="utf-8") == "needle = 5\nprint(needle)\n"
+
+
+async def test_edit_file_not_found_with_line_hint(write_repo: Path) -> None:
+    with pytest.raises(ToolInputError, match="first line appears at line 2"):
+        await project_git.edit_file("pkg/b.py", "  return 'needle'\n  x", "return 'x'")
+    with pytest.raises(ToolInputError, match="was not found.*call read_file"):
+        await project_git.edit_file("a.py", "absent text", "x")
+
+
+async def test_edit_file_ambiguous(write_repo: Path) -> None:
+    with pytest.raises(ToolInputError, match="occurs 2 times"):
+        await project_git.edit_file("a.py", "needle", "pin")
+    assert (write_repo / "a.py").read_text(encoding="utf-8") == "needle = 1\nprint(needle)\n"
+
+
+async def test_edit_file_bad_arguments(write_repo: Path) -> None:
+    with pytest.raises(ToolInputError, match="must not be empty"):
+        await project_git.edit_file("a.py", "", "x")
+    with pytest.raises(ToolInputError, match="identical"):
+        await project_git.edit_file("a.py", "needle = 1", "needle = 1")
+    with pytest.raises(ToolInputError, match="does not exist"):
+        await project_git.edit_file("missing.py", "a", "b")
+
+
+async def test_edit_file_crlf_roundtrip(write_repo: Path) -> None:
+    (write_repo / "crlf.txt").write_bytes(b"one\r\ntwo\r\n")
+    text = await _ok(project_git.edit_file("crlf.txt", "two\n", "TWO\n"))
+    assert text.startswith("Updated crlf.txt (+1 -1)")
+    assert (write_repo / "crlf.txt").read_bytes() == b"one\r\nTWO\r\n"
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "../outside.md", ".git/hooks/pre-commit", ".GIT/config", ".git./x", "GIT~1/x",
+        "sub/.git/x", ".env", "config/.env.local", "app.db", "build/out.txt", "con.txt",
+        "nul", "docs", ".", "",
+    ],
+    ids=[
+        "traversal", "git-hook", "git-upper", "git-trailing-dot", "git-short-name",
+        "nested-git", "env", "env-local", "ignored-db", "ignored-dir", "device-con",
+        "device-nul", "folder", "dot", "empty",
+    ],
+)  # fmt: skip
+async def test_write_forbidden_targets(write_repo: Path, target: str) -> None:
+    before = _snapshot(write_repo)
+    with pytest.raises(ToolInputError):
+        await project_git.write_file(target, "payload\n")
+    assert _snapshot(write_repo) == before
+    assert not (write_repo.parent / "outside.md").exists()
+
+
+async def test_edit_forbidden_target(write_repo: Path) -> None:
+    before = (write_repo / ".env").read_bytes()
+    with pytest.raises(ToolInputError, match=".env files hold secrets"):
+        await project_git.edit_file(".env", "needle", "x")
+    assert (write_repo / ".env").read_bytes() == before
+
+
+async def test_write_content_with_nul(write_repo: Path) -> None:
+    with pytest.raises(ToolInputError, match="NUL"):
+        await project_git.write_file("bin.txt", "a\x00b")
+    assert not (write_repo / "bin.txt").exists()
+
+
+async def test_edit_binary_existing_file(write_repo: Path) -> None:
+    (write_repo / "blob.dat").write_bytes(b"ab\x00cd")
+    with pytest.raises(ToolInputError, match="binary"):
+        await project_git.edit_file("blob.dat", "ab", "x")
+    with pytest.raises(ToolInputError, match="binary"):
+        await project_git.write_file("blob.dat", "text\n")
+    assert (write_repo / "blob.dat").read_bytes() == b"ab\x00cd"
+
+
+async def test_write_content_too_large(write_repo: Path) -> None:
+    with pytest.raises(ToolInputError, match="larger than 200000"):
+        await project_git.write_file("big.txt", "a" * 200_001)
+    assert not (write_repo / "big.txt").exists()
+
+
+async def test_write_result_cut_but_file_complete(write_repo: Path) -> None:
+    _configure_write(write_repo, max_chars=1000)
+    content = "".join(f"line {i:04d} padding padding\n" for i in range(300))
+    text = await _ok(project_git.write_file("long.txt", content))
+    assert "The file was saved in full" in text
+    assert (write_repo / "long.txt").read_text(encoding="utf-8") == content
+
+
+async def test_write_through_symlink_into_git_refused(write_repo: Path) -> None:
+    link = write_repo / "lnk"
+    try:
+        os.symlink(write_repo / ".git", link, target_is_directory=True)
+    except (OSError, NotImplementedError, AttributeError):
+        pytest.skip("symlinks are not available")
+    with pytest.raises(ToolInputError):
+        await project_git.write_file("lnk/x", "payload\n")
+    assert not (write_repo / ".git" / "x").exists()
