@@ -393,31 +393,35 @@ Plans:
 **Goal:** An assistant that works with project files on its own: given a goal (not "open file X"), it reads, searches across several files, analyses them and creates or changes files, with changes saved or shown as a diff and the run reproducible. Scenarios: find every usage of a component/API, and generate a new file (README / ADR / changelog). Branch `Day34`; deliverable video + code.
 **Requirements**: PFILE-01, PFILE-02, PFILE-03, PFILE-04, PFILE-05, PFILE-06, PFILE-07, PFILE-08, PFILE-09, PFILE-10
 **Depends on:** Phase 22 (project git MCP server); independent of Phase 25
-**Plans:** 8 plans
+**Plans:** 9/9 plans complete
 
 Plans:
 **Wave 1**
 
-- [ ] 26-01-PLAN.md — Day34 branch cut; read tools read_file / search_text / find_usages in the own git server, tests, five-tool pins relaxed
+- [x] 26-01-PLAN.md — Day34 branch cut; read tools read_file / search_text / find_usages in the own git server, tests, five-tool pins relaxed
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 26-02-PLAN.md — Coloured unified-diff view in tool-call cards (textContent only) with source guards
-- [ ] 26-03-PLAN.md — scripts/files_task.py: goal over the HTTP chat endpoint at temperature 0, run.json + run.patch + answer.md
-- [ ] 26-04-PLAN.md — --allow-write gate, write_file / edit_file with diff results, forbidden write targets, tests
+- [x] 26-02-PLAN.md — Coloured unified-diff view in tool-call cards (textContent only) with source guards
+- [x] 26-03-PLAN.md — scripts/files_task.py: goal over the HTTP chat endpoint at temperature 0, run.json + run.patch + answer.md
+- [x] 26-04-PLAN.md — --allow-write gate, write_file / edit_file with diff results, forbidden write targets, tests
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 26-05-PLAN.md — Isolated-copy browser e2e: project-files entry on a clone, write card with diff, render checks
-- [ ] 26-06-PLAN.md — scripts/files_eval.py scenario driver for the four D-15 scenarios with automatic checks
+- [x] 26-05-PLAN.md — Isolated-copy browser e2e: project-files entry on a clone, write card with diff, render checks
+- [x] 26-06-PLAN.md — scripts/files_eval.py scenario driver for the four D-15 scenarios with automatic checks
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 26-07-PLAN.md — Scenario runs on the local model, rounds measurement, Day34_report.md
+- [x] 26-07-PLAN.md — Scenario runs on the local model, rounds measurement, Day34_report.md
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
-- [ ] 26-08-PLAN.md — Docs: project-files form values, architecture, testing guide, README, docs guards; full-suite count in Day34_report.md
+- [x] 26-08-PLAN.md — Docs: project-files form values, architecture, testing guide, README, docs guards; full-suite count in Day34_report.md
+
+**Gap closure**
+
+- [x] 26-09-PLAN.md — Gap closure CR-01/WR-01: realpath containment for find_usages/search_text, read-side .env*/.git deny, symlink leak tests (real + simulated)
 
 ### Phase 27: AI release pipeline (Day 35)
 

@@ -623,12 +623,42 @@ Automation cannot prove reachability from another machine, so the live run is ma
 - output fitting: unchanged when it fits, marker with exact numbers, lower bound, truncated diff composition
 
 ### test_mcp_project_git.py
-- exactly five tools, the description says the working copy is local
+- eight tools by default (five git tools plus read_file, search_text, find_usages); the git descriptions say the working copy is local
 - each tool on a temporary repository: branch (main, checkout, detached, no commits), status (dirty, clean, Cyrillic names, empty repository), diff (unstaged, staged, against HEAD, path, range, truncation, at most two commands), tracked files (all, counts, path, glob not expanded, truncation table), recent commits (default, count clamp, ref, path, no history)
 - bad arguments and option smuggling are refused without starting git
 - over real stdio: live branch, path outside the root, dash ref, unknown ref, wrong argument type, truncated diff, root from the working directory, `GIT_DIR` ignored
 - start-up failures end with `PROCESS_EXITED`
 - chat dispatch of `mcp__local-git__git_current_branch`; a long listing stays below the app cap
+
+### test_mcp_project_files.py
+- read tools on a temporary repository: windowed `read_file`, `search_text` hits, `find_usages` kinds, git visibility (ignored files hidden)
+- read-side containment: `.env*` and `.git` refused by `read_file` and hidden from `search_text`/`find_usages`; symlinks to the ignored `.env` or outside the root never leak content (real symlinks skip without the privilege; a monkeypatched `os.path.realpath` simulates them)
+- the tool list is 8 without `--allow-write` and 10 with it
+- write gate: refusals for paths outside the root, `.git`, `.env*`, ignored paths, device names, directories, binary files and content above 200000 bytes
+- `write_file` and `edit_file` results: `Created`/`Updated` first line with `(+A -R)`, single-occurrence rule, CRLF preserved
+
+### test_files_task.py
+- root checks: not a work tree, dirty tree, own repository refused, clean tree accepted
+- patch collection includes a new file and applies cleanly; patch statistics
+- full run statuses: done, blocked, connection error, empty content
+
+### test_files_eval.py
+- the scenario table and the automatic checks of the four scenarios
+- clone reset refuses wrong paths and restores a clean status
+- the "not run" record and the summary
+
+### test_diff_card_ui.py
+- the diff functions exist in the frontend and never use HTML sinks
+- the diff block uses `textContent`, accessibility attributes and line classes
+- the tool-call card uses the diff branch and the summary suffix contract
+
+### scripts/e2e_project_files_playwright.py (browser UAT, not part of pytest)
+- Runs an isolated copy of the app at UI :18000 / Agent :18001 with a scratch clone as the write root; it never touches :8000/:8001.
+- The model part needs LM Studio and is not run without it. Exit 0 pass, 1 fail, 2 not run, 4 Playwright missing.
+
+### scripts/files_task.py and scripts/files_eval.py
+- `files_task.py` runs one goal against a clean clone through the HTTP chat endpoint and writes `run.json`, `run.patch`, `answer.md`; covered by `test_files_task.py`.
+- `files_eval.py` (`check`, `run`, `summary`) runs the four report scenarios into `eval_out/day34/`; covered by `test_files_eval.py`.
 
 ### test_mcp_real_github.py
 - the read-only toolset through the app connect: read tools present, write tools absent

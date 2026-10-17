@@ -1,0 +1,188 @@
+{
+  "schema": "files-task/1",
+  "goal": "Напиши ADR на русском языке о разделении приложения на два процесса (UI и Agent): контекст, решение, последствия. Прочитай docs/ARCHITECTURE.md, не больше трёх файлов, затем сразу создай новый файл docs/adr/001-ui-agent-split.md (имя латиницей) и в конце перечисли созданные или изменённые файлы. Отвечай на русском языке.",
+  "started_at": "2026-10-17T15:45:43.961852+00:00",
+  "elapsed_s": 40.7,
+  "root": "files-root",
+  "commit": "669d3888152986114622f509821370b7a9126360",
+  "branch": "Day34",
+  "agent_url": "http://localhost:18001",
+  "provider_id": 2,
+  "model": "deepseek-flash",
+  "settings": {
+    "temperature": 0.0,
+    "max_tokens": 8192,
+    "context_length": 65536
+  },
+  "mcp_servers": [
+    {
+      "name": "project-files",
+      "enabled": true,
+      "status": "connected",
+      "tools": [
+        "git_current_branch",
+        "git_status",
+        "git_diff",
+        "git_tracked_files",
+        "git_recent_commits",
+        "read_file",
+        "search_text",
+        "find_usages",
+        "write_file",
+        "edit_file"
+      ]
+    }
+  ],
+  "warnings": [],
+  "status": "done",
+  "http_status": 200,
+  "error": null,
+  "chat_id": 3,
+  "assistant_message_id": 6,
+  "tool_call_count": 13,
+  "tool_calls": [
+    {
+      "name": "mcp__project-files__read_file",
+      "server": "project-files",
+      "tool": "read_file",
+      "ok": true,
+      "truncated": true,
+      "arguments": "{\"path\": \"docs/ARCHITECTURE.md\"}",
+      "result_summary": "docs/ARCHITECTURE.md: lines 1-204 of 921",
+      "result_chars": 4000
+    },
+    {
+      "name": "mcp__project-files__git_tracked_files",
+      "server": "project-files",
+      "tool": "git_tracked_files",
+      "ok": true,
+      "truncated": false,
+      "arguments": "{\"path\": \"docs\"}",
+      "result_summary": "5 tracked files under docs",
+      "result_chars": 117
+    },
+    {
+      "name": "mcp__project-files__search_text",
+      "server": "project-files",
+      "tool": "search_text",
+      "ok": true,
+      "truncated": true,
+      "arguments": "{\"pattern\": \"^#{2,3} \", \"regex\": true, \"path\": \"docs/ARCHITECTURE.md\"}",
+      "result_summary": "5045 matches in 513 files for regex",
+      "result_chars": 4000
+    },
+    {
+      "name": "mcp__project-files__search_text",
+      "server": "project-files",
+      "tool": "search_text",
+      "ok": true,
+      "truncated": false,
+      "arguments": "{\"pattern\": \"supervisor|subprocess|Agent process|UI process|two process|BIND_HOST\", \"path\": \"docs/ARCHITECTURE.md\"}",
+      "result_summary": "No matches for 'supervisor|subprocess|Agent process|UI process|two process|BIND_'. Try a shorter pattern, regex=true, or another glob.",
+      "result_chars": 134
+    },
+    {
+      "name": "mcp__project-files__search_text",
+      "server": "project-files",
+      "tool": "search_text",
+      "ok": true,
+      "truncated": false,
+      "arguments": "{\"pattern\": \"^#{2,3} \", \"regex\": true, \"glob\": \"docs/ARCHITECTURE.md\"}",
+      "result_summary": "44 matches in 1 file for regex",
+      "result_chars": 2441
+    },
+    {
+      "name": "mcp__project-files__search_text",
+      "server": "project-files",
+      "tool": "search_text",
+      "ok": true,
+      "truncated": false,
+      "arguments": "{\"pattern\": \"supervisor|subprocess|BIND_HOST|process\", \"regex\": true, \"glob\": \"docs/ARCHITECTURE.md\"}",
+      "result_summary": "22 matches in 1 file for regex",
+      "result_chars": 3028
+    },
+    {
+      "name": "mcp__project-files__read_file",
+      "server": "project-files",
+      "tool": "read_file",
+      "ok": true,
+      "truncated": true,
+      "arguments": "{\"path\": \"docs/ARCHITECTURE.md\", \"start_line\": 205, \"end_line\": 300}",
+      "result_summary": "docs/ARCHITECTURE.md: lines 205-300 of 921",
+      "result_chars": 4000
+    },
+    {
+      "name": "mcp__project-files__read_file",
+      "server": "project-files",
+      "tool": "read_file",
+      "ok": true,
+      "truncated": true,
+      "arguments": "{\"path\": \"docs/ARCHITECTURE.md\", \"start_line\": 340, \"end_line\": 410}",
+      "result_summary": "docs/ARCHITECTURE.md: lines 340-410 of 921",
+      "result_chars": 4000
+    },
+    {
+      "name": "mcp__project-files__read_file",
+      "server": "project-files",
+      "tool": "read_file",
+      "ok": true,
+      "truncated": false,
+      "arguments": "{\"path\": \".cursorrules\"}",
+      "result_summary": ".cursorrules: lines 1-44 of 44",
+      "result_chars": 1846
+    },
+    {
+      "name": "mcp__project-files__read_file",
+      "server": "project-files",
+      "tool": "read_file",
+      "ok": true,
+      "truncated": true,
+      "arguments": "{\"path\": \".planning/PROJECT.md\", \"start_line\": 1, \"end_line\": 160}",
+      "result_summary": ".planning/PROJECT.md: lines 1-132 of 174",
+      "result_chars": 4000
+    },
+    {
+      "name": "mcp__project-files__write_file",
+      "server": "project-files",
+      "tool": "write_file",
+      "ok": true,
+      "truncated": true,
+      "arguments": "{\"path\": \"docs/adr/001-ui-agent-split.md\", \"content\": \"# ADR-001: Разделение приложения на два процесса — UI и Agent\\n\\n- **Статус:** принято\\n- **Дата:** 2026-10-17\\n- **Затрагивает:** `ui/`, `agent/`, `shared/`, запуск и сопровождение приложения\\n\\n## Контекст\\n\\nПриложение локальное, однопользовательское по характеру эксплуатации (хотя данные разделены по `user_id`), работает на Windows с Python 3.13. Ограничения проекта запрещают Docker, `multiprocessing`/`os.fork`, Redis, RabbitMQ и Celery; фронтенд — только vanilla JS и CDN-библиотеки. Межпроцессное взаимодействие допускается только через REST и WebSocket.\\n\\nЗадачи, которые выполняет система, неоднородны по профилю нагрузки:\\n\\n- отдача статики и простая панель управления не должны зависеть от LLM;\\n- чат-ходы, вызовы LLM, RAG-индексация, MCP-сессии и фоновый планировщик — длительные, часто блокирующие и потенциально падающие операции;\\n- нужна возможность перезапустить «тяжёлую» часть, не теряя интерфейс, и наоборот — поднять интерфейс, который сам запустит и проконтролирует Agent.\\n\\nОдин процесс смешал бы два разных жизненных цикла: падение или перезапуск LLM-части уносило бы и статический UI, а фоновые задачи конкурировали бы с обработкой HTTP-запросов за один event loop.\\n\\n## Решение\\n\\nПриложение разделено на два независимых процесса:\\n\\n| Процесс | Порт | Ответственность |\\n|---------|------|-----------------|\\n| **UI** | 8000 | Статические файлы, браузерный интерфейс и supervisor, управляющий жизненным циклом Agent |\\n| **Agent** | 8001 | REST API, WebSocket (`/ws/chat`, `/ws/events`), работа с LLM, MCP-клиент, RAG, планировщик |\\n\\n**Запуск и контроль.** UI запускает Agent через `asyncio.create_subprocess_exec`. Supervisor периодически проверяет `GET /health` (каждые 3 секунды), а готовность Agent определяет по двум признакам: `/health` отвечает `200` и неаутентифицированный `GET /debug/routes` отвечает `401` — это подтверждает, что приложение, таблица маршрутов и слой аутентификации смонтированы, а",
+      "result_summary": "Created docs/adr/001-ui-agent-split.md (+61 -0)",
+      "result_chars": 4000
+    },
+    {
+      "name": "mcp__project-files__edit_file",
+      "server": "project-files",
+      "tool": "edit_file",
+      "ok": true,
+      "truncated": false,
+      "arguments": "{\"path\": \"docs/adr/001-ui-agent-split.md\", \"old_text\": \"Приложение локальное, однопользовательское по характеру эксплуатации (хотя данные разделены по `user_id`), работает на Windows с Python 3.13.\", \"new_text\": \"Приложение локальное, рассчитанное на небольшое число пользователей (данные разделены по `user_id`), работает на Windows с Python 3.13.\"}",
+      "result_summary": "Updated docs/adr/001-ui-agent-split.md (+1 -1)",
+      "result_chars": 930
+    },
+    {
+      "name": "mcp__project-files__git_status",
+      "server": "project-files",
+      "tool": "git_status",
+      "ok": true,
+      "truncated": false,
+      "arguments": "{}",
+      "result_summary": "1 changed file",
+      "result_chars": 51
+    }
+  ],
+  "answer": "Готово. ADR создан на русском языке по структуре «Контекст → Решение → Последствия».\n\nКратко о содержании:\n- **Контекст** — локальное приложение на Windows/Python 3.13, запрет Docker, `multiprocessing`, брокеров; IPC только REST + WebSocket; разный профиль нагрузки у UI и LLM-части.\n- **Решение** — два процесса: UI (порт 8000: статика + supervisor) и Agent (порт 8001: REST, WebSocket, LLM, MCP, RAG, планировщик); запуск через `asyncio.create_subprocess_exec`, health-check каждые 3 с и проверка готовности по `/health` 200 + `/debug/routes` 401, очистка осиротевших процессов через `psutil`, общий `BIND_HOST`, браузер обращается к Agent напрямую, единое правило Origin.\n- **Последствия** — изоляция отказов и независимый перезапуск; при этом усложнение жизненного цикла, жёсткая остановка на Windows, потеря in-memory состояния при рестарте Agent, две сетевые точки входа, распределённая диагностика и риск рассинхронизации `shared/`.\n\nСозданные или изменённые файлы:\n- `docs/adr/001-ui-agent-split.md` — создан (новый каталог `docs/adr/`).\n\nДругих файлов не изменял; изменения не коммитил.",
+  "patch": {
+    "files": [
+      {
+        "path": "docs/adr/001-ui-agent-split.md",
+        "added": 61,
+        "removed": 0,
+        "new": true
+      }
+    ],
+    "total_added": 61,
+    "total_removed": 0
+  }
+}

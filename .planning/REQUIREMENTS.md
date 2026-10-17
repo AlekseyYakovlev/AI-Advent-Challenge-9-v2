@@ -81,16 +81,16 @@ Requirements for milestone v5.0. Each maps to exactly one roadmap phase.
 
 ### Project Files Assistant
 
-- [ ] **PFILE-01**: The own git MCP server `mcp_servers/project_git.py` offers the read tools `read_file`, `search_text` and `find_usages` over git-visible files (tracked plus untracked files git does not ignore), with and without `--allow-write`; results are never empty, stay under `--max-chars` and carry the explicit truncation marker when cut.
-- [ ] **PFILE-02**: The write tools `write_file` and `edit_file` are registered only when the server is started with `--allow-write`; without the flag the tool list has no writer and a direct call is refused, so the existing `local-git` entry and `/help` stay read-only with no configuration change.
-- [ ] **PFILE-03**: `write_file` and `edit_file` save to disk immediately and return the unified diff of the change (a new file is an all-added diff); `edit_file` replaces `old_text` only when it occurs exactly once and otherwise refuses with the reason and a fix.
-- [ ] **PFILE-04**: Writes are refused with `isError`, an English reason and a fix for paths outside the root, anything under `.git/` (including NTFS aliases), `.env*` files, paths git ignores, Windows device names, binary files or content, and content above the size limit.
-- [ ] **PFILE-05**: A goal typed as an ordinary chat message makes the model list, search, read and write project files through these tools in the existing tool loop; every call is visible as a tool-call card and the final answer lists the created or changed files.
-- [ ] **PFILE-06**: A tool-call card whose successful result is a unified diff renders a coloured diff (added green, removed red, hunk headers marked) built with `createElement`/`textContent` only; other cards render as before.
-- [ ] **PFILE-07**: `scripts/files_task.py` sends a goal to the plain HTTP chat endpoint with an API key, refuses a dirty target root and the script's own repository, runs at temperature 0, and saves a run log (goal, commit, provider/model, settings, MCP servers, tool calls, answer) and the resulting `git diff` as a `.patch`.
-- [ ] **PFILE-08**: pytest covers the read tools, the write gate, every forbidden write target, diff results and the run script against a mocked endpoint; an isolated-copy end-to-end script (ports 18000/18001, scratch database, a clone as the write root) shows the diff card in the browser.
-- [ ] **PFILE-09**: `Day34_report.md` (Russian) records the four fixed scenarios (API usages, ADR, CHANGELOG, folder README) run on the local LM Studio model through the scenario driver, each with its run log and `.patch`; a run that could not be made is recorded as not run and a failed scenario stays visible.
-- [ ] **PFILE-10**: `docs/USER_GUIDE.md` (exact `project-files` form values), `docs/ARCHITECTURE.md`, `docs/TESTING_GUIDE.md` and `README.md` describe the file tools, the `--allow-write` gate, the diff card and the run scripts as built, guarded by `tests/test_docs_mcp_servers.py`.
+- [x] **PFILE-01**: The own git MCP server `mcp_servers/project_git.py` offers the read tools `read_file`, `search_text` and `find_usages` over git-visible files (tracked plus untracked files git does not ignore), with and without `--allow-write`; results are never empty, stay under `--max-chars` and carry the explicit truncation marker when cut.
+- [x] **PFILE-02**: The write tools `write_file` and `edit_file` are registered only when the server is started with `--allow-write`; without the flag the tool list has no writer and a direct call is refused, so the existing `local-git` entry and `/help` stay read-only with no configuration change.
+- [x] **PFILE-03**: `write_file` and `edit_file` save to disk immediately and return the unified diff of the change (a new file is an all-added diff); `edit_file` replaces `old_text` only when it occurs exactly once and otherwise refuses with the reason and a fix.
+- [x] **PFILE-04**: Writes are refused with `isError`, an English reason and a fix for paths outside the root, anything under `.git/` (including NTFS aliases), `.env*` files, paths git ignores, Windows device names, binary files or content, and content above the size limit.
+- [x] **PFILE-05**: A goal typed as an ordinary chat message makes the model list, search, read and write project files through these tools in the existing tool loop; every call is visible as a tool-call card and the final answer lists the created or changed files.
+- [x] **PFILE-06**: A tool-call card whose successful result is a unified diff renders a coloured diff (added green, removed red, hunk headers marked) built with `createElement`/`textContent` only; other cards render as before.
+- [x] **PFILE-07**: `scripts/files_task.py` sends a goal to the plain HTTP chat endpoint with an API key, refuses a dirty target root and the script's own repository, runs at temperature 0, and saves a run log (goal, commit, provider/model, settings, MCP servers, tool calls, answer) and the resulting `git diff` as a `.patch`.
+- [x] **PFILE-08**: pytest covers the read tools, the write gate, every forbidden write target, diff results and the run script against a mocked endpoint; an isolated-copy end-to-end script (ports 18000/18001, scratch database, a clone as the write root) shows the diff card in the browser.
+- [x] **PFILE-09**: `Day34_report.md` (Russian) records the four fixed scenarios (API usages, ADR, CHANGELOG, folder README) run on the local LM Studio model through the scenario driver, each with its run log and `.patch`; a run that could not be made is recorded as not run and a failed scenario stays visible.
+- [x] **PFILE-10**: `docs/USER_GUIDE.md` (exact `project-files` form values), `docs/ARCHITECTURE.md`, `docs/TESTING_GUIDE.md` and `README.md` describe the file tools, the `--allow-write` gate, the diff card and the run scripts as built, guarded by `tests/test_docs_mcp_servers.py`.
 
 ## Future Requirements
 
@@ -170,16 +170,16 @@ Deferred to later days of Week 7. Tracked but not in the current roadmap.
 | SUP-12 | Phase 25 | Complete |
 | SUP-13 | Phase 25 | Complete |
 | SUP-14 | Phase 25 | Complete |
-| PFILE-01 | Phase 26 | Pending |
-| PFILE-02 | Phase 26 | Pending |
-| PFILE-03 | Phase 26 | Pending |
-| PFILE-04 | Phase 26 | Pending |
-| PFILE-05 | Phase 26 | Pending |
-| PFILE-06 | Phase 26 | Pending |
-| PFILE-07 | Phase 26 | Pending |
-| PFILE-08 | Phase 26 | Pending |
-| PFILE-09 | Phase 26 | Pending |
-| PFILE-10 | Phase 26 | Pending |
+| PFILE-01 | Phase 26 | Complete |
+| PFILE-02 | Phase 26 | Complete |
+| PFILE-03 | Phase 26 | Complete |
+| PFILE-04 | Phase 26 | Complete |
+| PFILE-05 | Phase 26 | Complete |
+| PFILE-06 | Phase 26 | Complete |
+| PFILE-07 | Phase 26 | Complete |
+| PFILE-08 | Phase 26 | Complete |
+| PFILE-09 | Phase 26 | Complete |
+| PFILE-10 | Phase 26 | Complete |
 
 **Coverage:**
 - v5.0 requirements: 56 total
@@ -188,4 +188,4 @@ Deferred to later days of Week 7. Tracked but not in the current roadmap.
 
 ---
 *Requirements defined: 2026-10-13*
-*Last updated: 2026-10-17 — PFILE-01..PFILE-10 added for Phase 26 (Day 34); earlier: SUP-01..SUP-14 added for Phase 25 (Day 33)*
+*Last updated: 2026-10-17 — PFILE-01 read-side containment gap (CR-01/WR-01) closed by plan 26-09; earlier: PFILE-01..PFILE-10 added for Phase 26 (Day 34), SUP-01..SUP-14 for Phase 25 (Day 33)*
