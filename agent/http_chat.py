@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from agent import help_command, limits, ws
+from agent import help_command, limits, support_command, ws
 from agent.dependencies import get_current_user, require_allowed_origin, require_json_content_type
 from agent.events import hub
 from agent.headless import RecordingSink
@@ -60,13 +60,14 @@ def _internal_error() -> JSONResponse:
 
 
 def _notice_response(chat_id: int, frame: dict[str, Any]) -> JSONResponse:
-    """Build the 200 body of a /help service notice; nothing is stored in the chat."""
+    """Build the 200 body of a /help or /support service notice; nothing is stored in the chat."""
+    key = frame.get("command") or "help"
     return JSONResponse(
         status_code=200,
         content={
             "chat_id": chat_id,
             "stored": False,
-            "help": {"kind": frame["kind"], "text": frame["text"]},
+            key: {"kind": frame["kind"], "text": frame["text"]},
         },
     )
 
@@ -122,6 +123,7 @@ async def _build_success(
         invariant_conflict=done.get("invariant_conflict"),
         rag=done.get("rag"),
         help=(done.get("rag") or {}).get("help"),
+        support=(done.get("rag") or {}).get("support"),
     )
 
 
@@ -134,7 +136,11 @@ async def _run_http_turn(
 ) -> JSONResponse | HttpChatResponse:
     """Run the turn while owning the already-acquired chat lock and release it at the end."""
     try:
-        if kb_given and help_command.parse_help(body.content) is None:
+        if (
+            kb_given
+            and help_command.parse_help(body.content) is None
+            and support_command.parse_support(body.content) is None
+        ):
             try:
                 async with async_session_factory() as session:
                     await apply_chat_kb(session, chat_id, user_id, body.kb_id)
@@ -203,6 +209,13 @@ async def post_chat_message(
     question = help_command.parse_help(body.content)
     if question is not None:
         notice = await help_command.resolve_help_notice(session, current_user.id, question)
+        if notice is not None:
+            logger.info("http_chat_finished", chat_id=chat_id, status=200)
+            return _notice_response(chat_id, notice)
+    elif (support := support_command.parse_support(body.content)) is not None:
+        notice = await support_command.resolve_support_notice(
+            session, current_user.id, support.question
+        )
         if notice is not None:
             logger.info("http_chat_finished", chat_id=chat_id, status=200)
             return _notice_response(chat_id, notice)

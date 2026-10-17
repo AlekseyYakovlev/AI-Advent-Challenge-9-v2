@@ -40,6 +40,7 @@ RESPONSE_KEYS = {
     "invariant_conflict",
     "rag",
     "help",
+    "support",
 }
 
 
