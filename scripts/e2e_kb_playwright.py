@@ -132,7 +132,7 @@ def prepare_copy(scratch: Path) -> Path:
         if path.suffix not in (".py", ".js", ".html") or not path.is_file():
             continue
         rel = path.relative_to(target).as_posix()
-        if rel in ("shared/config.py", "agent/ws.py") or "/vendor/" in rel:
+        if rel in ("shared/config.py", "agent/ws.py", "mcp_servers/project_git.py") or "/vendor/" in rel:
             continue
         for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
             if re.search(r"(?<![\d.])800[01](?!\d)", line):
