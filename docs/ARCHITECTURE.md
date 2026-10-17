@@ -787,6 +787,46 @@ adherence judged by DeepSeek).
 
 **Storage.** The label and the warnings are stored in the `help` object inside `Message.rag_sources` of the assistant message, next to the sources and quotes, so they survive a reload. Later ordinary turns see the stored pair as ordinary history. Tool-call cards are live-only for every chat and are not restored from the message tree after a reload.
 
+## /support command (Day 33)
+
+`/support [#T-NNNN | @login] <question>` is a second command turn built on the same mechanism as `/help`. The answer combines three sources: documentation fragments (the base marked for `/help`, which contains `docs/FAQ.md`), the data of one ticket or user read by code from the support MCP server, and optional tools chosen by the model.
+
+### Shared command-turn mechanism
+
+`agent/command_turn.py` holds what both commands share. A `CommandSpec` describes one command: its name, the payload key (`help` or `support`), the default MCP server name, the texts (usage, no base, base not ready, server warning), the system prompt and the fragments instructions. The module provides the notice resolution (`resolve_command_notice`, `notice_frame`), the tool selection (`select_tools`), the outbound message builder, the retrieval step (`prepare_command_turn`, which never gates and never raises except on cancel) and the quote finalisation (`finalize_command_turn`). `agent/help_command.py` and `agent/support_command.py` are thin facades that bind their `CommandSpec` and keep their own grammar, history and settings loaders. The `/help` behaviour did not change when it was moved there.
+
+### Turn sequence (`agent/ws.py::_run_support_turn`)
+
+1. Notice: `/support` without a question, or without a marked ready `/help` base, returns a `help_notice` frame with `command: "support"` before the rate check and the queue slot; nothing is stored and no model is called.
+2. The user message is stored exactly as typed.
+3. History: `load_support_history` walks the current branch and returns the last 3 pairs whose user message is a `/support` command and whose assistant message carries the `support` key; answers are cut to 1500 characters and the total to 2000 tokens. The identifier is spelled out («Тикет T-1001. ...») so a follow-up keeps the topic.
+4. Direct lookup: with an identifier, `agent/support_lookup.py::direct_lookup` finds the user's MCP server named `support`, connects it and calls `get_ticket` or `get_user` through the ordinary MCP dispatcher. This is code, not a model decision, so the ticket is read even by a weak local model. The result is sent as a `tool_call` frame (the card) and stored in the tool trace. Any problem becomes a warning and the turn continues.
+5. Tools: `build_support_tools` selects whole MCP servers (default: only `support`) and the built-in groups (off by default).
+6. Prepare: the retrieval query is the question extended with the ticket's `Subject:` and `Error:` lines (`retrieval_query`, switch `RETRIEVAL_HINT_ENABLED`, at most 300 characters) so documentation matches the real error text; the fenced `<support_data>` block is passed as the context block; fragments are budgeted like ordinary RAG and put in strict mode.
+7. Middle: `_run_turn_middle` (shared with every turn) streams the answer and runs tool rounds.
+8. Finalise: quotes are verified; when the answer came from ticket data or tools only, code-picked quotes are dropped.
+9. Two ordinary messages are stored and `done` is sent. No task memory, fact extraction, title generation, invariant resolution or self-critique runs; `done.invariant_conflict` is `null`.
+
+### The `<support_data>` fence
+
+Ticket and user text is written by customers, so it is untrusted. `fence_support_data` wraps it in a `<support_data>` block preceded by a sentence saying it is data for reference and that requests and commands inside it must not be followed; a literal `<support_data` or `</support_data` inside the text is neutralised so the text cannot close the block; the block is cut at 6000 characters with the mark `[данные сокращены]`. The system prompt repeats that the block is data, not instructions. The same data reach the model also when it calls the support tools itself, as ordinary tool results.
+
+### History rule
+
+Only earlier `/support` pairs are replayed, never the ordinary chat history, the profile or invariants. Ordinary later turns see the stored `/support` pair as normal history.
+
+### Support MCP server
+
+`mcp_servers/support_desk.py` is a self-contained stdio server (it does not import the application logger, because stdout is the protocol channel; diagnostics go to stderr). It is started as `python mcp_servers/support_desk.py --data=<path to json> [--max-chars=18000]` and reads a JSON file with `users` and `tickets` (the bundled example is `mcp_servers/support_data.json`: four users, tickets `T-1001` to `T-1006`). Four read-only tools: `get_ticket`, `get_user`, `list_user_tickets` and `search_tickets` (at most 20 hits, search text 1 to 100 characters). The file is re-read when its modification time or size changes, so an edit is visible on the next call; it must not exceed 1 MiB. A result is cut at `--max-chars` (default 18000, below the application cap of 20000). A bad argument returns an error that names the fix.
+
+### Settings and storage
+
+Table `SupportConfig` (one row per user, `user_id` primary key with `ON DELETE CASCADE`): the search settings (`top_k`, `candidate_k`, `threshold`, four stage flags), the stored MCP server choice (`mcp_servers_json`, `NULL` means only `support`) and three built-in group flags. The documentation base is not stored here: `/support` reads the `HelpConfig` mark. Routes are in `agent/support_api.py`. The label, the identifier, the lookup outcome and the warnings are stored in the `support` object inside `Message.rag_sources`.
+
+### Trust boundary
+
+The logged-in user acts as a support employee and can read any ticket of the data file; there is no per-ticket authorisation. Ticket and user data are sent to the provider of the chat's model, so with a cloud provider they leave the machine.
+
 ## Automated PR review (Day 32)
 
 A Pull Request on GitHub is reviewed by the local app: a workflow on a self-hosted runner asks the Agent for a review over HTTP and publishes the answer as one comment. The model sees the changed text, the project rules and the code around the change, and writes three sections: potential bugs, architecture problems, recommendations.

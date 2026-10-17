@@ -1265,6 +1265,139 @@ curl -s -X POST http://127.0.0.1:8001/api/v1/chats/12/messages \
   -d '{"content": "/help как запустить приложение?", "model": "qwen2.5-7b-instruct"}'
 ```
 
+## /support command (Day 33)
+
+`/support [#T-NNNN | @login] <question>` answers a question of a support employee from the documentation base marked for `/help` (which includes `docs/FAQ.md`) and from the data of the support MCP server (`mcp_servers/support_desk.py`): the ticket or the user named in the command is read by code before the model is called. The command works in the browser (WebSocket) and over `POST /api/v1/chats/{chat_id}/messages`. The settings are stored per user and are separate from the `/help` settings.
+
+### Grammar
+
+A message is a `/support` command when, after optional leading whitespace, it starts with the whole word `/support` (case-insensitive) followed by the end of the text or whitespace. `/supportme` is an ordinary message. At most one identifier is recognised, and only directly after the command:
+
+| Form | Meaning |
+|------|---------|
+| `#T-1042`, `#t-1042`, `#T1042`, `#1042` | A ticket, normalised to `T-1042` (1 to 6 digits) |
+| `@login` | A user; the login is 1 to 32 characters of `A-Z a-z 0-9 . _ -`, the first one a letter or a digit |
+| anything else | No identifier: the whole text is the question |
+
+A token that is not a valid identifier stays in the question text. The usage text is `Использование: /support [#T-1042 или @login] <вопрос>. Пример: /support #T-1001 Почему не работает авторизация?`.
+
+### GET /api/v1/support/config
+
+Returns the caller's `/support` settings; defaults when never configured. Authentication: cookie session or API key, as for the other REST routes.
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `top_k` | integer | Fragments passed to the model, default 5 |
+| `candidate_k` | integer | Candidates kept at the first stage, default 20 |
+| `threshold` | number or `null` | Cosine cut-off, default 0.45; `null` means the calibrated value of the embedding model |
+| `calibrated_threshold` | number or `null` | Calibrated value for the `/help` base's embedding model, `null` when unknown |
+| `lexical`, `llm_rerank`, `hybrid`, `rewrite` | boolean | Search stages, all off by default |
+| `mcp_server_ids` | list of integers | MCP servers used by `/support` (whole servers, never single tools) |
+| `mcp_default` | boolean | `true` while no explicit choice is stored: the server named `support` is used |
+| `mcp_missing` | list of strings | Names of stored servers that no longer exist |
+| `tools_memory`, `tools_tasks`, `tools_scheduler` | boolean | Built-in tool groups available to `/support`, all off by default |
+| `help_kb_id`, `help_kb_name`, `help_kb_status` | integer or `null`, string or `null`, string or `null` | The documentation base marked for `/help` (read-only here; shown only when the caller owns it) |
+| `support_server_present` | boolean | `true` when the caller has an MCP server named `support` |
+
+```json
+{
+  "top_k": 5,
+  "candidate_k": 20,
+  "threshold": 0.45,
+  "calibrated_threshold": 0.67,
+  "lexical": false,
+  "llm_rerank": false,
+  "hybrid": false,
+  "rewrite": false,
+  "mcp_server_ids": [9],
+  "mcp_default": true,
+  "mcp_missing": [],
+  "tools_memory": false,
+  "tools_tasks": false,
+  "tools_scheduler": false,
+  "help_kb_id": 3,
+  "help_kb_name": "Project docs",
+  "help_kb_status": "ready",
+  "support_server_present": true
+}
+```
+
+The default `threshold` is `0.45`, the value kept after the retrieval probe: every documentation score of the probe questions was at or above it and the outside questions were below it.
+
+### PUT /api/v1/support/config
+
+Stores the settings and returns the same body as GET. The `Content-Type` must be `application/json`; a foreign `Origin` is refused with `403`. Every field is optional and an omitted field stays unchanged. The documentation base cannot be set here: it is the one marked for `/help`.
+
+| Field | Range | Notes |
+|-------|-------|-------|
+| `top_k` | 1..20 | `candidate_k` is raised to `top_k` when smaller |
+| `candidate_k` | 1..50 | |
+| `threshold` | 0..1 or `null` | An explicit `null` returns to the calibrated value |
+| `lexical`, `llm_rerank`, `hybrid`, `rewrite`, `tools_memory`, `tools_tasks`, `tools_scheduler` | strict booleans | |
+| `mcp_server_ids` | list of the caller's server ids, at most 50 | An explicit `null` returns to the default (`support`); an empty list means no MCP server |
+
+Status codes: `200`, `401` (no session or key), `403` (foreign origin), `404` (a server id that is missing or owned by someone else), `415` (not `application/json`), `422` (value out of range, not a strict boolean).
+
+### WebSocket
+
+Two cases return a service notice instead of a turn:
+
+```json
+{"type": "help_notice", "kind": "usage", "text": "Использование: /support ...", "stored": false, "command": "support"}
+```
+
+- `kind` is `usage` for `/support` without a question, `no_base` when no `/help` base is marked or the marked base is not ready. The frame type is the same `help_notice` as for `/help`; `command` is `"support"`.
+- No `done` frame follows a notice. Nothing is stored, no model is called, and no rate slot and no generation queue slot is used.
+
+A real turn is, in order: the user message is stored; for a command with an identifier a `tool_call` frame carries the direct lookup (`get_ticket` or `get_user` of the `support` server), before any `token` frame; then `token` frames and further `tool_call` frames for tools the model calls; then `done`. The `done.rag` object is the ordinary RAG payload (`sources`, `quotes`, `strict`, `gated`, `search`) with `gated` always `false`, and an additive key:
+
+```json
+{"support": {
+  "kb_name": "Project docs",
+  "warnings": [{"server": "support", "text": "Тикет T-9999 не найден, ответ дан без данных тикета."}],
+  "label": "Поддержка · T-1001",
+  "ticket": "T-1001",
+  "user": null,
+  "lookup": {"ok": true, "tool": "get_ticket"}
+}}
+```
+
+`label` is `Поддержка`, `Поддержка · T-1001` or `Поддержка · @login`; `ticket` and `user` hold the normalised identifier or `null`; `lookup` is `null` without an identifier, `{"ok": true, "tool": ...}` on success and `{"ok": false, "reason": "not_found" | "unavailable"}` otherwise. `invariant_conflict` is always `null`. The same `support` object is stored in `Message.rag_sources` of the assistant message, so the label, sources, quotes and warnings are restored after a reload; tool-call cards are live-only.
+
+The ticket or user data returned by the lookup go into the prompt inside a `<support_data>` block that is labelled as data, not instructions (see the architecture document). Ticket data are sent to the model of the chat's provider.
+
+Earlier `/support` question-answer pairs of the same branch (the last 3, answers cut to 1500 characters, at most 2000 tokens) are replayed so that a follow-up without an identifier keeps the topic. No other chat history, profile or invariants are sent.
+
+### Warnings
+
+A warning is added to `support.warnings` and the turn continues:
+
+| Situation | Text |
+|-----------|------|
+| Ticket not found | `Тикет T-9999 не найден, ответ дан без данных тикета.` |
+| User not found | `Пользователь @login не найден, ответ дан без данных пользователя.` |
+| Support server not added, disabled, not connecting, or a tool error | `Сервер поддержки недоступен (<причина>), ответ дан без данных тикета. Проверьте сервер support в разделе «MCP серверы».` with the reason `не добавлен`, `отключён`, `не подключается` or `ошибка инструмента` |
+| A chosen MCP server is missing or did not connect | `Сервер support недоступен, его инструменты не использовались.` |
+
+A search failure becomes `rag.warning`, and the turn also continues without fragments.
+
+### HTTP: POST /api/v1/chats/{chat_id}/messages with a /support message
+
+A successful turn returns the ordinary body (see "HTTP chat (Day 30)") with `content`, `rag`, `tool_calls` and the additional key `support`, the same object as `done.rag.support`. `support` is `null` for ordinary messages. A notice returns status `200` with a body that stores nothing:
+
+```json
+{"chat_id": 12, "stored": false, "support": {"kind": "usage", "text": "Использование: /support ..."}}
+```
+
+`kind` is `usage` or `no_base`. The notice is returned before the busy check and the rate check. A `kb_id` sent together with a `/support` message is ignored: the answer comes from the base marked for `/help` and the chat's RAG settings stay unchanged.
+
+```bash
+curl -s -X POST http://127.0.0.1:8001/api/v1/chats/12/messages \
+  -H "Authorization: Bearer <API_KEY>" \
+  -H "Content-Type: application/json" \
+  -d '{"content": "/support #T-1001 Почему не работает авторизация?", "model": "qwen2.5-7b-instruct"}'
+```
+
 ## Automated PR review (Day 32)
 
 The Agent reviews a GitHub Pull Request on request: `POST /api/v1/reviews` reads the Pull Request through the GitHub MCP server, searches the project documentation and the project code, asks a model and returns three sections (bugs, architecture problems, recommendations). The GitHub Action in `.github/workflows/pr-review.yml` calls it through `scripts/pr_review_ci.py` and publishes the result as one comment. The review settings and the code index have their own routes. All routes are on the Agent port (default 8001); user-facing messages are in Russian.
