@@ -16,6 +16,7 @@ AiAdventAgentV2 is a local-first AI chat application made of two Python processe
 - LAN mode: the app can be made reachable from the local network over plain HTTP.
 - The `/support` command: a support assistant that answers from the project docs (including `docs/FAQ.md`) and from ticket and user data read through the support MCP server.
 - Automated review of GitHub Pull Requests: a workflow asks the app for a review that uses the project docs and code.
+- A project files assistant: the bundled `project-files` MCP entry (`mcp_servers/project_git.py --allow-write`) lets the model read, search and edit files of a repository clone from an ordinary chat, with a coloured diff card per change. The scripts `scripts/files_task.py` and `scripts/files_eval.py` run goals and the report scenarios from the command line. See [docs/USER_GUIDE.md](docs/USER_GUIDE.md) and `Day34_report.md`.
 
 ## Directory structure
 

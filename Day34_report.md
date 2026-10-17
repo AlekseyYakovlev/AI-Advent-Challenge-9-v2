@@ -132,7 +132,7 @@
 
 Прогон `pytest tests/test_mcp_project_files.py tests/test_files_task.py tests/test_files_eval.py tests/test_diff_card_ui.py tests/test_mcp_project_git.py tests/test_tool_guard.py -q`: 265 passed, 1 skipped, 14 warnings.
 
-Полный прогон `pytest tests/ -q`: см. план 26-08.
+Полный прогон `pytest tests/ -q`: 3919 passed, 0 failed, 15 skipped.
 
 ## Как повторить
 

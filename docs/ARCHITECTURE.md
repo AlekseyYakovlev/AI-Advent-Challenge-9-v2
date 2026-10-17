@@ -242,6 +242,29 @@ read-only tools: `git_current_branch`, `git_status`, `git_diff`, `git_tracked_fi
 because `shared/logger.py` writes JSON to stdout and stdout is the protocol channel; its
 diagnostics go to stderr.
 
+**Project files tools:** the same process registers three read tools: `read_file` (numbered lines,
+a window of 300 lines), `search_text` (at most 200 hits) and `find_usages` (kinds `def`, `class`,
+`import`, `call`, `ref`, `assign`, `param`, found through `ast` within a time budget). Visibility
+follows git: `git ls-files --cached --others --exclude-standard` for the file set and
+`git grep -I --untracked --exclude-standard` for search, both under the command timeout, so ignored
+files such as `.env` and `app.db` are never readable.
+
+**Write gate:** `write_file` and `edit_file` are added with `server.add_tool` only in `main()` when
+`--allow-write` is given, so without the flag the server lists 8 tools and with it 10; each write
+tool also calls `require_write()`. A write is refused outside the root, inside `.git`, for `.env*`,
+for git-ignored paths, for Windows device names, for directories and binary files, and above
+`MAX_WRITE_BYTES` (200000). Matching in `edit_file` is done on LF-normalised text and CRLF is
+preserved; the file is replaced atomically with `os.replace`.
+
+**Diff result and card:** a successful write returns a `difflib` unified diff whose first line is
+`Created <path> (+A -R)` or `Updated <path> (+A -R)`. The browser recognises it with `isUnifiedDiff`
+and renders the tool-call card with a coloured diff block built with `textContent` only, never HTML.
+
+**Run-script data flow:** `scripts/files_task.py` checks that the clone root is clean, sets the chat
+settings (temperature 0), sends the goal through the HTTP chat endpoint with an API key, and then
+collects the result with `git add -N .` and `git diff --binary` into `run.patch`, next to `run.json`
+and `answer.md`. `scripts/files_eval.py` drives the four report scenarios the same way.
+
 **Safety of the git calls:**
 - Fixed argument lists through `asyncio.create_subprocess_exec`, no shell.
 - Root confinement by real path: a path outside `--root` is refused.
