@@ -51,6 +51,17 @@ Requirements for milestone v5.0. Each maps to exactly one roadmap phase.
 - [x] **VER-09**: `docs/API_SPEC.md`, `docs/ARCHITECTURE.md` and `docs/USER_GUIDE.md` describe the new upload options, the git MCP server, the GitHub server setup and the `/help` command as built.
 - [x] **VER-10**: `Day31_report.md` records a run of 8-10 control questions about the project through `/help` on a real model, with the answer, the sources, the tool calls and a verdict for each question, including the questions that failed.
 
+### Automated PR Review
+
+- [x] **REV-01**: A workflow on `pull_request` on a self-hosted runner calls the local review route with an API key, publishes or replaces one PR comment and a job summary, and fails with a named reason when the review cannot be produced.
+- [x] **REV-02**: A dedicated API-key route returns structured JSON (three sections, documentation and code sources, head commit, model) with distinct error codes.
+- [x] **REV-03**: The app fetches PR metadata, the file list and the diff from `github-mcp-server` in code, without the 20 000-character tool-result cut.
+- [x] **REV-04**: A code knowledge base is built from the files tracked by git at the base branch tip and refreshed incrementally before each review and on demand.
+- [x] **REV-05**: Retrieval runs once per base with separate quotas; the model writes a Russian review; oversized PRs go through the per-file path plus a merge call.
+- [x] **REV-06**: Per-user review settings (repository path, documentation base, provider, model) with a Settings section.
+- [x] **REV-07**: A frozen set of 4-5 real PRs, two model runs, a DeepSeek judge and `Day32_report.md`. The GitHub REST calls in `scripts/pr_review_ci.py` (PR comment) and `scripts/review_control.py` (opening, reading and closing the test PRs) are CI and verification tooling outside the app; the app itself has no GitHub API client and reads GitHub only through `github-mcp-server`, so the Out of Scope row "Own GitHub API client" is unchanged.
+- [x] **REV-08**: pytest coverage and documentation, including the safe configuration of the self-hosted runner.
+
 ## Future Requirements
 
 Deferred to later days of Week 7. Tracked but not in the current roadmap.
@@ -107,10 +118,18 @@ Deferred to later days of Week 7. Tracked but not in the current roadmap.
 | VER-08 | Phase 23 | Complete |
 | VER-09 | Phase 23 | Complete |
 | VER-10 | Phase 23 | Complete |
+| REV-01 | Phase 24 | Complete |
+| REV-02 | Phase 24 | Complete |
+| REV-03 | Phase 24 | Complete |
+| REV-04 | Phase 24 | Complete |
+| REV-05 | Phase 24 | Complete |
+| REV-06 | Phase 24 | Complete |
+| REV-07 | Phase 24 | Complete |
+| REV-08 | Phase 24 | Complete |
 
 **Coverage:**
-- v5.0 requirements: 24 total
-- Mapped to phases: 24
+- v5.0 requirements: 32 total
+- Mapped to phases: 32
 - Unmapped: 0 ✓
 
 ---

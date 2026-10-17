@@ -1,0 +1,23 @@
+run,pr,key,needs,found,reason
+deepseek,bug,B1,diff,true,"замечание к agent/review_demo_pagination.py:17 прямо описывает off-by-one в конце среза items[start:end] в slice_page, из-за чего теряется последний элемент страницы."
+deepseek,bug,B2,diff,true,замечание к agent/review_demo_pagination.py:23 указывает на 0 / 0 (ZeroDivisionError) в average_page_fill при пустом списке.
+deepseek,bug,B3,code,true,"замечание к agent/review_demo_pagination.py:28 описывает перепутанный порядок аргументов _chunk_rows(doc, kb_id, drafts) вместо _chunk_rows(kb_id, doc, drafts)."
+deepseek,rules,R1,docs,true,"в review_bugs (agent/review_demo_audit.py:11) прямо указано, что print(""title change requested"", chat.id) используется вместо структурного логирования через structlog, что совпадает с ожидаемым дефектом."
+deepseek,rules,R2,docs,true,в review_bugs (agent/review_demo_audit.py:12) отмечен datetime.utcnow() и предписано использовать datetime.now(timezone.utc).
+deepseek,rules,R3,docs,true,в review_bugs (agent/review_demo_audit.py:14-15) указано отсутствие await session.commit() и rollback при ошибке для session.add(chat).
+deepseek,rules,R4,docs,true,в review_bugs (agent/review_demo_audit.py:22-24) указан голый except: без типа исключения.
+deepseek,arch,A1,docs,true,"замечание в review_bugs (и продублировано в review_architecture) про ui/review_demo_status.py, импортирующий agent.state и читающий active_streams/chat_locks прямо в UI-процессе, — это ровно дефект A1."
+deepseek,arch,A2,docs,false,"про multiprocessing.Process в agent/review_demo_worker.py есть упоминания (баг про сборку мусора/join и архитектурное про нереализованность перестроения), но ни одно замечание не называет проблему «фоновый запуск через multiprocessing запрещён ограничениями проекта» — сформулирована другая проблема."
+deepseek,large,L1,diff,false,"в разделе багов по agent/review_demo_big/providers.py разбирается только ensure_seeded (лишний захват лока, порядок _seeded_users.add), а про снятую в копии get_provider_row проверку отказа отключённому провайдеру не сказано ни в багах, ни в архитектуре."
+deepseek,large,L2,diff,true,"замечание agent/review_demo_big/kb_indexer.py:1 прямо указывает, что в _commit_addition вызов promote_index(pending, path) идёт до await session.commit(), и требует поменять порядок на commit → promote."
+local,bug,B1,diff,true,в ревью багов указана функция slice_page в том же файле и та же ошибка на единицу в вычислении конца среза (end = start + page_size - 1).
+local,bug,B2,diff,true,в рекомендациях названа та же проблема в average_page_fill: деление на ноль при пустом списке.
+local,bug,B3,code,false,"порядок аргументов вызова _chunk_rows (kb_id, doc, drafts) нигде в ревью не упоминается."
+local,rules,R1,docs,true,замечание agent/review_demo_audit.py:12 прямо указывает на print() вместо structlog.
+local,rules,R2,docs,true,замечание agent/review_demo_audit.py:13 прямо указывает на datetime.utcnow() и предлагает datetime.now(timezone.utc).
+local,rules,R3,docs,false,про отсутствие await session.commit()/отката не сказано; замечание к строке 16 говорит о прямо противоположном (мнимая избыточность session.add).
+local,rules,R4,docs,true,замечание agent/review_demo_audit.py:20 прямо указывает на голый except: без типа исключения.
+local,arch,A1,docs,false,ни один раздел ревью не упоминает файл ui/review_demo_status.py и прямой импорт agent.state/чтение памяти агента.
+local,arch,A2,docs,true,"замечание в <review_architecture> указывает на multiprocessing в agent/review_demo_worker.py как на недопустимый способ запуска фоновой работы, что совпадает с ожидаемым дефектом."
+local,large,L1,diff,false,ни одно замечание в разделах багов/архитектуры не упоминает agent/review_demo_big/providers.py и убранную проверку отказа отключённому провайдеру.
+local,large,L2,diff,false,ни одно замечание не упоминает agent/review_demo_big/kb_indexer.py и порядок вызова promote_index относительно await session.commit().

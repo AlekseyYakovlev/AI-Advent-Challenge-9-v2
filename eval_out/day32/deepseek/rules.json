@@ -1,0 +1,12 @@
+{
+  "id": "rules",
+  "pr_number": 3,
+  "head_sha": "f399dd422666e5efad4e0385f0c497ef34683cba",
+  "status": "ok",
+  "reason": "",
+  "provider_model": "DeepSeek/deepseek-flash",
+  "comment_id": 6226123642,
+  "updated_at": "2026-10-16T22:51:29Z",
+  "workflow_conclusion": null,
+  "seconds": null
+}

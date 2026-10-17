@@ -1,0 +1,12 @@
+{
+  "id": "rules",
+  "pr_number": 3,
+  "head_sha": "58eaf96c5b3e38183554b29af9537d91f7bbc03b",
+  "status": "ok",
+  "reason": "",
+  "provider_model": "LM Studio/qwen/qwen3.5-9b",
+  "comment_id": 6226123642,
+  "updated_at": "2026-10-16T22:46:57Z",
+  "workflow_conclusion": null,
+  "seconds": null
+}

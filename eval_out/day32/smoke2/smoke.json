@@ -1,0 +1,12 @@
+{
+  "id": "smoke",
+  "pr_number": 1,
+  "head_sha": "bb09d5343f7d57896e872f7a2bfd0444c8772598",
+  "status": "ok",
+  "reason": "",
+  "provider_model": "LM Studio/qwen/qwen3.5-9b",
+  "comment_id": 6225967607,
+  "updated_at": "2026-10-16T22:35:03Z",
+  "workflow_conclusion": null,
+  "seconds": null
+}

@@ -1,0 +1,151 @@
+{
+  "run": "local",
+  "judge_model": "deepseek-flash",
+  "started_at": "2026-10-16T23:00:06.097501+00:00",
+  "provider_models": [
+    "LM Studio/qwen/qwen3.5-9b"
+  ],
+  "prs": [
+    {
+      "id": "bug",
+      "kind": "obvious_bug",
+      "status": "ok",
+      "provider_model": "LM Studio/qwen/qwen3.5-9b",
+      "findings": [
+        {
+          "key": "B1",
+          "found": true,
+          "reason": "в ревью багов указана функция slice_page в том же файле и та же ошибка на единицу в вычислении конца среза (end = start + page_size - 1).",
+          "needs": "diff"
+        },
+        {
+          "key": "B2",
+          "found": true,
+          "reason": "в рекомендациях названа та же проблема в average_page_fill: деление на ноль при пустом списке.",
+          "needs": "diff"
+        },
+        {
+          "key": "B3",
+          "found": false,
+          "reason": "порядок аргументов вызова _chunk_rows (kb_id, doc, drafts) нигде в ревью не упоминается.",
+          "needs": "code"
+        }
+      ],
+      "false_remarks": 0,
+      "false_list": [],
+      "judge_status": "ok",
+      "judge_reason": ""
+    },
+    {
+      "id": "rules",
+      "kind": "documented_rule",
+      "status": "ok",
+      "provider_model": "LM Studio/qwen/qwen3.5-9b",
+      "findings": [
+        {
+          "key": "R1",
+          "found": true,
+          "reason": "замечание agent/review_demo_audit.py:12 прямо указывает на print() вместо structlog.",
+          "needs": "docs"
+        },
+        {
+          "key": "R2",
+          "found": true,
+          "reason": "замечание agent/review_demo_audit.py:13 прямо указывает на datetime.utcnow() и предлагает datetime.now(timezone.utc).",
+          "needs": "docs"
+        },
+        {
+          "key": "R3",
+          "found": false,
+          "reason": "про отсутствие await session.commit()/отката не сказано; замечание к строке 16 говорит о прямо противоположном (мнимая избыточность session.add).",
+          "needs": "docs"
+        },
+        {
+          "key": "R4",
+          "found": true,
+          "reason": "замечание agent/review_demo_audit.py:20 прямо указывает на голый except: без типа исключения.",
+          "needs": "docs"
+        }
+      ],
+      "false_remarks": 1,
+      "false_list": [
+        "agent/review_demo_audit.py:16: утверждение, что вызов session.add(chat) избыточен и его следует удалить, — проблемы избыточности в изменённом коде нет (напротив, запись в базу как раз требует session.add с последующим коммитом), это замечание не соответствует ни одному из внесённых дефектов."
+      ],
+      "judge_status": "ok",
+      "judge_reason": ""
+    },
+    {
+      "id": "arch",
+      "kind": "architecture",
+      "status": "ok",
+      "provider_model": "LM Studio/qwen/qwen3.5-9b",
+      "findings": [
+        {
+          "key": "A1",
+          "found": false,
+          "reason": "ни один раздел ревью не упоминает файл ui/review_demo_status.py и прямой импорт agent.state/чтение памяти агента.",
+          "needs": "docs"
+        },
+        {
+          "key": "A2",
+          "found": true,
+          "reason": "замечание в <review_architecture> указывает на multiprocessing в agent/review_demo_worker.py как на недопустимый способ запуска фоновой работы, что совпадает с ожидаемым дефектом.",
+          "needs": "docs"
+        }
+      ],
+      "false_remarks": 1,
+      "false_list": [
+        "agent/review_demo_worker.py:13 — утверждение о том, что async def _rebuild без await «завершится мгновенно» при запуске через multiprocessing.Process, не соответствует ни одному из заведомо внесённых дефектов и описывает несуществующую в изменениях проблему."
+      ],
+      "judge_status": "ok",
+      "judge_reason": ""
+    },
+    {
+      "id": "large",
+      "kind": "large_pr",
+      "status": "ok",
+      "provider_model": "LM Studio/qwen/qwen3.5-9b",
+      "findings": [
+        {
+          "key": "L1",
+          "found": false,
+          "reason": "ни одно замечание в разделах багов/архитектуры не упоминает agent/review_demo_big/providers.py и убранную проверку отказа отключённому провайдеру.",
+          "needs": "diff"
+        },
+        {
+          "key": "L2",
+          "found": false,
+          "reason": "ни одно замечание не упоминает agent/review_demo_big/kb_indexer.py и порядок вызова promote_index относительно await session.commit().",
+          "needs": "diff"
+        }
+      ],
+      "false_remarks": 7,
+      "false_list": [
+        "context_engine.py:150 — обращение к chat.user_id без проверки на None в изменённом коде не подтверждается и к внесённым дефектам не относится.",
+        "context_engine.py:150 — рассуждение про owner_id/Settings с chat_id=None описывает несуществующую проблему в изменённом коде.",
+        "context_engine.py:385 — утверждение о «синтаксической ошибке» из-за оператора сравнения в _apply_compression_strategy не соответствует коду.",
+        "rag_turn.py:102 — заявленная логическая ошибка из-за оператора сравнения в load_history_pairs в коде отсутствует.",
+        "rag_turn.py:291 — предполагаемый UnboundLocalError для top_k в except RagFailure не подтверждается кодом.",
+        "scheduler.py:105 — мнимый дефект оператора сравнения в claim_slot не существует в изменённом коде.",
+        "scheduler.py:124 — мнимый дефект оператора сравнения в claim_slot не существует в изменённом коде."
+      ],
+      "judge_status": "ok",
+      "judge_reason": ""
+    },
+    {
+      "id": "clean",
+      "kind": "clean",
+      "status": "ok",
+      "provider_model": "LM Studio/qwen/qwen3.5-9b",
+      "findings": [],
+      "false_remarks": 3,
+      "false_list": [
+        "agent/review_demo_format.py:13 — утверждение об ошибке сравнения ›/›= не подтверждается ожидаемыми дефектами.",
+        "agent/review_demo_format.py:13 — утверждение о неверном символе ‹ в условии цикла не подтверждается.",
+        "agent/review_demo_format.py:20 — утверждение об аналогичной ошибке в проверке длительности не подтверждается."
+      ],
+      "judge_status": "ok",
+      "judge_reason": ""
+    }
+  ]
+}

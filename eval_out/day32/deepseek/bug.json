@@ -1,0 +1,12 @@
+{
+  "id": "bug",
+  "pr_number": 2,
+  "head_sha": "530eef5f2c42b054dad47779c35324926c00d82b",
+  "status": "ok",
+  "reason": "",
+  "provider_model": "DeepSeek/deepseek-flash",
+  "comment_id": 6226093286,
+  "updated_at": "2026-10-16T22:51:02Z",
+  "workflow_conclusion": null,
+  "seconds": null
+}

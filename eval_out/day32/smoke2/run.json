@@ -1,0 +1,7 @@
+{
+  "run": "smoke2",
+  "provider": "LM Studio",
+  "model": "qwen/qwen3.5-9b",
+  "started_at": "2026-10-16T22:35:23.193861+00:00",
+  "finished_at": "2026-10-16T22:35:23.943510+00:00"
+}

@@ -1,0 +1,12 @@
+{
+  "id": "clean",
+  "pr_number": 6,
+  "head_sha": "4b596e08a003e9105766e9d1ee07ea43f548463d",
+  "status": "ok",
+  "reason": "",
+  "provider_model": "LM Studio/qwen/qwen3.5-9b",
+  "comment_id": 6226098855,
+  "updated_at": "2026-10-16T22:44:54Z",
+  "workflow_conclusion": null,
+  "seconds": null
+}

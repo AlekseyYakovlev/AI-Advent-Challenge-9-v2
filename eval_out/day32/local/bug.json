@@ -1,0 +1,12 @@
+{
+  "id": "bug",
+  "pr_number": 2,
+  "head_sha": "64a4ac4f321dca82b161294440af662cd83be9ba",
+  "status": "ok",
+  "reason": "",
+  "provider_model": "LM Studio/qwen/qwen3.5-9b",
+  "comment_id": 6226093286,
+  "updated_at": "2026-10-16T22:44:27Z",
+  "workflow_conclusion": null,
+  "seconds": null
+}

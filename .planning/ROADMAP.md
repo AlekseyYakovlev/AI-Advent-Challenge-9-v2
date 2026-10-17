@@ -10,10 +10,10 @@
 
 ## Phases
 
-- [ ] **Phase 21: Project docs in RAG (Day 31)** - README plus folder upload, accumulated selections and addition to an existing knowledge base
-- [ ] **Phase 22: Project MCP servers (Day 31)** - Own read-only git MCP server and the official GitHub server connected read-only
-- [ ] **Phase 23: /help command, verification and report (Day 31)** - `/help` in the chat and over HTTP, tests, end-to-end script and `Day31_report.md`
-- [ ] **Phase 24: Automated PR code review (Day 32)** - Pipeline on every Pull Request: diff plus changed files, RAG over docs and code, review text
+- [x] **Phase 21: Project docs in RAG (Day 31)** - README plus folder upload, accumulated selections and addition to an existing knowledge base
+- [x] **Phase 22: Project MCP servers (Day 31)** - Own read-only git MCP server and the official GitHub server connected read-only
+- [x] **Phase 23: /help command, verification and report (Day 31)** - `/help` in the chat and over HTTP, tests, end-to-end script and `Day31_report.md`
+- [x] **Phase 24: Automated PR code review (Day 32)** - Pipeline on every Pull Request: diff plus changed files, RAG over docs and code, review text
 
 ### Phase 21: Project docs in RAG (Day 31)
 
@@ -212,6 +212,7 @@ Full details: [milestones/v4.0-ROADMAP.md](milestones/v4.0-ROADMAP.md)
 | 21. Project docs in RAG (Day 31) | v5.0 | 7/7 | Complete   | 2026-10-13 |
 | 22. Project MCP servers (Day 31) | v5.0 | 6/6 | Complete   | 2026-10-13 |
 | 23. /help command, verification and report (Day 31) | v5.0 | 8/8 | Complete    | 2026-10-13 |
+| 24. Automated PR code review (Day 32) | v5.0 | 14/14 | Complete    | 2026-10-17 |
 
 ## Backlog
 
@@ -252,51 +253,51 @@ Plans:
 ### Phase 24: Automated PR code review (Day 32)
 
 **Goal:** A pipeline (for example a GitHub Action) runs on every Pull Request: the assistant receives the PR diff and the changed files, uses RAG over the project documentation and code, and returns a review text with potential bugs, architectural problems and recommendations
-**Requirements**: TBD
+**Requirements**: REV-01, REV-02, REV-03, REV-04, REV-05, REV-06, REV-07, REV-08
 **Depends on:** Phase 21, Phase 22 (project docs knowledge base and the GitHub MCP server); independent of Phase 23
-**Plans:** 14 plans
+**Plans:** 14/14 plans complete
 
 Plans:
 **Wave 1**
 
-- [ ] 24-01-PLAN.md — Day32 branch cut-point decision; register REV-01..REV-08
+- [x] 24-01-PLAN.md — Day32 branch cut-point decision; register REV-01..REV-08
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 24-02-PLAN.md — ReviewConfig / ReviewCodeIndex tables and the pure code chunker
-- [ ] 24-03-PLAN.md — Live GitHub MCP check and the in-code PR reader (no 20 000-char cut)
-- [ ] 24-04-PLAN.md — GitHub Actions workflow and the thin caller script
-- [ ] 24-11-PLAN.md — DeepSeek judge and report table renderer
+- [x] 24-02-PLAN.md — ReviewConfig / ReviewCodeIndex tables and the pure code chunker
+- [x] 24-03-PLAN.md — Live GitHub MCP check and the in-code PR reader (no 20 000-char cut)
+- [x] 24-04-PLAN.md — GitHub Actions workflow and the thin caller script
+- [x] 24-11-PLAN.md — DeepSeek judge and report table renderer
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 24-05-PLAN.md — Git-based incremental code indexer over the base branch
-- [ ] 24-06-PLAN.md — Review core: budget, split, per-base retrieval, model calls, merge
+- [x] 24-05-PLAN.md — Git-based incremental code indexer over the base branch
+- [x] 24-06-PLAN.md — Review core: budget, split, per-base retrieval, model calls, merge
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 24-07-PLAN.md — Review route, settings routes and router wiring
+- [x] 24-07-PLAN.md — Review route, settings routes and router wiring
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
-- [ ] 24-08-PLAN.md — «Ревью Pull Request» Settings section (UI-SPEC S1)
-- [ ] 24-10-PLAN.md — Frozen control set of test PRs and the control-run script
+- [x] 24-08-PLAN.md — «Ревью Pull Request» Settings section (UI-SPEC S1)
+- [x] 24-10-PLAN.md — Frozen control set of test PRs and the control-run script
 
 **Wave 6** *(blocked on Wave 5 completion)*
 
-- [ ] 24-09-PLAN.md — Docs: API spec, architecture, user guide with safe runner config, testing guide
+- [x] 24-09-PLAN.md — Docs: API spec, architecture, user guide with safe runner config, testing guide
 
 **Wave 7** *(blocked on Wave 6 completion)*
 
-- [ ] 24-12-PLAN.md — Runner security decision, manual setup, push Day32, real smoke PR
+- [x] 24-12-PLAN.md — Runner security decision, manual setup, push Day32, real smoke PR
 
 **Wave 8** *(blocked on Wave 7 completion)*
 
-- [ ] 24-13-PLAN.md — Control run on the local model and on DeepSeek
+- [x] 24-13-PLAN.md — Control run on the local model and on DeepSeek
 
 **Wave 9** *(blocked on Wave 8 completion)*
 
-- [ ] 24-14-PLAN.md — Judge both runs, Day32_report.md, close test PRs
+- [x] 24-14-PLAN.md — Judge both runs, Day32_report.md, close test PRs
 
 ---
 *Roadmap created: 2026-09-19*

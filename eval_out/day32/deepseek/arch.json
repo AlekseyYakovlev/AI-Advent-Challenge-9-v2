@@ -1,0 +1,12 @@
+{
+  "id": "arch",
+  "pr_number": 4,
+  "head_sha": "cd3c65f9ff2fa2dadf5a82c79cb28b510a9e01a8",
+  "status": "ok",
+  "reason": "",
+  "provider_model": "DeepSeek/deepseek-flash",
+  "comment_id": 6226128622,
+  "updated_at": "2026-10-16T22:51:54Z",
+  "workflow_conclusion": null,
+  "seconds": null
+}
