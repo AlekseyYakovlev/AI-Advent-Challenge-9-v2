@@ -100,9 +100,28 @@ class Frames:
 def register_secrets() -> None:
     """Register the scratch token with the scrubber so no output or file can contain it."""
     rc.register_secrets()
-    token = os.environ.get(ENV_TOKEN, "")
+    for name in (ENV_TOKEN, "DEEPSEEK_API_KEY"):
+        value = os.environ.get(name, "")
+        if value and value not in rc._SECRETS:  # noqa: SLF001
+            rc._SECRETS.append(value)  # noqa: SLF001
+    token = ""
     if token and token not in rc._SECRETS:  # noqa: SLF001 - reuse the shared scrubber's list
         rc._SECRETS.append(token)  # noqa: SLF001
+
+
+REQUESTED_MODEL: list[str] = []
+
+
+def load_deepseek_key() -> None:
+    """Put DEEPSEEK_API_KEY from the project .env into the environment (never printed)."""
+    if os.environ.get("DEEPSEEK_API_KEY"):
+        return
+    env_file = REPO_ROOT / ".env"
+    if not env_file.is_file():
+        return
+    for line in env_file.read_text(encoding="utf-8").splitlines():
+        if line.startswith("DEEPSEEK_API_KEY="):
+            os.environ["DEEPSEEK_API_KEY"] = line.split("=", 1)[1].strip().strip('"')
 
 
 def say(message: str) -> None:
@@ -192,12 +211,17 @@ def safety_preflight(require_playwright: bool) -> int | None:
         return blocked_exit(f"порты {busy} заняты; изолированной копии нужны свободные")
     if shutil.which("git") is None:
         return blocked_exit("git не установлен")
-    try:
-        model = pick_chat_model()
-    except (httpx.HTTPError, ValueError) as exc:
-        return blocked_exit(f"LM Studio недоступен ({type(exc).__name__})")
-    if model is None:
-        return blocked_exit("в LM Studio нет загруженной чат-модели")
+    if REQUESTED_MODEL:
+        model = REQUESTED_MODEL[0]
+        if model.startswith("deepseek") and not os.environ.get("DEEPSEEK_API_KEY"):
+            return blocked_exit("DEEPSEEK_API_KEY не найден в окружении и .env")
+    else:
+        try:
+            model = pick_chat_model()
+        except (httpx.HTTPError, ValueError) as exc:
+            return blocked_exit(f"LM Studio недоступен ({type(exc).__name__})")
+        if model is None:
+            return blocked_exit("в LM Studio нет загруженной чат-модели")
     chat_model["id"] = model
     say(f"chat model: {model}")
     if require_playwright:
@@ -578,7 +602,18 @@ async def plan_for(ctx: Ctx, text: str = "/release") -> tuple[int, dict[str, Any
 
 
 def draft_release_exists(remote: str, token: str, tag: str) -> tuple[bool, str]:
-    """Check through the GitHub REST API that a draft Release exists for the tag."""
+    """Check the draft Release through GitHub REST; its list lags right after creation, so retry."""
+    found, detail = _draft_release_once(remote, token, tag)
+    for _ in range(5):
+        if found or not detail.startswith("Release для тега не найден"):
+            break
+        time.sleep(3.0)
+        found, detail = _draft_release_once(remote, token, tag)
+    return found, detail
+
+
+def _draft_release_once(remote: str, token: str, tag: str) -> tuple[bool, str]:
+    """Query the GitHub REST API once for a draft Release of the tag."""
     pair = owner_repo(remote)
     if pair is None:
         return False, "не удалось определить owner/repo"
@@ -897,7 +932,12 @@ def main() -> None:
     parser.add_argument("--out", default=DEFAULT_OUT, help="path of the results JSON")
     parser.add_argument("--keep-temp", action="store_true", help="keep temporary directories")
     parser.add_argument("--dry-check", action="store_true", help="only run the safety preflight")
+    parser.add_argument("--model", default=None, help="chat model id, e.g. deepseek-flash; default is local LM Studio")
     args = parser.parse_args()
+    if args.model:
+        REQUESTED_MODEL.append(args.model)
+        if args.model.startswith("deepseek"):
+            load_deepseek_key()
     register_secrets()
     blocked = safety_preflight(require_playwright=True)
     if blocked is not None:

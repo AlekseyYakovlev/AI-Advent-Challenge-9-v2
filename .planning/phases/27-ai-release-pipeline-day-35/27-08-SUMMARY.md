@@ -14,3 +14,6 @@
 
 ## Not done here
 The real release of the project repository (done by the user on video, D-15). Preparation steps are in the report.
+
+## Addendum: deepseek-flash runs (user request, deviation from D-16)
+`scripts/e2e_release_playwright.py --model deepseek-flash` ran the same four scenarios in the sandbox. First run: 3 passed, scenario 2 failed on the final GitHub REST draft check (list lag after creation); the check now retries. Second run: all four passed. Results in `27-CONTROL-RUNS-deepseek-flash.json` (token-free).

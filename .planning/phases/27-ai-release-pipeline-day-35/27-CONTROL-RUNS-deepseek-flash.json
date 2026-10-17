@@ -1,0 +1,393 @@
+{
+  "scenarios": [
+    {
+      "id": 1,
+      "title": "Полный путь: коммит, тег, push, черновик Release",
+      "status": "passed",
+      "checks": [
+        {
+          "label": "план построен",
+          "ok": true,
+          "detail": "type=release_plan blocked=None text="
+        },
+        {
+          "label": "D-17: журнал изменений разобран, заголовки допустимы",
+          "ok": true,
+          "detail": "headings=['### Добавлено']"
+        },
+        {
+          "label": "получен результат подтверждения",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "label": "все четыре шага выполнены",
+          "ok": true,
+          "detail": "{'commit': 'done', 'tag': 'done', 'push': 'done', 'release': 'done'}"
+        },
+        {
+          "label": "заголовок карточки «Готово»",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "label": "ссылка на черновик Release показана",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "label": "тег существует на удалённом репозитории",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "label": "CHANGELOG.md в отправленной ветке начинается с новой версии",
+          "ok": true,
+          "detail": "# Changelog\n\nВсе значимые изменения проекта записываются в этот файл.\nФормат осн"
+        }
+      ],
+      "reason": "",
+      "reason_code": "",
+      "release_url": "https://github.com/AlekseyYakovlev/release-sandbox/releases/tag/untagged-0d2d75fd7b9fb5b78b82",
+      "tag": "v27.2",
+      "started_at": "2026-10-17T20:07:35.768508+00:00",
+      "finished_at": "2026-10-17T20:07:50.480513+00:00"
+    },
+    {
+      "id": 2,
+      "title": "Нет доступа к GitHub: частичный результат и повтор",
+      "status": "passed",
+      "checks": [
+        {
+          "label": "план построен",
+          "ok": true,
+          "detail": "type=release_plan blocked=None text="
+        },
+        {
+          "label": "D-17: журнал изменений разобран, заголовки допустимы",
+          "ok": true,
+          "detail": "headings=['### Добавлено', '### Исправлено', '### Изменено']"
+        },
+        {
+          "label": "получен результат подтверждения",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "label": "коммит, тег и push выполнены",
+          "ok": true,
+          "detail": "{'commit': 'done', 'tag': 'done', 'push': 'done', 'release': 'unavailable'}"
+        },
+        {
+          "label": "черновик Release недоступен",
+          "ok": true,
+          "detail": "{'commit': 'done', 'tag': 'done', 'push': 'done', 'release': 'unavailable'} reason=Error executing tool github_create_draft_release: GITHUB_PERSONAL_ACCESS_TOKEN is not set in this server's environment; add it in the MCP server form"
+        },
+        {
+          "label": "итог «partial» и текст релиза для ручного создания",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "label": "заголовок карточки «Частично выполнено»",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "label": "токен добавлен в окружение сервера, сервер переподключён",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "label": "получен результат повтора",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "label": "шаги 1-3 пропущены, Release выполнен",
+          "ok": true,
+          "detail": "{'commit': 'skipped', 'tag': 'skipped', 'push': 'skipped', 'release': 'done'} reason=None"
+        },
+        {
+          "label": "ссылка на Release ведёт на github.com",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "label": "ссылка «Черновик GitHub Release» показана",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "label": "по данным GitHub REST Release является черновиком",
+          "ok": true,
+          "detail": "draft=True"
+        }
+      ],
+      "reason": "",
+      "reason_code": "",
+      "release_url": "https://github.com/AlekseyYakovlev/release-sandbox/releases/tag/untagged-8da507fc9e51d77f1772",
+      "tag": "v27.1",
+      "started_at": "2026-10-17T20:07:14.951709+00:00",
+      "finished_at": "2026-10-17T20:07:35.161122+00:00"
+    },
+    {
+      "id": 3,
+      "title": "Блокировки: грязное дерево, смена HEAD, версия",
+      "status": "passed",
+      "checks": [
+        {
+          "label": "грязное дерево: имя файла названо в ответе",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "label": "карточка со статусом «Заблокировано»",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "label": "чистое дерево: план построен",
+          "ok": true,
+          "detail": "type=release_plan blocked=None text="
+        },
+        {
+          "label": "D-17: журнал изменений разобран, заголовки допустимы",
+          "ok": true,
+          "detail": "headings=['### Добавлено', '### Исправлено', '### Изменено']"
+        },
+        {
+          "label": "смена HEAD: блокировка «HEAD изменился»",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "label": "кнопка «Пересоздать план» показана",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "label": "новый план построен",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "label": "D-17: журнал изменений разобран, заголовки допустимы",
+          "ok": true,
+          "detail": "headings=['### Добавлено', '### Исправлено', '### Изменено']"
+        },
+        {
+          "label": "занятый тег v28.0 не предложен кандидатом",
+          "ok": true,
+          "detail": "['v27.1']"
+        },
+        {
+          "label": "версия не больше последнего тега: ошибка и кнопка отключена",
+          "ok": true,
+          "detail": "Версия должна быть больше последнего тега (v27.0)."
+        },
+        {
+          "label": "занятая версия: блокировка «уже существует как тег»",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "label": "на удалённом репозитории не появилось новых тегов",
+          "ok": true,
+          "detail": ""
+        }
+      ],
+      "reason": "",
+      "reason_code": "",
+      "release_url": null,
+      "tag": null,
+      "started_at": "2026-10-17T20:06:49.556420+00:00",
+      "finished_at": "2026-10-17T20:07:14.951699+00:00"
+    },
+    {
+      "id": 4,
+      "title": "Ручной диапазон, версия и название",
+      "status": "passed",
+      "checks": [
+        {
+          "label": "план построен для ручного диапазона",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "label": "D-17: журнал изменений разобран, заголовки допустимы",
+          "ok": true,
+          "detail": "headings=['### Добавлено', '### Исправлено', '### Изменено']"
+        },
+        {
+          "label": "диапазон из команды показан в плане",
+          "ok": true,
+          "detail": "v27.0..HEAD"
+        },
+        {
+          "label": "получен результат подтверждения",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "label": "релиз завершён с выбранной версией",
+          "ok": true,
+          "detail": "done v27.3"
+        },
+        {
+          "label": "название в сообщении тега",
+          "ok": true,
+          "detail": ""
+        },
+        {
+          "label": "аннотированный тег содержит название",
+          "ok": true,
+          "detail": "v27.3           v27.3: E2E ручное название\n"
+        },
+        {
+          "label": "тег на удалённом репозитории совпадает с локальным",
+          "ok": true,
+          "detail": ""
+        }
+      ],
+      "reason": "",
+      "reason_code": "",
+      "release_url": "https://github.com/AlekseyYakovlev/release-sandbox/releases/tag/untagged-7c6fcb004ea69ea49f24",
+      "tag": "v27.3",
+      "started_at": "2026-10-17T20:07:50.480521+00:00",
+      "finished_at": "2026-10-17T20:08:05.139575+00:00"
+    }
+  ],
+  "plans": [
+    {
+      "scenario": 3,
+      "range": "v27.0..HEAD",
+      "version": "v27.1",
+      "candidates": [
+        "v27.1"
+      ],
+      "title": "Функции alpha и beta, исправление alpha",
+      "rationale": "Выбрана версия v27.1, поскольку единственный кандидат соответствует набору изменений без ломающих правок. В релиз вошли две новые функции (alpha и beta) и одно исправление, что укладывается в минорное обновление. Breaking-изменений нет, поэтому повышение мажорной версии не требуется.",
+      "counts": {
+        "total": 6,
+        "kept": 3,
+        "dropped": 2,
+        "feat": 2,
+        "fix": 1,
+        "day_merges": 1,
+        "prs": 0,
+        "shrunk": 0
+      },
+      "changelog": "### Добавлено\n- Фаза 90: добавлена функциональность alpha (90-01)\n- Фаза 91: добавлена функциональность beta (91-01)\n\n### Исправлено\n- Фаза 90: исправлена ошибка alpha (90-02)\n\n### Изменено\n- Слитое изменение Day90",
+      "coverage_missing": [],
+      "coverage_missing_frame": [],
+      "changelog_valid": true,
+      "model": "deepseek-flash"
+    },
+    {
+      "scenario": 3,
+      "range": "v27.0..HEAD",
+      "version": "v27.1",
+      "candidates": [
+        "v27.1"
+      ],
+      "title": "Фазы 90–91: alpha и beta",
+      "rationale": "Выбрана версия v27.1, поскольку единственный кандидат соответствует минорному релизу без ломающих изменений. В релиз вошли две новые функции (alpha и beta) и одно исправление, что укладывается в минорное обновление. Сигнал breaking=false подтверждает отсутствие несовместимых изменений.",
+      "counts": {
+        "total": 7,
+        "kept": 3,
+        "dropped": 3,
+        "feat": 2,
+        "fix": 1,
+        "day_merges": 1,
+        "prs": 0,
+        "shrunk": 0
+      },
+      "changelog": "### Добавлено\n- Фаза 90: добавлена alpha (90-01)\n- Фаза 91: добавлена beta (91-01)\n\n### Исправлено\n- Фаза 90: исправлена alpha (90-02)\n\n### Изменено\n- Слитые изменения: Day90",
+      "coverage_missing": [],
+      "coverage_missing_frame": [],
+      "changelog_valid": true,
+      "model": "deepseek-flash"
+    },
+    {
+      "scenario": 2,
+      "range": "v27.0..HEAD",
+      "version": "v27.1",
+      "candidates": [
+        "v27.1"
+      ],
+      "title": "Фазы 90–91: alpha и beta",
+      "rationale": "Выбрана версия v27.1, поскольку единственный кандидат соответствует набору изменений без ломающих правок. В релиз вошли две новые функции (alpha в фазе 90 и beta в фазе 91) и одно исправление в фазе 90. Незначительный характер изменений и отсутствие breaking-сигналов подтверждают минорное обновление.",
+      "counts": {
+        "total": 7,
+        "kept": 3,
+        "dropped": 3,
+        "feat": 2,
+        "fix": 1,
+        "day_merges": 1,
+        "prs": 0,
+        "shrunk": 0
+      },
+      "changelog": "### Добавлено\n- Фаза 90: добавлена alpha (feat(90-01))\n- Фаза 91: добавлена beta (feat(91-01))\n\n### Исправлено\n- Фаза 90: исправлена alpha (fix(90-02))\n\n### Изменено\n- Слитые изменения: Day90",
+      "coverage_missing": [],
+      "coverage_missing_frame": [],
+      "changelog_valid": true,
+      "model": "deepseek-flash"
+    },
+    {
+      "scenario": 1,
+      "range": "v27.1..HEAD",
+      "version": "v27.2",
+      "candidates": [
+        "v27.2"
+      ],
+      "title": "Добавлена поддержка gamma",
+      "rationale": "В релизе присутствует одна новая функция (feat=1) и нет исправлений или ломающих изменений, поэтому повышение минорной версии корректно. Кандидат v27.2 соответствует такому изменению. Остальные сигналы (0 PR, 0 слияний) не противоречат выбору.",
+      "counts": {
+        "total": 1,
+        "kept": 1,
+        "dropped": 0,
+        "feat": 1,
+        "fix": 0,
+        "day_merges": 0,
+        "prs": 0,
+        "shrunk": 0
+      },
+      "changelog": "### Добавлено\n- Фаза 92: добавлена поддержка gamma (92-01).",
+      "coverage_missing": [],
+      "coverage_missing_frame": [],
+      "changelog_valid": true,
+      "model": "deepseek-flash"
+    },
+    {
+      "scenario": 4,
+      "range": "v27.0..HEAD",
+      "version": "v27.3",
+      "candidates": [
+        "v27.3"
+      ],
+      "title": "Фазы 90–92: новые возможности и исправления",
+      "rationale": "Выбрана версия v27.3, так как единственный кандидат соответствует набору изменений без breaking-изменений. В релизе три новые функции (alpha, beta, gamma) и одно исправление, что согласуется с сигналами feat=3 и fix=1. Слияние Day90 и сохранённые 6 изменений также укладываются в минорный релиз.",
+      "counts": {
+        "total": 10,
+        "kept": 6,
+        "dropped": 3,
+        "feat": 3,
+        "fix": 1,
+        "day_merges": 1,
+        "prs": 0,
+        "shrunk": 0
+      },
+      "changelog": "### Добавлено\n- Фаза 90: добавлена alpha\n- Фаза 91: добавлена beta\n- Фаза 92: добавлена gamma\n\n### Исправлено\n- Фаза 90: исправлена alpha\n\n### Изменено\n- Слитое изменение Day90",
+      "coverage_missing": [],
+      "coverage_missing_frame": [],
+      "changelog_valid": true,
+      "model": "deepseek-flash"
+    }
+  ],
+  "model": "deepseek-flash",
+  "started_at": "2026-10-17T20:06:30.733885+00:00",
+  "finished_at": "2026-10-17T20:08:06.310131+00:00",
+  "pytest": null,
+  "model_retries": []
+}
