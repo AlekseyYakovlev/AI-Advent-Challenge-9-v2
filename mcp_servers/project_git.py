@@ -67,6 +67,13 @@ RELEASE_PAGE_SIZE: int = 50
 RELEASE_NETWORK_TIMEOUT: float = 90.0
 MAX_RELEASE_PAGES: int = 40
 MAX_COMMIT_DIRS: int = 10
+MAX_SECTION_CHARS: int = 100000
+MAX_TAG_MESSAGE_CHARS: int = 200
+CHANGELOG_HEADER: str = (
+    "# Changelog\n\n"
+    "Все значимые изменения проекта записываются в этот файл.\n"
+    "Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/).\n"
+)
 _VERSION_TAG = re.compile(r"v(\d+)\.(\d+)")
 _release_registered: bool = False
 
@@ -1280,7 +1287,7 @@ async def _remote_tags() -> tuple[list[str] | None, str | None]:
     cfg = get_config()
     try:
         result = await run_command(
-            base_argv(cfg.git) + ["ls-remote", "--tags", "--refs", "origin"],
+            base_argv(cfg.git) + ["ls-remote", "--refs", "origin", "refs/tags/*"],
             cwd=cfg.root,
             env=git_env(),
             timeout=RELEASE_NETWORK_TIMEOUT,
@@ -1387,12 +1394,144 @@ async def release_range_commits(range: str, page: int = 1) -> str:  # noqa: A002
     return text
 
 
+def _check_version(version: str) -> None:
+    """Require a tag name such as v1.2."""
+    if not _VERSION_TAG.fullmatch(version):
+        raise ToolInputError("version must look like v1.2 (letter v, major, dot, minor)")
+
+
+def _insert_section(existing: str, section: str) -> str:
+    """Put the new section above the first existing release section, or after the header."""
+    block = section.rstrip("\n") + "\n\n"
+    lines = existing.split("\n")
+    for index, line in enumerate(lines):
+        if line.startswith("## ["):
+            return "\n".join(lines[:index]) + ("\n" if index else "") + block + "\n".join(lines[index:])
+    return existing.rstrip("\n") + "\n\n" + block.rstrip("\n") + "\n"
+
+
+async def release_commit_changelog(version: str, section: str) -> str:
+    """LOCAL working copy: prepend a release section to CHANGELOG.md and commit only that file.
+
+    Parameters: `version` such as v1.2; `section` is the full Markdown block starting with
+    "## [v1.2] - <date>". Refuses when other files are staged or the version is already listed.
+    Returns the commit hash as JSON on the second line.
+    """
+    _check_version(version)
+    if not section.startswith(f"## [{version}] - "):
+        raise ToolInputError(f'section must start with "## [{version}] - <date>"')
+    if "\x00" in section or len(section) > MAX_SECTION_CHARS:
+        raise ToolInputError("section contains a NUL byte or is larger than 100000 characters")
+    cfg = get_config()
+    rel = resolve_inside_root(cfg.root, "CHANGELOG.md")
+    path = os.path.join(cfg.root, rel)
+    staged = await run_git(["diff", "--cached", "--name-only"])
+    if staged.returncode != 0:
+        raise _git_error(staged, "diff")
+    others = [name for name in staged.text.split() if name != "CHANGELOG.md"]
+    if others:
+        raise ToolInputError(
+            f"other files are staged ({', '.join(others[:5])}); unstage them before the release commit"
+        )
+    try:
+        with open(path, encoding="utf-8", newline="") as handle:
+            existing = handle.read().replace("\r\n", "\n")
+    except FileNotFoundError:
+        existing = CHANGELOG_HEADER
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ToolInputError(f"could not read CHANGELOG.md: {exc}") from None
+    if f"## [{version}]" in existing:
+        raise ToolInputError(f"CHANGELOG.md already has a section for {version}")
+    updated = _insert_section(existing, section.replace("\r\n", "\n"))
+    try:
+        with open(path, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(updated)
+    except OSError as exc:
+        raise ToolInputError(f"could not write CHANGELOG.md: {exc.strerror or exc}") from None
+    added = await run_git(["add", "--", "CHANGELOG.md"])
+    if added.returncode != 0:
+        raise _git_error(added, "add")
+    committed = await run_git(
+        ["commit", "-m", f"docs(release): {version} changelog", "--", "CHANGELOG.md"]
+    )
+    if committed.returncode != 0:
+        raise _git_error(committed, "commit")
+    head = await run_git(["rev-parse", "HEAD"])
+    return f"Committed CHANGELOG.md for {version}\n" + json.dumps({"commit": head.text.strip()})
+
+
+async def release_create_tag(version: str, message: str, commit: str) -> str:
+    """LOCAL working copy: create an annotated tag on a commit; refuses an existing tag.
+
+    Parameters: `version` such as v1.2; `message` is a one-line tag message; `commit` is the hash.
+    """
+    _check_version(version)
+    if not message.strip() or "\r" in message or "\n" in message:
+        raise ToolInputError("message must be one non-empty line")
+    if len(message) > MAX_TAG_MESSAGE_CHARS:
+        raise ToolInputError(f"message must be at most {MAX_TAG_MESSAGE_CHARS} characters")
+    sha = await resolve_ref(commit)
+    listed = await run_git(["tag", "--list", "--", version])
+    if listed.text.strip():
+        raise ToolInputError(f"tag {version} already exists; choose a higher version")
+    created = await run_git(["tag", "-a", version, "-m", message, sha])
+    if created.returncode != 0:
+        raise _git_error(created, "tag")
+    return f"Created annotated tag {version} at {sha[:7]}\n" + json.dumps(
+        {"tag": version, "commit": sha}
+    )
+
+
+async def release_push(branch: str, tag: str) -> str:
+    """LOCAL working copy to origin: push one branch and one tag with explicit refspecs.
+
+    Parameters: `branch` is a plain branch name; `tag` is an existing local tag such as v1.2.
+    A rejected push (for example non-fast-forward) is reported and never retried.
+    """
+    check_ref_syntax(branch)
+    if (
+        branch.startswith(("refs/", "-"))
+        or any(ch in branch for ch in ":+*?[~^")
+        or ".." in branch
+    ):
+        raise ToolInputError("branch must be a plain branch name such as main")
+    checked = await run_git(["check-ref-format", "--branch", branch])
+    if checked.returncode != 0:
+        raise ToolInputError(f"'{branch}' is not a valid branch name")
+    _check_version(tag)
+    listed = await run_git(["tag", "--list", "--", tag])
+    if not listed.text.strip():
+        raise ToolInputError(f"tag {tag} does not exist locally; create it first")
+    cfg = get_config()
+    result = await run_command(
+        base_argv(cfg.git)
+        + [
+            "push", "--porcelain", "origin",
+            f"refs/heads/{branch}:refs/heads/{branch}",
+            f"refs/tags/{tag}:refs/tags/{tag}",
+        ],  # fmt: skip
+        cwd=cfg.root,
+        env=git_env(),
+        timeout=RELEASE_NETWORK_TIMEOUT,
+        label="git push",
+    )
+    if result.returncode != 0:
+        raise _git_error(result, "push")
+    return f"Pushed {branch} and {tag} to origin"
+
+
 def register_release_tools() -> None:
     """Expose the release tools; called only when the server starts with --allow-release."""
     global _release_registered
     if _release_registered:
         return
-    for tool in (release_context, release_range_commits):
+    for tool in (
+        release_context,
+        release_range_commits,
+        release_commit_changelog,
+        release_create_tag,
+        release_push,
+    ):
         server.tool(structured_output=False)(tool)
     _release_registered = True
 
