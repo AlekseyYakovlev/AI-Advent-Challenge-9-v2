@@ -253,6 +253,61 @@ Plans:
 
 - [ ] TBD (promote with /bm:review-backlog when ready)
 
+### Phase 999.18: Phase 25 review WR-01: unfenced model-invoked support tool results (BACKLOG)
+
+**Goal:** Results of tools the model calls itself (search_tickets, list_user_tickets, get_ticket) reach the model unfenced; only the in-code direct lookup is wrapped in <support_data> (agent/support_lookup.py:57). The system prompt alone declares <support_data> content to be data. Wrap or otherwise mark every support-tool result as untrusted data.
+**Refs:** 25-REVIEW.md
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /bm:review-backlog when ready)
+
+### Phase 999.19: Phase 25 review WR-02: support_data fence bypass with whitespace (BACKLOG)
+
+**Goal:** The fence only neutralizes the literal ASCII `<support_data` / `</support_data`; forms like `< /support_data>` with whitespace are not covered (agent/support_lookup.py:43). Escaping every `<` in the ticket data would close this.
+**Refs:** 25-REVIEW.md
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /bm:review-backlog when ready)
+
+### Phase 999.20: Phase 25 review WR-03: ticket-aware retrieval query truncation (BACKLOG)
+
+**Goal:** The retrieval query is cut to 300 characters after the ticket hints are appended (agent/support_lookup.py:65); a long question can lose its own tail or the hints, and the appended Subject/Error text comes from the customer. Truncate the question first, then append the hints.
+**Refs:** 25-REVIEW.md
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /bm:review-backlog when ready)
+
+### Phase 999.21: Phase 25 review WR-04: concurrent first PUT of /support settings returns 500 (BACKLOG)
+
+**Goal:** The UI sends one PUT per control change; two concurrent first-time PUTs can hit an IntegrityError on the SupportConfig insert and return 500 (agent/support_api.py:171). Handle the race (upsert or retry after rollback).
+**Refs:** 25-REVIEW.md
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /bm:review-backlog when ready)
+
+### Phase 999.22: Phase 25 review INFO cleanup (IN-01..IN-03) (BACKLOG)
+
+**Goal:** IN-01 duplicate 'support server missing' warnings from select_tools and the lookup; IN-02 over-long import line and docstring in agent/ws.py, `_run_support_turn` is about 100 lines; IN-03 mcp_servers/support_desk.py:400 says 'Found 1 tickets' and `_user_by_id` calls next() without a default.
+**Refs:** 25-REVIEW.md
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+
+- [ ] TBD (promote with /bm:review-backlog when ready)
+
 ### Phase 24: Automated PR code review (Day 32)
 
 **Goal:** A pipeline (for example a GitHub Action) runs on every Pull Request: the assistant receives the PR diff and the changed files, uses RAG over the project documentation and code, and returns a review text with potential bugs, architectural problems and recommendations
