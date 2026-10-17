@@ -10,6 +10,7 @@ is the documented exception to the project's logging rule, so the file has no pr
 """
 
 import argparse
+import ast
 import asyncio
 import contextlib
 import os
@@ -17,6 +18,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from typing import NoReturn
 
@@ -32,6 +34,17 @@ STDERR_KEEP_BYTES: int = 65536
 MAX_REF_LENGTH: int = 255
 READ_CHUNK_BYTES: int = 65536
 NARROW_PATH_ADVICE: str = 'Call again with a narrower "path" (a file or folder) to see the rest.'
+READ_WINDOW_LINES: int = 300
+MAX_READ_BYTES: int = 2_000_000
+BINARY_SNIFF_BYTES: int = 8000
+MAX_PATTERN_CHARS: int = 200
+MAX_SEARCH_HITS: int = 200
+HIT_TEXT_CHARS: int = 200
+MAX_USAGE_HITS: int = 300
+USAGE_LINE_CHARS: int = 160
+MAX_PARSE_BYTES: int = 1_000_000
+USAGES_TIME_BUDGET_S: float = 20.0
+SEARCH_ADVICE: str = "Narrow the search with glob or a more specific pattern."
 _COMMIT_ID = re.compile(r"[0-9a-f]{40}([0-9a-f]{24})?")
 
 
@@ -607,6 +620,348 @@ async def git_recent_commits(
     if limited:
         summary += " (count limited to 50)"
     return fit_text(summary, "\n".join(lines), max_chars, lower_bound=result.capped)
+
+
+def pathspec_argv(git: str) -> list[str]:
+    """Return the leading git arguments with glob pathspecs enabled."""
+    return [part for part in base_argv(git) if part != "--literal-pathspecs"]
+
+
+async def visible_paths(rel: str | None = None) -> list[str]:
+    """List files git considers part of the project: tracked plus untracked, not ignored."""
+    args = ["ls-files", "--cached", "--others", "--exclude-standard", "-z"]
+    if rel is not None:
+        args += ["--", rel]
+    result = await run_git(args)
+    if result.returncode != 0:
+        raise _git_error(result, "ls-files")
+    return [item for item in result.text.split("\0") if item]
+
+
+def is_binary(data: bytes) -> bool:
+    """Return True when the first bytes contain a NUL byte."""
+    return b"\x00" in data[:BINARY_SNIFF_BYTES]
+
+
+def decode_text(data: bytes) -> tuple[str, bool]:
+    """Decode UTF-8 text with LF line ends and report whether CRLF was present."""
+    return data.decode("utf-8", errors="replace").replace("\r\n", "\n"), b"\r\n" in data
+
+
+def split_lines(text: str) -> list[str]:
+    """Split on LF only, dropping the empty tail after a final newline."""
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines
+
+
+async def require_visible_file(rel: str) -> str:
+    """Return the absolute path of a visible regular file or raise ToolInputError."""
+    if rel == ".":
+        raise ToolInputError("path must name a file, for example agent/ws.py")
+    absolute = os.path.join(get_config().root, rel)
+    if rel not in await visible_paths(rel) or not os.path.isfile(absolute):
+        raise ToolInputError(
+            f"{rel} is not a readable file: it does not exist, is a folder, or git ignores it; "
+            "call git_tracked_files to list files"
+        )
+    return absolute
+
+
+@server.tool(structured_output=False)
+async def read_file(
+    path: str, start_line: int | None = None, end_line: int | None = None
+) -> str:
+    """LOCAL working copy (not the GitHub remote): read one text file with line numbers.
+
+    Parameters: `path` is a file relative to the repository root; `start_line` and `end_line`
+    (1-based, inclusive) select a range. By default 300 lines are shown from the start. The
+    first line is a summary "path: lines a-b of N"; when more lines exist a marker at the end
+    names the `start_line` to call with next. Files that git ignores (.env, databases) and
+    binary files cannot be read.
+    """
+    max_chars = get_config().max_chars
+    rel = _normalise_path(path)
+    if rel is None:
+        raise ToolInputError("path is required, for example agent/ws.py")
+    absolute = await require_visible_file(rel)
+    try:
+        if os.path.getsize(absolute) > MAX_READ_BYTES:
+            raise ToolInputError(
+                f"{rel} is larger than 2 MB; use search_text to find the lines you need"
+            )
+        with open(absolute, "rb") as handle:
+            data = handle.read()
+    except OSError as exc:
+        raise ToolInputError(f"could not read {rel}: {exc.strerror or exc}") from None
+    if is_binary(data):
+        raise ToolInputError(f"{rel} is a binary file and cannot be shown as text")
+    lines = split_lines(decode_text(data)[0])
+    total = len(lines)
+    if total == 0:
+        return f"Empty file: {rel} (0 lines)"
+    start = 1 if start_line is None else start_line
+    if start < 1:
+        raise ToolInputError("start_line must be 1 or greater")
+    if end_line is not None and end_line < start:
+        raise ToolInputError("end_line must be greater than or equal to start_line")
+    if start > total:
+        raise ToolInputError(f"start_line {start} is past the end: {rel} has {total} lines")
+    end = min(total, start + READ_WINDOW_LINES - 1 if end_line is None else end_line)
+    reserve = len(
+        truncation_marker(
+            total,
+            total,
+            unit="lines",
+            advice=f"Call again with start_line={total + 1} to see the rest.",
+        )
+    )
+    used = len(f"{rel}: lines {total}-{total} of {total}") + 2 + reserve
+    body: list[str] = []
+    last = start - 1
+    for number in range(start, end + 1):
+        row = f"{number:>6}\t{lines[number - 1]}"
+        if used + len(row) + 1 > max_chars:
+            if body:
+                break
+            row = row[: max(0, max_chars - used - 1)]
+        body.append(row)
+        used += len(row) + 1
+        last = number
+    summary = f"{rel}: lines {start}-{last} of {total}"
+    text = summary + "\n" + "\n".join(body)
+    if last < total and (last < end or end_line is None):
+        text += "\n" + truncation_marker(
+            last - start + 1,
+            total,
+            unit="lines",
+            advice=f"Call again with start_line={last + 1} to see the rest.",
+        )
+    return text[:max_chars]
+
+
+@server.tool(structured_output=False)
+async def search_text(
+    pattern: str, regex: bool = False, glob: str | None = None, ignore_case: bool = False
+) -> str:
+    """LOCAL working copy (not the GitHub remote): search text across project files.
+
+    Parameters: `pattern` is searched as a plain substring by default; with `regex=true` it is
+    an extended regular expression. `glob` limits the files, for example `*.py` or `docs/*.md`.
+    `ignore_case` ignores letter case. Files git ignores (.env, databases) and binary files
+    are skipped. The first line is "N matches in M files", then one `path:line: text` per hit.
+    """
+    cfg = get_config()
+    if (
+        not pattern
+        or len(pattern) > MAX_PATTERN_CHARS
+        or any(ch in pattern for ch in "\r\n\x00")
+    ):
+        raise ToolInputError("pattern must be 1-200 characters on one line")
+    glob = glob or None
+    if glob is not None and (
+        glob[0] in ":-/\\"
+        or ".." in glob
+        or ":" in glob
+        or any(ord(ch) < 32 or ord(ch) == 127 for ch in glob)
+    ):
+        raise ToolInputError("glob must be a relative pattern such as *.py or docs/*.md")
+    argv = pathspec_argv(cfg.git) + [
+        "grep", "-n", "-I", "--no-color", "--untracked", "--exclude-standard",
+        "-E" if regex else "-F",
+    ]  # fmt: skip
+    if ignore_case:
+        argv.append("-i")
+    argv += ["-e", pattern]
+    if glob is not None:
+        argv += ["--", glob]
+    try:
+        result = await run_command(
+            argv, cwd=cfg.root, env=git_env(), timeout=cfg.timeout, label="git grep"
+        )
+    except ToolInputError as exc:
+        if "timed out" in str(exc):
+            raise ToolInputError(
+                f"git grep timed out after {cfg.timeout:g}s; {SEARCH_ADVICE}"
+            ) from None
+        raise
+    none_found = (
+        f"No matches for '{pattern[:64]}'" + (f" in {glob}" if glob else "")
+        + ". Try a shorter pattern, regex=true, or another glob."
+    )
+    if result.returncode == 1:
+        return none_found
+    if result.returncode > 1:
+        if regex:
+            raise ToolInputError(
+                f"invalid regular expression: {_last_line(result.stderr, 'rejected by git grep')}; "
+                "fix it or call with regex=false"
+            )
+        raise _git_error(result, "grep")
+    hits: list[str] = []
+    files: set[str] = set()
+    total = 0
+    for line in result.text.split("\n"):
+        parts = line.split(":", 2)
+        if len(parts) < 3:
+            continue
+        total += 1
+        files.add(parts[0])
+        if len(hits) < MAX_SEARCH_HITS:
+            hits.append(f"{parts[0]}:{parts[1]}: {parts[2].strip()[:HIT_TEXT_CHARS]}")
+    if total == 0:
+        return none_found
+    summary = f"{_plural(total, 'match', 'matches')} in {_plural(len(files), 'file', 'files')}"
+    if regex:
+        summary += " for regex"
+    body = "\n".join(hits)
+    if total > MAX_SEARCH_HITS:
+        body += "\n" + truncation_marker(
+            MAX_SEARCH_HITS, total, unit="matches", advice=SEARCH_ADVICE
+        )
+    return fit_text(summary, body, cfg.max_chars, lower_bound=result.capped, advice=SEARCH_ADVICE)
+
+
+class _UsageVisitor(ast.NodeVisitor):
+    """Collect (line, kind) usages of one name in a Python syntax tree."""
+
+    def __init__(self, symbol: str) -> None:
+        self.symbol: str = symbol
+        self.found: list[tuple[int, str]] = []
+        self._skip: set[int] = set()
+
+    def _add(self, node: ast.AST, kind: str) -> None:
+        self.found.append((getattr(node, "lineno", 0), kind))
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        if node.name == self.symbol:
+            self._add(node, "def")
+        self.generic_visit(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        if node.name == self.symbol:
+            self._add(node, "def")
+        self.generic_visit(node)
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        if node.name == self.symbol:
+            self._add(node, "class")
+        self.generic_visit(node)
+
+    def _visit_aliases(self, node: ast.Import | ast.ImportFrom) -> None:
+        for alias in node.names:
+            if (alias.asname or alias.name.split(".")[-1]) == self.symbol:
+                self._add(node, "import")
+
+    def visit_Import(self, node: ast.Import) -> None:
+        self._visit_aliases(node)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        self._visit_aliases(node)
+
+    def visit_arg(self, node: ast.arg) -> None:
+        if node.arg == self.symbol:
+            self._add(node, "param")
+        self.generic_visit(node)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        func = node.func
+        if (isinstance(func, ast.Name) and func.id == self.symbol) or (
+            isinstance(func, ast.Attribute) and func.attr == self.symbol
+        ):
+            self._add(node, "call")
+            self._skip.add(id(func))
+        self.generic_visit(node)
+
+    def visit_Name(self, node: ast.Name) -> None:
+        if node.id == self.symbol and id(node) not in self._skip:
+            self._add(node, "assign" if isinstance(node.ctx, ast.Store) else "ref")
+
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        if node.attr == self.symbol and id(node) not in self._skip:
+            self._add(node, "assign" if isinstance(node.ctx, ast.Store) else "ref")
+        self.generic_visit(node)
+
+
+USAGE_KINDS: tuple[str, ...] = ("def", "class", "import", "call", "ref", "assign", "param")
+
+
+@server.tool(structured_output=False)
+async def find_usages(symbol: str, path: str | None = None) -> str:
+    """LOCAL working copy (not the GitHub remote): find where a Python name is used.
+
+    Parameters: `symbol` is a Python function, class, method or variable name; `path` limits
+    the scan to a file or folder. Reports definitions (def, class), imports, calls, plain
+    references, assignments and parameters through the Python syntax tree, so comments and
+    strings never match. The first line counts usages by kind, then one
+    `path:line: kind: source line` per usage. Non-Python files need search_text.
+    """
+    cfg = get_config()
+    name = symbol.strip().split(".")[-1]
+    if not name.isidentifier() or len(name) > 100:
+        raise ToolInputError("symbol must be a Python name such as cleanup_chat_caches")
+    rel = _normalise_path(path)
+    py_files = sorted(p for p in await visible_paths(rel) if p.endswith(".py"))
+    started = time.monotonic()
+    rows: list[tuple[str, int, str, str]] = []
+    skipped = 0
+    scanned = 0
+    for item in py_files:
+        if time.monotonic() - started > USAGES_TIME_BUDGET_S:
+            break
+        scanned += 1
+        await asyncio.sleep(0)
+        absolute = os.path.join(cfg.root, item)
+        try:
+            if os.path.getsize(absolute) > MAX_PARSE_BYTES:
+                skipped += 1
+                continue
+            with open(absolute, "rb") as handle:
+                text = decode_text(handle.read())[0]
+            tree = ast.parse(text, filename=item)
+        except (SyntaxError, ValueError, RecursionError, OSError):
+            skipped += 1
+            continue
+        visitor = _UsageVisitor(name)
+        visitor.visit(tree)
+        source = split_lines(text)
+        for line, kind in visitor.found:
+            snippet = source[line - 1].strip()[:USAGE_LINE_CHARS] if 0 < line <= len(source) else ""
+            rows.append((item, line, kind, snippet))
+    if not rows:
+        return (
+            f"No usages of {name} found in {_plural(scanned, 'Python file', 'Python files')}. "
+            "Use search_text for non-Python files."
+        )
+    rows.sort(key=lambda row: (row[0], row[1]))
+    counts: dict[str, int] = {}
+    for _, _, kind, _ in rows:
+        counts[kind] = counts.get(kind, 0) + 1
+    kinds = ", ".join(f"{k} {counts[k]}" for k in USAGE_KINDS if k in counts)
+    files = len({row[0] for row in rows})
+    summary = (
+        f"{_plural(len(rows), 'usage', 'usages')} of {name} in "
+        f"{_plural(files, 'file', 'files')} ({kinds})"
+    )
+    if skipped:
+        summary += f"; {skipped} files skipped (syntax errors)"
+    narrow = "Call again with path set to a folder to narrow the scan."
+    body_lines = [f"{p}:{n}: {k}: {t}" for p, n, k, t in rows[:MAX_USAGE_HITS]]
+    if len(rows) > MAX_USAGE_HITS:
+        body_lines.append(
+            truncation_marker(MAX_USAGE_HITS, len(rows), unit="usages", advice=narrow)
+        )
+    if scanned < len(py_files):
+        body_lines.append(
+            truncation_marker(
+                scanned,
+                len(py_files),
+                unit="Python files",
+                advice="Call again with path set to a folder to scan less.",
+            )
+        )
+    return fit_text(summary, "\n".join(body_lines), cfg.max_chars, advice=narrow)
 
 
 def check_work_tree(git: str, root: str, timeout: float) -> None:
