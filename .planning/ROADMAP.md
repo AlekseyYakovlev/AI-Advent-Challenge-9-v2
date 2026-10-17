@@ -428,7 +428,7 @@ Plans:
 **Goal:** A real task automated end to end: release preparation for this repository. The AI drafts the changelog from commits and merged PRs, proposes the next version, and prepares a tag and a draft GitHub Release; the report states the task and where the AI takes part. May be partly non-working where keys or write access are missing. Branch `Day35`; deliverable video + code.
 **Requirements**: TBD
 **Depends on:** Phase 22 (git and GitHub MCP), Phase 26 (file generation)
-**Plans:** 5/8 plans executed
+**Plans:** 6/8 plans executed
 
 Plans:
 **Wave 1**
@@ -444,7 +444,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 27-06-PLAN.md — WS wiring (release_handler, thin ws.py hook, state cleanup) + WS integration test
+- [x] 27-06-PLAN.md — WS wiring (release_handler, thin ws.py hook, state cleanup) + WS integration test
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
