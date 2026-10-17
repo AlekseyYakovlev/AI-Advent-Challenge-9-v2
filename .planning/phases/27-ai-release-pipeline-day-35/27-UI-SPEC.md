@@ -39,6 +39,7 @@ Sources: 27-CONTEXT.md (D-02, D-03, D-05, D-07, D-09, D-11, D-13, D-14, D-19), `
    - Changelog draft: collapsed `<details>` «Черновик CHANGELOG (Добавлено / Исправлено / Изменено)»; body rendered through the existing markdown path `DOMPurify.sanitize(marked.parse(text))` inside a container capped at `max-h-96 overflow-y-auto`.
    - Write steps list (ordered, `<ol>`): 1 «Коммит CHANGELOG.md», 2 «Аннотированный тег vX.Y», 3 «Push ветки и тега», 4 «Черновик GitHub Release». Each row has a status glyph (see Step Status).
    - Action row: primary button «Подтвердить релиз», secondary hint `text-xs text-slate-500`: «Или введите /release confirm».
+   **Visual hierarchy and scan order.** Focal point: the facts block plus the version input at the top of the card (what is being released and as which version). The accent «Подтвердить релиз» button is the action anchor at the bottom, the only filled accent element in the card. Intended scan order: header status, facts, warnings, version/title form, rationale, changelog draft (collapsed), write steps, action row.
 3. **Version/title override.** Edits are local to the card until confirm; confirm sends the current input values. Changing the version re-validates immediately on `input` (format `^v\d+\.\d+$`, greater than last tag, not taken) using the facts delivered with the plan; the server re-validates and is authoritative. While invalid, the confirm button is disabled and the message is shown (`aria-describedby` links input and message).
 4. **Result state (same card, updated in place).** After confirm the form fields become read-only text, the confirm button is replaced by the per-step report. The step list rows are filled with outcomes (Step Status). Below the list: link to the draft Release (`<a target="_blank" rel="noopener noreferrer">`, `text-indigo-400 underline`) when step 4 succeeded; the tag name and commit SHA (short, `font-mono`).
 5. **Partial failure (D-05).** If steps 1-3 succeeded and step 4 failed: card shows a red-bordered failure block with the English tool reason as returned (`text-red-300`, `font-mono`, `whitespace-pre-wrap break-words`), the ready release text in a collapsed `<details>` «Текст релиза для ручной публикации» with a «Скопировать» button, and the manual instruction line. The confirm button returns with label «Повторить оставшиеся шаги»; the already-done rows stay marked done and are skipped.
@@ -88,7 +89,7 @@ Reused Tailwind utilities; no new values.
 | md | 16px | `space-y-4` between major card sections (plan card sections), `px-4` on buttons |
 | inherited | 12px | card `px-3 py-2` (kept for parity with help notice and tool-call card) |
 
-Exceptions: 12px (`px-3`) inherited from existing cards; `max-h-96` (384px) is a layout cap, not a spacing token. Button and input touch height at least 32px (`py-1.5` with `text-sm`), acceptable for a desktop-first local tool.
+Exceptions: 12px (`px-3`) inherited from existing cards; `max-h-96` (384px) is a layout cap, not a spacing token. Button and input touch height at least 32px via `py-2` (8px) or an explicit `min-h-8` (32px); `py-1.5` is not used. The only new spacing utilities in play are `space-y-4` (16px) and `gap-2` (8px); everything else is already used in the existing cards.
 
 ---
 
@@ -133,7 +134,7 @@ All user-facing UI text in Russian. Server error reasons stay in English (Phase 
 | Primary CTA | Подтвердить релиз |
 | Retry CTA (partial/failed) | Повторить оставшиеся шаги |
 | Secondary CTA (HEAD changed) | Пересоздать план |
-| Copy button | Скопировать |
+| Copy button | Скопировать текст релиза |
 | Command hint | Или введите /release confirm |
 | Empty state heading | Нет плана релиза |
 | Empty state body | Нет плана релиза. Сначала введите /release. (ephemeral notice for `/release confirm` without plan) |
