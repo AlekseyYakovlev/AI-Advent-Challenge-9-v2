@@ -77,7 +77,7 @@ Requirements for milestone v5.0. Each maps to exactly one roadmap phase.
 - [x] **SUP-11**: The label («Поддержка · T-1001»), sources, verified quotes and warnings are stored in the assistant message payload under an additive `support` key and survive a reload; the HTTP JSON body carries the same (`support`, `rag`, `tool_calls`).
 - [x] **SUP-12**: pytest covers the support server tools (found, not found, bad arguments, re-read on change, invalid JSON), command parsing with and without identifiers, the direct lookup, every warning path, the `/support` history rule, the shared mechanism keeping `/help` unchanged, the settings routes, the UI source guard and `/support` over WebSocket and HTTP.
 - [x] **SUP-13**: An isolated-copy end-to-end script (ports 18000/18001, scratch database) adds the support server through the real «MCP серверы» form, marks the documentation base and runs `/support #T-… Почему не работает авторизация?` for two tickets in the browser and over HTTP; the live-model part is recorded as not run when LM Studio is down.
-- [ ] **SUP-14**: `docs/API_SPEC.md`, `docs/ARCHITECTURE.md`, `docs/USER_GUIDE.md`, `docs/TESTING_GUIDE.md` and `README.md` describe `/support`, the support server with exact form values, and the new tests as built, guarded by a docs test.
+- [x] **SUP-14**: `docs/API_SPEC.md`, `docs/ARCHITECTURE.md`, `docs/USER_GUIDE.md`, `docs/TESTING_GUIDE.md` and `README.md` describe `/support`, the support server with exact form values, and the new tests as built, guarded by a docs test.
 
 ### Project Files Assistant
 
@@ -169,7 +169,7 @@ Deferred to later days of Week 7. Tracked but not in the current roadmap.
 | SUP-11 | Phase 25 | Complete |
 | SUP-12 | Phase 25 | Complete |
 | SUP-13 | Phase 25 | Complete |
-| SUP-14 | Phase 25 | Pending |
+| SUP-14 | Phase 25 | Complete |
 | PFILE-01 | Phase 26 | Pending |
 | PFILE-02 | Phase 26 | Pending |
 | PFILE-03 | Phase 26 | Pending |
