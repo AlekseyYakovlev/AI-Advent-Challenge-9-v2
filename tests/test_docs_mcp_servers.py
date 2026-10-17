@@ -24,6 +24,10 @@ TEST_FILES: tuple[str, ...] = (
     "test_mcp_project_git.py",
     "test_mcp_real_github.py",
     "test_docs_mcp_servers.py",
+    "test_mcp_project_files.py",
+    "test_files_task.py",
+    "test_files_eval.py",
+    "test_diff_card_ui.py",
 )
 
 
@@ -122,6 +126,54 @@ def test_architecture_has_bundled_servers_subsection() -> None:
         "git_current_branch", "git_status", "git_diff", "git_tracked_files", "git_recent_commits",
     ):
         assert name in span
+
+
+def test_user_guide_project_files_form_values() -> None:
+    """The guide gives the exact form values for the project-files entry."""
+    section = _guide_section()
+    assert "### Ассистент по файлам проекта (project-files)" in section
+    normalised = section.replace("/", "\\")
+    for expected in (
+        "project-files", "mcp_servers\\project_git.py", "--root=", "--allow-write",
+        "Рабочая директория",
+    ):
+        assert expected in normalised, f"{expected} is missing"
+
+
+def test_user_guide_names_write_tools() -> None:
+    """The guide names the write tools, the size limit and the app tool prefix."""
+    section = _guide_section()
+    for expected in ("write_file", "edit_file", "mcp__project-files__"):
+        assert expected in section, f"{expected} is missing"
+    assert "200000" in section or "200 000" in section, "the write size limit is missing"
+
+
+def test_user_guide_keeps_local_git_read_only() -> None:
+    """The local-git subsection stays read-only and /help keeps using it."""
+    section = _guide_section()
+    start = section.index("### Сервер git проекта (local-git)")
+    end = section.index("### Ассистент по файлам проекта (project-files)")
+    sub = section[start:end]
+    assert "только для чтения" in sub, "the read-only statement is missing"
+    assert "/help" in sub, "the /help note is missing"
+
+
+def test_architecture_describes_file_tools() -> None:
+    """The bundled-servers span covers the read tools and the write gate."""
+    text = _read(DOCS_DIR / "ARCHITECTURE.md")
+    span = text[text.index("### Bundled MCP servers"):text.index("## Scheduler")]
+    for expected in (
+        "read_file", "search_text", "find_usages", "write_file", "edit_file", "--allow-write",
+    ):
+        assert expected in span, f"{expected} is missing"
+
+
+def test_testing_guide_lists_phase26_scripts() -> None:
+    """The testing guide names the project files scripts and they exist."""
+    text = _read(DOCS_DIR / "TESTING_GUIDE.md")
+    for name in ("e2e_project_files_playwright.py", "files_task.py", "files_eval.py"):
+        assert name in text, f"{name} is missing from the testing guide"
+        assert (REPO_ROOT / "scripts" / name).is_file(), f"scripts/{name} does not exist"
 
 
 def test_api_spec_has_project_server_examples() -> None:
