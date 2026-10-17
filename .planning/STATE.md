@@ -3,13 +3,13 @@ gsd_state_version: 1.0
 milestone: v5.0
 milestone_name: "Week 7: Pipeline"
 status: executing
-last_updated: "2026-10-17T09:04:01.436Z"
+last_updated: "2026-10-17T09:06:09.933Z"
 last_activity: 2026-10-17 -- Phase 25 execution started
 progress:
   total_phases: 10
   completed_phases: 4
-  total_plans: 56
-  completed_plans: 39
+  total_plans: 57
+  completed_plans: 40
   percent: 40
 ---
 
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-10-13)
 ## Current Position
 
 Phase: 25 (support-assistant-day-33) — EXECUTING
-Plan: 5 of 11
+Plan: 6 of 11
 Status: Executing Phase 25
 Last activity: 2026-10-17 -- Phase 25 execution started
 
@@ -62,6 +62,7 @@ No phases executed yet — metrics will populate after Phase 1 completes.
 - [Phase 23-03]: UI-SPEC rule 2 amended: label, sources, quotes and warning survive reload; tool-call cards are live-only
 - [Phase 23]: Phase 23-05: /help default threshold stays 0.45 (docs 0.56-0.67, outside 0.39); combined prompt works on qwen/qwen3.5-9b and deepseek-flash
 - [Phase 25]: help_command injects its own build_mcp_toolset into command_turn.select_tools to keep the monkeypatch seam
+- [Phase 25]: 25-05: direct support lookup never raises; server resolved by fixed name support among caller's rows
 
 ### Roadmap Evolution
 
@@ -128,6 +129,7 @@ None.
 | Phase 23 P05 | 75min | 3 tasks | 7 files |
 | Phase 23 P08 | 50min | 2 tasks | 9 files |
 | Phase 25 P01 | 25min | 2 tasks | 3 files |
+| Phase 25 P05 | 15min | 2 tasks | 3 files |
 
 ## Deferred Items
 
@@ -157,7 +159,7 @@ Items acknowledged and deferred at milestone close on 2026-10-12:
 
 ## Session Continuity
 
-**Last session:** 2026-10-17T09:04:01.428Z
+**Last session:** 2026-10-17T09:06:06.125Z
 **Next action:** Phase 21 is planned (7 plans, 5 waves). Run `/bm:execute-phase 21` on branch Day31.
 
 ---

@@ -71,8 +71,8 @@ Requirements for milestone v5.0. Each maps to exactly one roadmap phase.
 - [x] **SUP-05**: `mcp_servers/support_desk.py` is a self-contained read-only stdio MCP server started with `--data <path>`, with the tools `get_ticket`, `get_user`, `list_user_tickets`, `search_tickets`; rejected calls return `isError` with an English reason and fix; results are never empty and stay under 20 000 characters.
 - [x] **SUP-06**: The support server re-reads the JSON file when it changes; a missing or invalid file at start stops it with a stderr reason; a file that becomes invalid later gives a tool error, not a crash.
 - [x] **SUP-07**: A tracked seed JSON file (4 clients, 6 tickets, fictitious data) and a Russian `docs/FAQ.md` that is true for the real code; two different tickets lead to different correct answers to «Почему не работает авторизация?».
-- [ ] **SUP-08**: With `#T-NNNN` or `@login` the app calls the support server in code (no model involvement), shows the call as an ordinary tool-call card and `tool_calls` entry, and puts the ticket with its client (or the user with their tickets) into the turn as a fenced data block.
-- [ ] **SUP-09**: A missing ticket or user, or a support server that is not added, disabled or not connecting, never refuses or breaks the turn: the answer is given from the documentation with a warning under the answer and in the HTTP body.
+- [x] **SUP-08**: With `#T-NNNN` or `@login` the app calls the support server in code (no model involvement), shows the call as an ordinary tool-call card and `tool_calls` entry, and puts the ticket with its client (or the user with their tickets) into the turn as a fenced data block.
+- [x] **SUP-09**: A missing ticket or user, or a support server that is not added, disabled or not connecting, never refuses or breaks the turn: the answer is given from the documentation with a warning under the answer and in the HTTP body.
 - [x] **SUP-10**: A `/support` turn sends the earlier `/support` question/answer pairs of the current branch (bounded) to the model; ordinary messages and `/help` pairs are not sent.
 - [x] **SUP-11**: The label («Поддержка · T-1001»), sources, verified quotes and warnings are stored in the assistant message payload under an additive `support` key and survive a reload; the HTTP JSON body carries the same (`support`, `rag`, `tool_calls`).
 - [x] **SUP-12**: pytest covers the support server tools (found, not found, bad arguments, re-read on change, invalid JSON), command parsing with and without identifiers, the direct lookup, every warning path, the `/support` history rule, the shared mechanism keeping `/help` unchanged, the settings routes, the UI source guard and `/support` over WebSocket and HTTP.
@@ -163,8 +163,8 @@ Deferred to later days of Week 7. Tracked but not in the current roadmap.
 | SUP-05 | Phase 25 | Complete |
 | SUP-06 | Phase 25 | Complete |
 | SUP-07 | Phase 25 | Complete |
-| SUP-08 | Phase 25 | Pending |
-| SUP-09 | Phase 25 | Pending |
+| SUP-08 | Phase 25 | Complete |
+| SUP-09 | Phase 25 | Complete |
 | SUP-10 | Phase 25 | Complete |
 | SUP-11 | Phase 25 | Complete |
 | SUP-12 | Phase 25 | Complete |
