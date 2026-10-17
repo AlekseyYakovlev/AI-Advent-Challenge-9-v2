@@ -632,6 +632,7 @@ Automation cannot prove reachability from another machine, so the live run is ma
 
 ### test_mcp_project_files.py
 - read tools on a temporary repository: windowed `read_file`, `search_text` hits, `find_usages` kinds, git visibility (ignored files hidden)
+- read-side containment: `.env*` and `.git` refused by `read_file` and hidden from `search_text`/`find_usages`; symlinks to the ignored `.env` or outside the root never leak content (real symlinks skip without the privilege; a monkeypatched `os.path.realpath` simulates them)
 - the tool list is 8 without `--allow-write` and 10 with it
 - write gate: refusals for paths outside the root, `.git`, `.env*`, ignored paths, device names, directories, binary files and content above 200000 bytes
 - `write_file` and `edit_file` results: `Created`/`Updated` first line with `(+A -R)`, single-occurrence rule, CRLF preserved

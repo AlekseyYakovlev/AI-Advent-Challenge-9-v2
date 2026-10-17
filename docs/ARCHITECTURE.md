@@ -247,7 +247,7 @@ a window of 300 lines), `search_text` (at most 200 hits) and `find_usages` (kind
 `import`, `call`, `ref`, `assign`, `param`, found through `ast` within a time budget). Visibility
 follows git: `git ls-files --cached --others --exclude-standard` for the file set and
 `git grep -I --untracked --exclude-standard` for search, both under the command timeout, so ignored
-files such as `.env` and `app.db` are never readable.
+files such as `.env` and `app.db` are never readable. On top of git visibility the read tools refuse `.env*` basenames and `.git` path components (the same check the write gate uses), and `find_usages`/`search_text` resolve each listed file through `resolve_inside_root`, skipping links that leave the root or point at a file git does not show.
 
 **Write gate:** `write_file` and `edit_file` are added with `server.add_tool` only in `main()` when
 `--allow-write` is given, so without the flag the server lists 8 tools and with it 10; each write

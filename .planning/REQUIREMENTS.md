@@ -188,4 +188,4 @@ Deferred to later days of Week 7. Tracked but not in the current roadmap.
 
 ---
 *Requirements defined: 2026-10-13*
-*Last updated: 2026-10-17 — PFILE-01..PFILE-10 added for Phase 26 (Day 34); earlier: SUP-01..SUP-14 added for Phase 25 (Day 33)*
+*Last updated: 2026-10-17 — PFILE-01 read-side containment gap (CR-01/WR-01) closed by plan 26-09; earlier: PFILE-01..PFILE-10 added for Phase 26 (Day 34), SUP-01..SUP-14 for Phase 25 (Day 33)*
