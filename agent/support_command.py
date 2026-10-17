@@ -1,7 +1,9 @@
 """The /support command: grammar, texts, settings, history and turn helpers over the shared command mechanism."""
 
+import json
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -9,12 +11,17 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from agent.command_turn import (
     CommandSpec,
     CommandTools,
+    build_command_messages,
+    finalize_command_turn,
+    prepare_command_turn,
     resolve_command_notice,
     select_tools,
 )
+from agent.llm_client import count_tokens
 from agent.mcp_tools import McpToolset, build_mcp_toolset
+from agent.rag_turn import RagTurn
 from shared.logger import get_logger
-from shared.models import SupportConfig
+from shared.models import KnowledgeBase, Message, SupportConfig
 
 logger = get_logger(__name__)
 
@@ -156,3 +163,111 @@ async def build_support_tools(
     return await select_tools(
         session, user_id, config, SUPPORT_SPEC, toolset_builder=build_mcp_toolset
     )
+
+
+def history_user_text(content: str) -> str:
+    """Return the user side of a replayed /support pair, with the identifier spelled out."""
+    cmd = parse_support(content)
+    if cmd is None:
+        return content
+    if cmd.ticket is not None:
+        return f"Тикет {cmd.ticket}. {cmd.question}"
+    if cmd.user is not None:
+        return f"Пользователь @{cmd.user}. {cmd.question}"
+    return cmd.question
+
+
+def _has_support_payload(message: Message) -> bool:
+    """Tell whether the stored assistant payload carries the support key."""
+    try:
+        data = json.loads(message.rag_sources) if message.rag_sources else None
+    except (TypeError, ValueError):
+        return False
+    return isinstance(data, dict) and "support" in data
+
+
+async def load_support_history(
+    session: AsyncSession, parent_id: int | None
+) -> list[tuple[str, str]]:
+    """Return earlier /support pairs of the branch ending at parent_id, oldest first."""
+    chain: list[Message] = []
+    current = parent_id
+    while current is not None and len(chain) < SUPPORT_HISTORY_SCAN_LIMIT:
+        message = await session.get(Message, current)
+        if message is None:
+            break
+        chain.append(message)
+        current = message.parent_id
+    chain.reverse()
+
+    pairs: list[tuple[str, str]] = []
+    for index in range(1, len(chain)):
+        reply, asked = chain[index], chain[index - 1]
+        if reply.role != "assistant" or asked.role != "user":
+            continue
+        if parse_support(asked.content) is None or not _has_support_payload(reply):
+            continue
+        pairs.append(
+            (history_user_text(asked.content), reply.content[:SUPPORT_HISTORY_ANSWER_CHARS])
+        )
+    pairs = pairs[-SUPPORT_HISTORY_PAIRS:]
+    while pairs and sum(
+        count_tokens(user) + count_tokens(answer) for user, answer in pairs
+    ) > SUPPORT_HISTORY_MAX_TOKENS:
+        pairs.pop(0)
+    logger.info("support_history_loaded", pairs=len(pairs))
+    return pairs
+
+
+def build_support_messages(
+    question: str, has_tools: bool, now: datetime, history: list[tuple[str, str]]
+) -> list[dict[str, Any]]:
+    """Build the outbound list of a /support turn: no profile, no invariants."""
+    return build_command_messages(SUPPORT_SPEC, question, has_tools, now, history)
+
+
+def support_payload_extra(
+    cmd: SupportCommand, lookup_info: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Return the additive fields of the assistant payload's support key."""
+    return {
+        "label": support_label(cmd),
+        "ticket": cmd.ticket,
+        "user": cmd.user,
+        "lookup": lookup_info,
+    }
+
+
+async def prepare_support_turn(
+    session: AsyncSession,
+    chat: Any,
+    kb: KnowledgeBase,
+    config: SupportConfig,
+    question: str,
+    llm_messages: list[dict[str, Any]],
+    context_length: int,
+    max_tokens: int,
+    extra_tokens: int,
+    *,
+    client: Any | None,
+    model: str | None,
+    warnings: list[dict[str, str]],
+    context_block: str | None = None,
+    retrieval_query: str | None = None,
+    payload_extra: dict[str, Any] | None = None,
+) -> RagTurn:
+    """Retrieve fragments with the /support settings; never gates, never raises except on cancel."""
+    return await prepare_command_turn(
+        SUPPORT_SPEC, session, chat, kb, config, question, llm_messages,  # type: ignore[arg-type]
+        context_length, max_tokens, extra_tokens,
+        client=client, model=model, warnings=warnings,
+        context_block=context_block, retrieval_query=retrieval_query,
+        payload_extra=payload_extra,
+    )
+
+
+def finalize_support_turn(
+    turn: RagTurn, question: str, assistant_text: str, tool_results: list[dict[str, Any]]
+) -> tuple[str, RagTurn]:
+    """Verify quotes, then drop code-picked quotes from a ticket-data-only answer."""
+    return finalize_command_turn(turn, question, assistant_text, tool_results, "support")
